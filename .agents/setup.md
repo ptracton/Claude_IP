@@ -185,7 +185,86 @@ Apply the same `IP_NAME` substitution as described for `setup.sh`.
 
 ---
 
-### 4. Generate skeleton `IP_NAME/doc/spec.md`
+### 4. Generate `IP_NAME/README.md`
+
+Create the top-level README with all sections present but marked `[TBD]`. Each subsequent
+sub-agent is responsible for replacing its own `[TBD]` section with real content.
+The file must use this exact structure (with `IP_NAME` substituted):
+
+```markdown
+# IP_NAME
+
+## Overview
+
+Brief description of what IP_NAME does, its key features, and intended use cases.
+_(Update this section with the actual IP description before completing Step 1.)_
+
+## Design Architecture
+
+> Populated by Step 3 (rtl)
+
+[TBD]
+
+## Register Map
+
+Full register map: [doc/IP_NAME_regs.html](doc/IP_NAME_regs.html)
+
+> Populated by Step 2 (rdl) — update link once HTML is generated.
+
+## Interfaces
+
+> Populated by Step 3 (rtl)
+
+[TBD]
+
+## Simulation Results
+
+> Populated by Step 4 (directed_tests)
+
+[TBD]
+
+## Formal Verification Results
+
+> Populated by Step 5 (formal)
+
+[TBD]
+
+## UVM Verification Results
+
+> Populated by Step 6 (uvm)
+
+[TBD]
+
+## Lint Results
+
+> Populated by Step 8 (lint)
+
+[TBD]
+
+## Firmware
+
+### Code Size
+
+> Populated by Step 9 (firmware)
+
+[TBD]
+
+### API Summary
+
+> Populated by Step 9 (firmware)
+
+[TBD]
+
+## Synthesis Results
+
+> Populated by Step 10 (synthesis)
+
+[TBD]
+```
+
+---
+
+### 5. Generate skeleton `IP_NAME/doc/spec.md`
 
 Sections: Overview, Features, Register Map (TBD), Interfaces, Timing, Known Limitations.
 
@@ -272,6 +351,7 @@ Run `ls -R IP_NAME/` and assert all required directories exist.
 | Artifact | Description |
 |----------|-------------|
 | `IP_NAME/` | Full directory tree |
+| `IP_NAME/README.md` | Top-level documentation skeleton (all sections present, filled by each agent) |
 | `IP_NAME/setup.sh` | Exports `CLAUDE_<IP_NAME>_PATH` and all tool paths |
 | `IP_NAME/cleanup.sh` | Idempotent artifact removal (guards on env var) |
 | `IP_NAME/doc/spec.md` | Skeleton specification document |

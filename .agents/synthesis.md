@@ -49,6 +49,18 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
    - Warning text, tool, and line reference.
    - Root cause analysis.
    - Disposition: fixed, accepted with justification, or tracked for future fix.
+6. Update `README.md` — replace the `[TBD]` placeholder in **Synthesis Results** with a
+   summary table drawn from the three reports:
+
+   ```markdown
+   | Tool     | Target Part       | LUTs / Cells | FFs  | Fmax / WNS     |
+   |----------|-------------------|--------------|------|----------------|
+   | Yosys    | generic           | NNN cells    | NNN  | N logic levels |
+   | Vivado   | xc7a35tcpg236-1   | NNN LUTs     | NNN  | WNS +N.Nns     |
+   | Quartus  | 5CSEBA6U23I7      | NNN ALMs     | NNN  | Fmax NNN MHz   |
+   ```
+
+   Include tool versions and the date results were generated.
 
 ## Outputs
 

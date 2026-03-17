@@ -55,6 +55,21 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
 9. Write `firmware/examples/main.c`:
    - Self-contained example demonstrating every public API function.
    - Compiles cleanly against `libIP_NAME.a`.
+10. Update `README.md` — replace both `[TBD]` placeholders in the **Firmware** section:
+    - **Code Size**: run `size firmware/lib/libIP_NAME.a` and report `.text`, `.data`, and
+      `.bss` bytes for the driver object. Include the GCC version, target architecture
+      (`-march` flag), and optimization level used.
+
+      ```markdown
+      | Section | Bytes |
+      |---------|-------|
+      | .text   | NNN   |
+      | .data   | NN    |
+      | .bss    | NN    |
+      ```
+
+    - **API Summary**: table of every public function with its signature and a one-line
+      description drawn from the Doxygen `@brief` field.
 
 ## Outputs
 

@@ -6,9 +6,10 @@ Step 5 complete (formal verification passing) and all directed tests passing; Vi
 
 ## Prerequisites
 
-- `verification/work/icarus/results.log` and `verification/work/ghdl/results.log` both
-  contain `PASS`.
-- `verification/formal/results.log` contains `PASS`.
+- All eight directed-test results logs contain `PASS`
+  (`verification/work/icarus/<proto>_sv/results.log` ×4 and
+  `verification/work/ghdl/<proto>_vhdl/results.log` ×4).
+- `verification/formal/results.log` final line is `OVERALL: PASS`.
 - `verification/testbench/`, `verification/tests/`, `verification/tasks/` exist and
   are populated from Step 4.
 - `IP_COMMON_PATH` is set (sourced from `setup.sh`).
@@ -42,17 +43,33 @@ explaining why. Deviations without a comment are a quality-gate failure.
 
 ## Responsibilities
 
-1. Build a UVM verification environment under `verification/testbench/uvm/`:
-   - `env/IP_NAME_env.sv` — UVM env, scoreboard (uses behavioral model from Step 3),
-     coverage collector.
-   - `agent/IP_NAME_agent.sv` — UVM agent: sequencer, driver, monitor for the target
-     bus protocol.
-   - `seq/IP_NAME_seq_lib.sv` — Reusable sequence library: register read, register write,
-     burst, reset-during-transaction.
+1. Build a UVM verification environment under `verification/testbench/uvm/`.
+
+   Because each bus protocol is a **separate top-level entity**, there is one UVM agent
+   per protocol. All agents share a single UVM env, scoreboard, and sequence library.
+   The env is parameterized so the same scoreboard and coverage collector works with any
+   protocol agent.
+
+   Structure:
+
+   - `env/IP_NAME_env.sv` — UVM env: scoreboard (uses behavioral model from Step 3),
+     coverage collector. Protocol-agnostic; instantiated by each protocol's test top.
+   - `agent/IP_NAME_ahb_agent.sv` — UVM agent for AHB-Lite: sequencer, driver, monitor.
+   - `agent/IP_NAME_apb_agent.sv` — UVM agent for APB4: sequencer, driver, monitor.
+   - `agent/IP_NAME_axi4l_agent.sv` — UVM agent for AXI4-Lite: sequencer, driver, monitor.
+   - `agent/IP_NAME_wb_agent.sv` — UVM agent for Wishbone B4: sequencer, driver, monitor.
+   - `seq/IP_NAME_seq_lib.sv` — Reusable protocol-agnostic sequences: register read,
+     register write, burst, reset-during-transaction.
    - `tests/IP_NAME_test_smoke.sv` — Smoke: basic write/read of every register.
    - `tests/IP_NAME_test_full_reg.sv` — Full register: all access types, all fields.
    - `tests/IP_NAME_test_stress.sv` — Stress: back-to-back random transactions.
-   - `top/IP_NAME_tb_top.sv` — Sim top: DUT instantiation, clocking, `run_test()`.
+   - `top/IP_NAME_ahb_tb_top.sv` — Sim top for AHB-Lite DUT: instantiates `IP_NAME_ahb`,
+     clocking, and `run_test()`.
+   - `top/IP_NAME_apb_tb_top.sv` — Sim top for APB4 DUT.
+   - `top/IP_NAME_axi4l_tb_top.sv` — Sim top for AXI4-Lite DUT.
+   - `top/IP_NAME_wb_tb_top.sv` — Sim top for Wishbone B4 DUT.
+
+   Each `top/` file instantiates only its named top-level entity — no DUT-selection defines.
 2. Functional coverage must include:
    - All registers written and read at least once.
    - All field access-type combinations (RW, RO, WO, W1C, etc.).
@@ -69,26 +86,46 @@ explaining why. Deviations without a comment are a quality-gate failure.
    - `verification/tools/cov_IP_NAME.py` — merges Vivado coverage databases and
      generates an HTML report in `verification/work/vivado/coverage/`.
 7. Document the UVM architecture in `doc/uvm_arch.md`:
-   - ASCII or Mermaid block diagram.
+   - ASCII or Mermaid block diagram showing the four-agent / shared-env structure.
    - Description of each component's role.
-   - Coverage model summary.
+   - Coverage model summary including which covergroups are protocol-specific vs. shared.
+8. Update `README.md` — replace the `[TBD]` placeholder in **UVM Verification Results** with
+   a table of every test × protocol combination and its result:
+
+   ```markdown
+   | Test         | Protocol | Simulator | Result | Func. Coverage |
+   |--------------|----------|-----------|--------|----------------|
+   | uvm_smoke    | AHB      | vivado    | PASS   | 100%           |
+   | uvm_smoke    | APB      | vivado    | PASS   | 100%           |
+   | uvm_smoke    | AXI4L    | vivado    | PASS   | 100%           |
+   | uvm_smoke    | WB       | vivado    | PASS   | 100%           |
+   | uvm_full_reg | AHB      | vivado    | PASS   | 100%           |
+   ...
+   ```
+
+   Include code coverage summary (line %, branch %, toggle %), a link to `doc/uvm_arch.md`,
+   the Vivado version, and the date results were generated.
 
 ## Outputs
 
 | Artifact | Description |
 |----------|-------------|
 | `verification/testbench/uvm/env/` | UVM environment, scoreboard, coverage |
-| `verification/testbench/uvm/agent/` | UVM agent (sequencer, driver, monitor) |
+| `verification/testbench/uvm/agent/IP_NAME_ahb_agent.sv` | AHB-Lite UVM agent |
+| `verification/testbench/uvm/agent/IP_NAME_apb_agent.sv` | APB4 UVM agent |
+| `verification/testbench/uvm/agent/IP_NAME_axi4l_agent.sv` | AXI4-Lite UVM agent |
+| `verification/testbench/uvm/agent/IP_NAME_wb_agent.sv` | Wishbone B4 UVM agent |
 | `verification/testbench/uvm/seq/` | Reusable sequence library |
-| `verification/testbench/uvm/tests/` | UVM test classes |
-| `verification/testbench/uvm/top/` | Simulation top module |
-| `verification/tools/sim_IP_NAME.py` | Updated with UVM test support |
+| `verification/testbench/uvm/tests/` | UVM test classes (shared across protocols) |
+| `verification/testbench/uvm/top/IP_NAME_<proto>_tb_top.sv` | Sim top per protocol (×4) |
+| `verification/tools/sim_IP_NAME.py` | Updated with `--uvm-test` and `--proto` support |
 | `verification/tools/cov_IP_NAME.py` | Coverage merge and report script |
 | `doc/uvm_arch.md` | UVM architecture documentation |
 
 ## Quality Gate
 
-- All three UVM tests (smoke, full_reg, stress) pass in Vivado xsim.
-- Functional coverage closure reaches 100% on all required bins.
-- `verification/work/vivado/*/results.log` contains `PASS` for each test.
+- All twelve UVM combinations (3 tests × 4 protocols) pass in Vivado xsim.
+- Functional coverage closure reaches 100% on all required bins for all protocols.
+- `verification/work/vivado/<proto>/<test>/results.log` contains `PASS` for every combination.
 - No UVM test bypasses the scoreboard.
+- Each `top/IP_NAME_<proto>_tb_top.sv` instantiates only its named DUT — no DUT-selection defines.

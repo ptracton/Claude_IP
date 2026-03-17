@@ -57,6 +57,23 @@ IP/common/
 
 ---
 
+## SystemVerilog Interface Prohibition (mandatory for all sub-agents)
+
+**RULE — Do NOT use SystemVerilog `interface` constructs anywhere in this project.**
+
+Icarus Verilog does not support SV `interface` blocks. Since Icarus is a required
+simulator for all directed tests, `interface` is forbidden in every RTL source file,
+every testbench, every BFM task library, and every UVM file in this project.
+
+All inter-module connections — including the internal register-access bus between
+`IP_NAME_<proto>_if`, `IP_NAME_regfile`, and `IP_NAME_core` — must be expressed as
+explicit individual `input` / `output` ports on every module boundary. No exceptions.
+
+Any code that uses `interface`, `modport`, or `virtual interface` is a quality-gate
+failure and must be rewritten before the step can be marked complete.
+
+---
+
 ## IP Name Substitution Rule (mandatory for all sub-agents)
 
 Throughout these agent documents the string `IP_NAME` is used as a placeholder only.
@@ -173,6 +190,7 @@ IP/
 │   └── doc/                                # Shared documentation templates
 │
 └── IP_NAME/
+├── README.md                               # Top-level documentation (progressively filled by each sub-agent)
 ├── cleanup.sh                              # Removes all build/sim artifacts
 ├── setup.sh                                # Exports environment variables and tool paths
 ├── design/

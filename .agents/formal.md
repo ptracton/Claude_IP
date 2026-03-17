@@ -6,8 +6,9 @@ Step 4 complete and all directed tests passing.
 
 ## Prerequisites
 
-- `verification/work/icarus/results.log` and `verification/work/ghdl/results.log` both
-  contain `PASS`.
+- All eight directed-test results logs
+  (`verification/work/icarus/<proto>_sv/results.log` ×4 and
+  `verification/work/ghdl/<proto>_vhdl/results.log` ×4) contain `PASS`.
 - `design/rtl/verilog/` populated with parse-clean RTL sources.
 - `verification/formal/` directory exists.
 - `verification/tools/formal_IP_NAME.py` skeleton exists from Step 1.
@@ -44,32 +45,50 @@ explaining why.
 
 ### 1. Write SVA property files
 
-Write SystemVerilog Assertion (SVA) property files in `verification/formal/`:
+Because each bus protocol is a **separate top-level entity**, write one SVA bind file
+per top-level. Each bind file instantiates common protocol invariants from
+`${IP_COMMON_PATH}/verification/formal/bus_protocol_props.sv` and adds
+IP-specific functional properties.
 
-- `IP_NAME_props.sv` — bind file containing all formal properties for the IP core.
-  Must include at minimum:
-  - **Reset properties**: after reset is asserted, all outputs reach their documented
-    reset values within one clock cycle.
-  - **Bus-protocol properties**: for each supported bus interface, assert that the
-    adapter never violates the protocol specification (e.g., no write response before
-    write address, no read data without a pending read).
-  - **Register-access properties**: a write followed by a read to the same address
-    (with no intervening write) returns the written value for RW registers; RO registers
-    never change due to a write.
-  - **Cover properties**: at least one `cover` statement per register demonstrating
-    that the register is reachable and can be written and read.
+Files in `verification/formal/`:
+
+| File | Bound to top-level |
+|------|--------------------|
+| `IP_NAME_ahb_props.sv` | `IP_NAME_ahb` |
+| `IP_NAME_apb_props.sv` | `IP_NAME_apb` |
+| `IP_NAME_axi4l_props.sv` | `IP_NAME_axi4l` |
+| `IP_NAME_wb_props.sv` | `IP_NAME_wb` |
+
+Each property file must include at minimum:
+- **Reset properties** (from `${IP_COMMON_PATH}/verification/formal/reset_props.sv`):
+  after reset, all outputs reach documented reset values within one clock cycle.
+- **Bus-protocol invariants** (from `${IP_COMMON_PATH}/verification/formal/bus_protocol_props.sv`):
+  the bus interface never violates its protocol specification.
+- **Register-access properties**: a write followed by a read to the same address
+  (no intervening write) returns the written value for RW registers; RO registers
+  never change due to a write.
+- **Cover properties**: at least one `cover` statement per register, reachable via
+  the specific bus protocol for this top-level.
 
 ### 2. Write SymbiYosys configuration files
 
-Create one `.sby` configuration file per verification task in `verification/formal/`:
+Create BMC and cover `.sby` files per top-level per task in `verification/formal/`:
 
-- `IP_NAME_bmc.sby` — Bounded Model Checking: prove all `assert` properties hold for
-  at least 20 clock cycles.
-- `IP_NAME_cover.sby` — Cover checking: prove all `cover` properties are reachable.
-- `IP_NAME_prove.sby` — (optional, if design depth permits) Unbounded proof using
-  k-induction or PDR.
+| File | Top-level | Task |
+|------|-----------|------|
+| `IP_NAME_ahb_bmc.sby` | `IP_NAME_ahb` | BMC (20 cycles) |
+| `IP_NAME_ahb_cover.sby` | `IP_NAME_ahb` | Cover reachability |
+| `IP_NAME_apb_bmc.sby` | `IP_NAME_apb` | BMC (20 cycles) |
+| `IP_NAME_apb_cover.sby` | `IP_NAME_apb` | Cover reachability |
+| `IP_NAME_axi4l_bmc.sby` | `IP_NAME_axi4l` | BMC (20 cycles) |
+| `IP_NAME_axi4l_cover.sby` | `IP_NAME_axi4l` | Cover reachability |
+| `IP_NAME_wb_bmc.sby` | `IP_NAME_wb` | BMC (20 cycles) |
+| `IP_NAME_wb_cover.sby` | `IP_NAME_wb` | Cover reachability |
 
-Each `.sby` file structure:
+Optional: `IP_NAME_<proto>_prove.sby` for unbounded proof via k-induction or PDR if
+the design depth permits.
+
+Each `.sby` file follows this structure (example for `IP_NAME_ahb_bmc.sby`):
 
 ```
 [options]
@@ -82,16 +101,23 @@ smtbmc boolector
 [script]
 read -formal design/rtl/verilog/IP_NAME_reg_pkg.sv
 read -formal design/rtl/verilog/IP_NAME_regfile.sv
-read -formal design/rtl/verilog/IP_NAME.sv
-read -formal verification/formal/IP_NAME_props.sv
-prep -top IP_NAME
+read -formal design/rtl/verilog/IP_NAME_core.sv
+read -formal design/rtl/verilog/IP_NAME_ahb_if.sv
+read -formal design/rtl/verilog/IP_NAME_ahb.sv
+read -formal verification/formal/IP_NAME_ahb_props.sv
+prep -top IP_NAME_ahb
 
 [files]
 design/rtl/verilog/IP_NAME_reg_pkg.sv
 design/rtl/verilog/IP_NAME_regfile.sv
-design/rtl/verilog/IP_NAME.sv
-verification/formal/IP_NAME_props.sv
+design/rtl/verilog/IP_NAME_core.sv
+design/rtl/verilog/IP_NAME_ahb_if.sv
+design/rtl/verilog/IP_NAME_ahb.sv
+verification/formal/IP_NAME_ahb_props.sv
 ```
+
+Repeat the pattern for `apb`, `axi4l`, and `wb`, substituting the top-level name in
+`prep -top` and the property file in the file lists.
 
 All file paths in `.sby` files must be relative to `CLAUDE_IP_NAME_PATH` and use the
 `CLAUDE_IP_NAME_PATH` environment variable via shell expansion in the runner script —
@@ -102,10 +128,11 @@ never hardcoded absolute paths.
 Replace the Step 1 skeleton with a full implementation:
 
 - Guards on `CLAUDE_IP_NAME_PATH` at startup.
-- Accepts `--task {bmc,cover,prove,all}` (default: `all`).
+- Accepts `--proto {ahb,apb,axi4l,wb,all}` and `--task {bmc,cover,prove,all}`
+  (defaults: `all`/`all`).
 - Resolves all paths relative to `CLAUDE_IP_NAME_PATH`.
-- Runs `sby -f <task>.sby` for each selected task from the `verification/formal/`
-  working directory.
+- Runs `sby -f IP_NAME_<proto>_<task>.sby` for each selected combination from the
+  `verification/formal/` working directory.
 - Captures stdout/stderr per task.
 - Writes `verification/formal/results.log`:
   - One line per task: `PASS: IP_NAME_bmc` or `FAIL: IP_NAME_bmc`.
@@ -123,7 +150,8 @@ import sys
 from pathlib import Path
 
 
-TASKS = ["bmc", "cover"]  # add "prove" if unbounded proof is included
+PROTOS = ["ahb", "apb", "axi4l", "wb"]
+TASKS  = ["bmc", "cover"]  # add "prove" if unbounded proof is included
 
 
 def main():
@@ -138,26 +166,27 @@ def main():
     results_log = formal_dir / "results.log"
 
     parser = argparse.ArgumentParser(description="Run formal verification for IP_NAME")
-    parser.add_argument("--task", choices=TASKS + ["all"], default="all")
+    parser.add_argument("--proto", choices=PROTOS + ["all"], default="all")
+    parser.add_argument("--task",  choices=TASKS  + ["all"], default="all")
     args = parser.parse_args()
 
-    tasks = TASKS if args.task == "all" else [args.task]
+    protos = PROTOS if args.proto == "all" else [args.proto]
+    tasks  = TASKS  if args.task  == "all" else [args.task]
     results = {}
 
-    for task in tasks:
-        sby_file = formal_dir / f"IP_NAME_{task}.sby"
-        print(f"Running formal task: {task}")
-        ret = subprocess.run(
-            ["sby", "-f", str(sby_file)],
-            cwd=formal_dir,
-        )
-        results[task] = "PASS" if ret.returncode == 0 else "FAIL"
+    for proto in protos:
+        for task in tasks:
+            key     = f"IP_NAME_{proto}_{task}"
+            sby_file = formal_dir / f"{key}.sby"
+            print(f"Running formal: {key}")
+            ret = subprocess.run(["sby", "-f", str(sby_file)], cwd=formal_dir)
+            results[key] = "PASS" if ret.returncode == 0 else "FAIL"
 
     with open(results_log, "w") as f:
-        for task, result in results.items():
-            f.write(f"{result}: IP_NAME_{task}\n")
+        for key, result in results.items():
+            f.write(f"{result}: {key}\n")
         overall = "PASS" if all(r == "PASS" for r in results.values()) else "FAIL"
-        f.write(f"{overall}\n")
+        f.write(f"OVERALL: {overall}\n")
 
     print(f"Formal verification: {overall}")
     sys.exit(0 if overall == "PASS" else 1)
@@ -171,28 +200,55 @@ Apply the `IP_NAME` substitution throughout before writing the file.
 
 ### 4. Run and verify
 
-Run `formal_IP_NAME.py --task all` and confirm:
+Run `formal_IP_NAME.py --proto all --task all` and confirm:
 
-- `verification/formal/results.log` contains `PASS`.
-- No unbounded counterexample is produced by BMC within 20 cycles.
-- All cover properties are reachable.
+- `verification/formal/results.log` contains `OVERALL: PASS`.
+- All eight BMC runs (4 protocols × bmc + cover) produce no counterexample within 20 cycles.
+- All cover properties are reachable for each top-level.
+
+### 5. Update `README.md`
+
+Replace the `[TBD]` placeholder in **Formal Verification Results** with:
+
+- A table of every proto × task combination and its result:
+
+  ```markdown
+  | Top-level       | Task  | Engine           | Depth | Result |
+  |-----------------|-------|------------------|-------|--------|
+  | IP_NAME_ahb     | BMC   | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_ahb     | Cover | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_apb     | BMC   | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_apb     | Cover | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_axi4l   | BMC   | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_axi4l   | Cover | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_wb      | BMC   | smtbmc/boolector | 20    | PASS   |
+  | IP_NAME_wb      | Cover | smtbmc/boolector | 20    | PASS   |
+  ```
+
+- A brief list of the properties checked (reset, bus-protocol invariants per protocol,
+  register read-back, cover reachability).
+- The Yosys/SymbiYosys version used and the date results were generated.
 
 ## Outputs
 
 | Artifact | Description |
 |----------|-------------|
-| `verification/formal/IP_NAME_props.sv` | SVA property and cover file |
-| `verification/formal/IP_NAME_bmc.sby` | SymbiYosys BMC configuration |
-| `verification/formal/IP_NAME_cover.sby` | SymbiYosys cover configuration |
-| `verification/formal/IP_NAME_prove.sby` | SymbiYosys unbounded proof config (optional) |
+| `verification/formal/IP_NAME_ahb_props.sv` | SVA properties bound to `IP_NAME_ahb` |
+| `verification/formal/IP_NAME_apb_props.sv` | SVA properties bound to `IP_NAME_apb` |
+| `verification/formal/IP_NAME_axi4l_props.sv` | SVA properties bound to `IP_NAME_axi4l` |
+| `verification/formal/IP_NAME_wb_props.sv` | SVA properties bound to `IP_NAME_wb` |
+| `verification/formal/IP_NAME_<proto>_bmc.sby` | SymbiYosys BMC config (one per protocol) |
+| `verification/formal/IP_NAME_<proto>_cover.sby` | SymbiYosys cover config (one per protocol) |
+| `verification/formal/IP_NAME_<proto>_prove.sby` | Unbounded proof config, optional |
 | `verification/tools/formal_IP_NAME.py` | Completed formal verification runner |
-| `verification/formal/results.log` | Per-task and overall `PASS` / `FAIL` |
+| `verification/formal/results.log` | Per proto×task and overall `PASS` / `FAIL` |
 
 ## Quality Gate
 
-- `formal_IP_NAME.py --task all` exits 0.
-- `verification/formal/results.log` final line is `PASS`.
-- BMC reaches depth 20 with no counterexample.
-- All `cover` properties are reachable (SymbiYosys reports `reached`).
+- `formal_IP_NAME.py --proto all --task all` exits 0.
+- `verification/formal/results.log` final line is `OVERALL: PASS`.
+- All eight BMC+cover runs (4 protocols × 2 tasks) pass.
+- No counterexample produced by any BMC run within 20 cycles.
+- All `cover` properties are reachable for every top-level.
 - No hardcoded absolute paths in any `.sby` file or in `formal_IP_NAME.py`.
 - All SVA property names follow the naming convention from `VerilogCodingStyle.md`.

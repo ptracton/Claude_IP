@@ -39,8 +39,20 @@ resolved without extra configuration in each IP.
    - Runs verilator and/or VHDL linter based on `--lang`.
    - Writes `verification/lint/lint_results.log` containing `PASS` or `FAIL`.
    - Exits non-zero on any un-waived warning or error.
-6. Coordinate with the `regression` sub-agent (Step 6): `lint_IP_NAME.py` exit code
+6. Coordinate with the `regression` sub-agent (Step 7): `lint_IP_NAME.py` exit code
    must be propagated correctly by `regression_IP_NAME.py`.
+7. Update `README.md` — replace the `[TBD]` placeholder in **Lint Results** with:
+   - Overall result (`PASS` / `FAIL`) for each language:
+
+     ```markdown
+     | Language | Tool       | Warnings | Waivers | Result |
+     |----------|------------|----------|---------|--------|
+     | SV       | Verilator  | 0        | 0       | PASS   |
+     | VHDL     | vhdl_ls    | 0        | 0       | PASS   |
+     ```
+
+   - If waivers exist (testbench files only), list them with their justifications.
+   - Verilator and vhdl_ls versions and the date results were generated.
 
 ## Outputs
 
