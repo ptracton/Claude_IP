@@ -17,15 +17,16 @@ package require ::quartus::flow
 # -------------------------------------------------------------------------
 # Locate RTL source files
 # -------------------------------------------------------------------------
-set script_dir [file normalize [file dirname [info script]]]
-set rtl_dir    [file normalize "$script_dir/../../design/rtl/verilog"]
+set script_dir  [file normalize [file dirname [info script]]]
+set rtl_dir     [file normalize "$script_dir/../../design/rtl/verilog"]
+set common_dir  [file normalize "$script_dir/../../../../common/design/rtl/verilog"]
 
 set rtl_files [list \
-    "$rtl_dir/timer_reg_pkg.sv"  \
-    "$rtl_dir/timer_regfile.sv"  \
-    "$rtl_dir/timer_core.sv"     \
-    "$rtl_dir/timer_apb_if.sv"   \
-    "$rtl_dir/timer_apb.sv"      \
+    "$rtl_dir/timer_reg_pkg.sv"      \
+    "$rtl_dir/timer_regfile.sv"      \
+    "$rtl_dir/timer_core.sv"         \
+    "$common_dir/claude_apb_if.sv"   \
+    "$rtl_dir/timer_apb.sv"          \
 ]
 
 # -------------------------------------------------------------------------

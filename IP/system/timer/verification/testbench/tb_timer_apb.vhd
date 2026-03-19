@@ -13,7 +13,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.timer_test_pkg.all;
+use work.ip_test_pkg.all;
 
 entity tb_timer_apb is
 end entity tb_timer_apb;
@@ -102,8 +102,9 @@ begin
   -- APB read:  SETUP fires rd_en; ACCESS provides PRDATA
   -- -------------------------------------------------------------------------
   p_stim : process is
-    variable rdata_v : std_ulogic_vector(31 downto 0);
-    variable timeout : integer;
+    variable rdata_v     : std_ulogic_vector(31 downto 0);
+    variable saved_count : std_ulogic_vector(31 downto 0);
+    variable timeout     : integer;
   begin
     rst_n   <= '0';
     PSEL    <= '0';
@@ -207,18 +208,27 @@ begin
     wait until rising_edge(clk); PSEL <= '0'; PENABLE <= '0'; PWRITE <= '0';
 
     -- ---- Test: COUNT read-only ----
+    -- Read COUNT before write attempt (save baseline)
+    wait until rising_edge(clk);
+    PSEL <= '1'; PENABLE <= '0'; PADDR <= x"00C"; PWRITE <= '0';
+    wait until rising_edge(clk); PENABLE <= '1';
+    wait until rising_edge(clk); saved_count := PRDATA;
+    PSEL <= '0'; PENABLE <= '0';
+
+    -- Attempt write to COUNT (should be no-op)
     wait until rising_edge(clk);
     PSEL <= '1'; PENABLE <= '0'; PADDR <= x"00C"; PWRITE <= '1';
     PWDATA <= x"FFFFFFFF"; PSTRB <= x"F";
     wait until rising_edge(clk); PENABLE <= '1';
     wait until rising_edge(clk); PSEL <= '0'; PENABLE <= '0'; PWRITE <= '0';
 
+    -- Read COUNT again: must equal saved value (write was ignored)
     wait until rising_edge(clk);
     PSEL <= '1'; PENABLE <= '0'; PADDR <= x"00C"; PWRITE <= '0';
     wait until rising_edge(clk); PENABLE <= '1';
     wait until rising_edge(clk); rdata_v := PRDATA;
     PSEL <= '0'; PENABLE <= '0';
-    check_eq(rdata_v, x"00000000", "COUNT read-only");
+    check_eq(rdata_v, saved_count, "COUNT read-only");
 
     test_done("test_rw");
 

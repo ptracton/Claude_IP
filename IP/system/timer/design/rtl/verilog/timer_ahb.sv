@@ -1,6 +1,6 @@
 // timer_ahb.sv — AHB-Lite top-level for Timer IP.
 //
-// Instantiates timer_ahb_if, timer_regfile, and timer_core.
+// Instantiates claude_ahb_if, timer_regfile, and timer_core.
 // Contains no logic — only port declarations and submodule wiring.
 //
 // Parameters:
@@ -69,7 +69,7 @@ module timer_ahb #(
   // -------------------------------------------------------------------------
   // Bus interface submodule
   // -------------------------------------------------------------------------
-  timer_ahb_if #(
+  claude_ahb_if #(
     .DATA_W (DATA_W),
     .ADDR_W (ADDR_W)
   ) u_ahb_if (

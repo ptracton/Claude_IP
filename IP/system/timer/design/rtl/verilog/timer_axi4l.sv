@@ -1,6 +1,6 @@
 // timer_axi4l.sv — AXI4-Lite top-level for Timer IP.
 //
-// Instantiates timer_axi4l_if, timer_regfile, and timer_core.
+// Instantiates claude_axi4l_if, timer_regfile, and timer_core.
 // Contains no logic — only port declarations and submodule wiring.
 //
 // Parameters:
@@ -82,7 +82,7 @@ module timer_axi4l #(
   // -------------------------------------------------------------------------
   // Bus interface submodule
   // -------------------------------------------------------------------------
-  timer_axi4l_if #(
+  claude_axi4l_if #(
     .DATA_W (DATA_W),
     .ADDR_W (ADDR_W)
   ) u_axi4l_if (

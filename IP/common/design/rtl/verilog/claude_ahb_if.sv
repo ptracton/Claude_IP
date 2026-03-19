@@ -1,7 +1,9 @@
-// timer_ahb_if.sv — AHB-Lite bus interface for Timer IP.
+// claude_ahb_if.sv — AHB-Lite bus-to-regfile bridge (shared Claude IP component).
 //
 // Translates AHB-Lite transactions into the flat register-file access bus
 // (wr_en / wr_addr / wr_data / wr_strb / rd_en / rd_addr / rd_data).
+// This module is protocol-generic and contains no IP-specific logic.
+// It is shared across all Claude IP blocks that expose an AHB-Lite slave port.
 //
 // Protocol notes:
 //   - Two-phase pipeline: address phase then data phase.
@@ -26,7 +28,7 @@
 //   wr_en, wr_addr, wr_data, wr_strb — write channel
 //   rd_en, rd_addr, rd_data          — read channel
 
-module timer_ahb_if #(
+module claude_ahb_if #(
   parameter int unsigned DATA_W = 32, // data bus width
   parameter int unsigned ADDR_W = 4   // regfile word-address width
 ) (
@@ -111,4 +113,4 @@ module timer_ahb_if #(
   assign HREADY = 1'b1;
   assign HRESP  = 1'b0; // OKAY
 
-endmodule : timer_ahb_if
+endmodule : claude_ahb_if

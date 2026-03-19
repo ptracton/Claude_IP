@@ -66,7 +66,7 @@ module tb_timer_wb;
   // BFM task library and directed test tasks
   // -------------------------------------------------------------------------
   `include "tasks_wb.sv"
-  `include "timer_test_pkg.sv"
+  `include "ip_test_pkg.sv"
   `include "test_reset.sv"
   `include "test_rw.sv"
   `include "test_back2back.sv"

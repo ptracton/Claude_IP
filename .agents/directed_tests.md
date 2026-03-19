@@ -92,13 +92,25 @@ Each VHDL testbench instantiates its named VHDL DUT and drives all tests.
 All VHDL testbenches must `use work.IP_NAME_test_pkg.all` and call `test_start()`,
 `test_done()`, and `check_eq()` from the shared test package (see item 2a below).
 
-#### 2a. Write `verification/tests/IP_NAME_test_pkg.vhd`
+#### 2a. VHDL test package — use common `ip_test_pkg`
 
-A shared VHDL package that provides verbose, formatted test output functions usable by
-all four VHDL testbenches:
+**Do NOT create a per-IP test package.** A generic VHDL-2008 test package already exists
+at `${IP_COMMON_PATH}/verification/tests/ip_test_pkg.vhd`. All four VHDL testbenches must
+use it directly:
 
 ```vhdl
-package IP_NAME_test_pkg is
+use work.ip_test_pkg.all;
+```
+
+The package provides `test_start`, `test_done`, and `check_eq` with the same signatures as
+the old per-IP package. There is also a matching SV include file at
+`${IP_COMMON_PATH}/verification/tests/ip_test_pkg.sv` — SV testbenches use
+`` `include "ip_test_pkg.sv" `` (resolved via the `-I` include path set in the runner).
+
+The package interface:
+
+```vhdl
+package ip_test_pkg is
   shared variable chk_num : integer := 0;  -- GHDL needs -frelaxed for this
   procedure test_start(name : string);
   procedure test_done(name : string);
@@ -120,13 +132,40 @@ use a protected type. `chk_num : integer` is not protected. Compile GHDL with `-
 to downgrade this to a warning. **Add `-frelaxed` to every GHDL command** (analyze,
 elaborate, simulate) in `sim_IP_NAME.py`.
 
-**Compilation order**: `IP_NAME_test_pkg.vhd` **must be analyzed before any testbench**
-that uses it. Place it first in the `vhdl_files()` list in `sim_IP_NAME.py`, before the
-testbench `.vhd` file.
+**Compilation order**: `ip_test_pkg.vhd` **must be analyzed before any testbench** that
+uses it. In `sim_IP_NAME.py`, build a `COMMON_TESTS` path:
+```python
+common_tests = os.path.join(common_path, "verification", "tests")
+```
+and place `os.path.join(common_tests, "ip_test_pkg.vhd")` first in the VHDL file list.
+For Icarus, add `common_tests` to the `-I` include dir list so SV testbenches find
+`ip_test_pkg.sv`.
 
 **Check patterns for masked STATUS bits**: use `check_eq(rdata and x"00000001", x"00000001",
 "STATUS.INTR set")` rather than inline `if rdata(0) /= '1' then report...`. This ensures
 `check_eq` counts the check and prints the formatted output.
+
+**Read-only register test pattern**: Never hardcode the expected value of a hardware-updated
+register (COUNT, CAPTURE, STATUS.ACTIVE) after the timer has been running. The counter value
+at any given point depends on timing, safe_load_val behavior, and protocol latency. Instead,
+use a **read-before/write/read-after** pattern:
+
+```vhdl
+-- Read COUNT before write attempt (save baseline)
+-- ... drive bus read to 0x00C, capture rdata into saved_count ...
+saved_count := HRDATA;  -- or PRDATA, RDATA, DAT_O depending on protocol
+
+-- Attempt write to COUNT (should be ignored — it is read-only)
+-- ... drive bus write of 0xFFFFFFFF to 0x00C ...
+
+-- Read COUNT again — must equal saved value (write was ignored)
+-- ... drive bus read to 0x00C, capture rdata ...
+check_eq(rdata_v, saved_count, "COUNT read-only");
+```
+
+Declare `variable saved_count : std_ulogic_vector(31 downto 0);` in the process variable
+declarations alongside `rdata_v` and `timeout`. This pattern is protocol-agnostic and
+works regardless of what value the hardware counter currently holds.
 
 ### 3. Write reusable BFM task libraries
 

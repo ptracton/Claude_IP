@@ -45,8 +45,8 @@ add_files -norecurse [list \
     "${rtl_dir}/timer_reg_pkg.sv" \
     "${rtl_dir}/timer_regfile.sv" \
     "${rtl_dir}/timer_core.sv"    \
-    "${rtl_dir}/timer_wb_if.sv"   \
-    "${rtl_dir}/timer_wb.sv"      \
+    "${common_dir}/design/rtl/verilog/claude_wb_if.sv" \
+    "${rtl_dir}/timer_wb.sv"                          \
 ]
 
 foreach f [get_files -of_objects [get_filesets sources_1] -filter {FILE_EXT == ".sv"}] {

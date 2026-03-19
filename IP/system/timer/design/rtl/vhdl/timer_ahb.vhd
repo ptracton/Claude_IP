@@ -1,6 +1,6 @@
 -- timer_ahb.vhd — AHB-Lite top-level for Timer IP (VHDL-2008).
 --
--- Instantiates timer_ahb_if, timer_regfile, and timer_core.
+-- Instantiates claude_ahb_if, timer_regfile, and timer_core.
 -- Contains no logic — only port declarations and submodule wiring.
 -- Port-for-port equivalent to timer_ahb.sv.
 --
@@ -46,7 +46,7 @@ architecture rtl of timer_ahb is
   -- -------------------------------------------------------------------------
   -- Component declarations
   -- -------------------------------------------------------------------------
-  component timer_ahb_if is
+  component claude_ahb_if is
     generic (
       DATA_W : positive;
       ADDR_W : positive
@@ -71,7 +71,7 @@ architecture rtl of timer_ahb is
       rd_addr : out std_ulogic_vector(ADDR_W - 1 downto 0);
       rd_data : in  std_ulogic_vector(DATA_W - 1 downto 0)
     );
-  end component timer_ahb_if;
+  end component claude_ahb_if;
 
   component timer_regfile is
     port (
@@ -155,7 +155,7 @@ architecture rtl of timer_ahb is
 begin
 
   -- Bus interface submodule
-  u_ahb_if : timer_ahb_if
+  u_ahb_if : claude_ahb_if
     generic map (
       DATA_W => DATA_W,
       ADDR_W => ADDR_W

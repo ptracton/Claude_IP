@@ -128,8 +128,10 @@ module timer_core #(
         // EN just asserted: load counter and mark as active.
         count_q  <= safe_load_val;
         active_q <= 1'b1;
-      end else if (ctrl_restart && active_q) begin
+      end else if (ctrl_en && ctrl_restart && active_q) begin
         // Force-reload: reload without disabling; active_q stays 1.
+        // Guard with ctrl_en to match prescaler behavior — RESTART is a no-op
+        // when the timer is disabled, so !ctrl_en always wins.
         count_q <= safe_load_val;
       end else if (active_q && tick) begin
         if (count_q == {DATA_W{1'b0}}) begin

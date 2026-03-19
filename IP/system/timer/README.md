@@ -125,16 +125,23 @@ SC = self-clearing command bit (reads back as 0; write 1 to trigger one-cycle ac
 
 ## Simulation Results
 
-Directed simulation using Icarus Verilog. Five test sequences run per variant.
+Directed simulation in SystemVerilog (Icarus Verilog) and VHDL-2008 (GHDL). All 8 combinations pass.
 
-| Variant   | Simulator | Tests | Result |
-|-----------|-----------|-------|--------|
-| APB4      | Icarus Verilog 12.0 | reset, rw, back2back, strobe, timer_ops | PASS |
-| AHB-Lite  | Icarus Verilog 12.0 | reset, rw, back2back, strobe, timer_ops | PASS |
-| AXI4-Lite | Icarus Verilog 12.0 | reset, rw, back2back, strobe, timer_ops | PASS |
-| Wishbone  | Icarus Verilog 12.0 | reset, rw, back2back, strobe, timer_ops | PASS |
+| Variant   | Simulator           | Language | Tests                                   | Result |
+|-----------|---------------------|----------|-----------------------------------------|--------|
+| APB4      | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AHB-Lite  | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AXI4-Lite | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| Wishbone  | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| APB4      | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
+| AHB-Lite  | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
+| AXI4-Lite | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
+| Wishbone  | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
 
-Results generated: 2026-03-18. See `verification/work/icarus/*/results.log` for full output.
+Results generated: 2026-03-19.
+See `verification/work/icarus/*/results.log` and `verification/work/ghdl/*/results.log` for full output.
+
+Run all 8 simulations: `bash verification/tools/run_sims.sh`
 
 ## Interactive Simulation (GUI)
 
@@ -246,20 +253,20 @@ All four bus-interface variants verified with 9 properties each (P1–P9) plus 3
 | AXI4-Lite | SymbiYosys   | smtbmc boolector | 20   | 9 assert, 3 cover | PASS |
 | Wishbone  | SymbiYosys   | smtbmc boolector | 20   | 9 assert, 3 cover | PASS |
 
-Results generated: 2026-03-18. See `verification/formal/` for `.sby` scripts and flat wrapper modules.
+Results generated: 2026-03-19. See `verification/formal/` for `.sby` scripts and flat wrapper modules.
 
 **Properties verified (all variants):**
-- P1: `irq == status_intr & ctrl_intr_en` (combinational IRQ gate)
+- P1: `irq == ctrl_intr_en & (ctrl_irq_mode ? hw_intr_set : status_intr)` (IRQ mode-aware gate: level when `IRQ_MODE=0`, one-cycle pulse when `IRQ_MODE=1`)
 - P2: `hw_active` de-asserts within one cycle of `ctrl_en` going low
 - P3: `hw_intr_set` is a maximum one-cycle-wide pulse
 - P4: `trigger_out` is a maximum one-cycle-wide pulse
 - P5: `trigger_out` is gated by `ctrl_trig_en`
-- P6: Counter loads `load_val` one cycle after `ctrl_en` rises
+- P6: Counter loads `load_val` one cycle after `ctrl_en` rises (excluding `load_val=0` which is treated as 1)
 - P7: CTRL register write updates `ctrl_en` next cycle
 - P8: W1C write to STATUS clears `status_intr`
 - P9: `hw_intr_set` sets `status_intr` next cycle
 
-**Assumption:** Degenerate timer configuration (repeat mode, `load_val=0`, `prescale=0`) excluded via formal assumption — this combination causes continuous underflow which is not a meaningful timer operation.
+**Assumption:** Degenerate `load_val=0` excluded from P6 — hardware treats LOAD=0 as 1 (`safe_load_val`).
 
 ## UVM Verification Results
 
@@ -364,23 +371,27 @@ the respective vendor tools (not run as part of the open-source flow).
 
 | Variant   | Top module   | Total cells | Flip-flops | Result |
 |-----------|--------------|-------------|------------|--------|
-| APB4      | timer_apb    | 622         | 236        | PASS   |
-| AHB-Lite  | timer_ahb    | 627         | 236        | PASS   |
-| AXI4-Lite | timer_axi4l  | 713         | 248        | PASS   |
-| Wishbone  | timer_wb     | 625         | 155        | PASS   |
+| APB4      | timer_apb    | 847         | 191        | PASS   |
+| AHB-Lite  | timer_ahb    | 852         | 197        | PASS   |
+| AXI4-Lite | timer_axi4l  | 938         | 273        | PASS   |
+| Wishbone  | timer_wb     | 849         | 192        | PASS   |
 
-Results generated: 2026-03-18. Cell counts use Yosys generic gate library (`synth -flatten`).
+Results generated: 2026-03-19. Cell counts use Yosys 0.60+36 generic gate library (`synth -flatten`).
+Flip-flop count = `$_SDFFE_*` + `$_SDFF_*` cells. Higher count vs. previous run reflects
+CAPTURE register, RESTART/SNAPSHOT command bits, IRQ_MODE, and OVF status additions.
 See `synthesis/yosys/work/synthesis_report.log` for full cell breakdown.
+
+Run: `python3 synthesis/yosys/run_synth.py`
 
 ### Vivado (Zynq-7010 `xc7z010clg400-1`)
 
 Out-of-context synthesis. Top module: `timer_apb`. Clock: 100 MHz.
 
-| Variant | LUTs | FFs | BRAM | DSP | WNS      | Result |
-|---------|------|-----|------|-----|----------|--------|
-| APB4    | 176  | 191 | 0    | 0   | +6.162 ns | PASS   |
+| Variant | LUTs | FFs | BRAM | DSP | WNS       | Result |
+|---------|------|-----|------|-----|-----------|--------|
+| APB4    | 179  | 191 | 0    | 0   | +5.734 ns | PASS   |
 
-Results generated: 2026-03-18. Tool: Vivado 2023.2. Board: Zybo-Z7-10.
+Results generated: 2026-03-19. Tool: Vivado 2023.2. Board: Zybo-Z7-10.
 See `synthesis/vivado/utilization.rpt` and `synthesis/vivado/timing_summary.rpt`.
 
 Run: `python3 synthesis/run_vendor_synth.py --vivado`
@@ -393,7 +404,9 @@ Analysis & Synthesis only (Fitter not run — ALMs require post-fit). Top module
 |---------|-----------|------|-----|--------|
 | APB4    | 191       | 0    | 0   | PASS   |
 
-Results generated: 2026-03-18. Tool: Quartus Prime Lite 23.1. Board: DE0-Nano-SoC (Arrow SoCKit).
+Results generated: 2026-03-19. Tool: Quartus Prime Lite 23.1. Board: DE0-Nano-SoC (Arrow SoCKit).
 See `synthesis/quartus/work/timer_apb.map.rpt`.
+
+Run: `python3 synthesis/run_vendor_synth.py --quartus`
 
 Run: `python3 synthesis/run_vendor_synth.py --quartus`

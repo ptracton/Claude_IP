@@ -1,10 +1,10 @@
-// timer_test_pkg.sv — Verbose check helpers for timer directed tests.
+// ip_test_pkg.sv — Verbose check helpers for Claude IP directed tests.
 //
-// `include this file inside the testbench module BEFORE including test_*.sv.
-// It defines check_eq and test_start/test_done helpers that print a table
-// row for every assertion, whether it passes or fails.
+// Shared Claude IP component — `include this file inside the testbench module
+// BEFORE including test_*.sv files.  Defines check_eq and test_start/test_done
+// helpers that print a table row for every assertion, whether it passes or fails.
 //
-// Output format (modeled on testing_pkg.vhd):
+// Output format:
 //
 //   === test_reset ===
 //   [  0] CTRL reset value          | exp 0x00000000 | got 0x00000000 | PASS
@@ -12,8 +12,7 @@
 //   ...
 //   test_reset: PASS  (4 checks)
 //
-// check_eq terminates simulation with $finish(1) on the first mismatch,
-// mirroring the existing assert_eq contract.
+// check_eq terminates simulation with $finish(1) on the first mismatch.
 
 // Shared check counter (static, reset by test_start)
 static int _chk_num = 0;

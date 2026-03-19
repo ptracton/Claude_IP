@@ -1,6 +1,8 @@
-// timer_axi4l_if.sv — AXI4-Lite bus interface for Timer IP.
+// claude_axi4l_if.sv — AXI4-Lite bus-to-regfile bridge (shared Claude IP component).
 //
 // Translates AXI4-Lite transactions into the flat register-file access bus.
+// This module is protocol-generic and contains no IP-specific logic.
+// It is shared across all Claude IP blocks that expose an AXI4-Lite slave port.
 //
 // AXI4-Lite channels used:
 //   AW (write address), W (write data), B (write response)
@@ -28,7 +30,7 @@
 //   wr_en, wr_addr, wr_data, wr_strb — write channel
 //   rd_en, rd_addr, rd_data          — read channel
 
-module timer_axi4l_if #(
+module claude_axi4l_if #(
   parameter int unsigned DATA_W = 32, // data bus width
   parameter int unsigned ADDR_W = 4   // regfile word-address width
 ) (
@@ -189,4 +191,4 @@ module timer_axi4l_if #(
   assign RDATA   = rdata_q;
   assign RRESP   = 2'b00; // OKAY
 
-endmodule : timer_axi4l_if
+endmodule : claude_axi4l_if

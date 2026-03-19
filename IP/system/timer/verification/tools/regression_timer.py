@@ -69,32 +69,43 @@ def parse_per_test_results(results_log_path: str) -> dict:
 
     # Fall back: no per-test lines found — use overall first-line status
     if not test_results and lines:
-        overall = lines[0] if lines[0] in ("PASS", "FAIL") else "NO_RUN"
+        overall = lines[0] if lines[0] in ("PASS", "FAIL", "SKIP") else "NO_RUN"
+        # Guard: if any line contains "FAIL", downgrade a claimed PASS to FAIL.
+        if overall == "PASS" and any("FAIL" in l for l in lines[1:]):
+            overall = "FAIL"
         test_results = {test: overall for test in KNOWN_TESTS}
 
     return test_results
 
 
 def collect_sim_per_test_rows(timer_path: str) -> list:
-    """Return a list of dicts with keys: test, protocol, sv_result, vhdl_result.
+    """Return a list of dicts: {test, protocol, sim, lang, result}.
 
-    Each row combines the SV (Icarus) and VHDL (GHDL) result for the same
-    test + protocol pair so both languages appear on one line.
+    Covers all six sim/lang combos:
+      icarus/sv, ghdl/vhdl, modelsim/sv, modelsim/vhdl, xsim/sv, xsim/vhdl
     """
     work_base = os.path.join(timer_path, "verification", "work")
+    sim_langs = [
+        ("icarus",   "sv"),
+        ("ghdl",     "vhdl"),
+        ("modelsim", "sv"),
+        ("modelsim", "vhdl"),
+        ("xsim",     "sv"),
+        ("xsim",     "vhdl"),
+    ]
     rows = []
     for proto in SUPPORTED_PROTOS:
-        sv_log   = os.path.join(work_base, "icarus", f"{proto}_sv",   "results.log")
-        vhdl_log = os.path.join(work_base, "ghdl",   f"{proto}_vhdl", "results.log")
-        sv_tests   = parse_per_test_results(sv_log)
-        vhdl_tests = parse_per_test_results(vhdl_log)
-        for test in KNOWN_TESTS:
-            rows.append({
-                "test":        test,
-                "protocol":    proto,
-                "sv_result":   sv_tests.get(test,   "NO_RUN"),
-                "vhdl_result": vhdl_tests.get(test, "NO_RUN"),
-            })
+        for sim, lang in sim_langs:
+            log = os.path.join(work_base, sim, f"{proto}_{lang}", "results.log")
+            test_results = parse_per_test_results(log)
+            for test in KNOWN_TESTS:
+                rows.append({
+                    "test":     test,
+                    "protocol": proto,
+                    "sim":      sim,
+                    "lang":     lang,
+                    "result":   test_results.get(test, "NO_RUN"),
+                })
     return rows
 
 
@@ -139,6 +150,50 @@ def main():
     step_results["Simulation (ghdl/vhdl)"] = ("PASS" if passed_vhdl else "FAIL", log_vhdl)
 
     # ------------------------------------------------------------------
+    # Run sim (ModelSim SV)
+    # ------------------------------------------------------------------
+    passed_msim_sv, log_msim_sv = run_step(
+        "Simulation (modelsim/sv)",
+        [sys.executable, os.path.join(tools_dir, "sim_timer.py"),
+         "--sim", "modelsim", "--proto", "all", "--lang", "sv"],
+    )
+    step_results["Simulation (modelsim/sv)"] = (
+        "PASS" if passed_msim_sv else "FAIL", log_msim_sv)
+
+    # ------------------------------------------------------------------
+    # Run sim (ModelSim VHDL)
+    # ------------------------------------------------------------------
+    passed_msim_vhdl, log_msim_vhdl = run_step(
+        "Simulation (modelsim/vhdl)",
+        [sys.executable, os.path.join(tools_dir, "sim_timer.py"),
+         "--sim", "modelsim", "--proto", "all", "--lang", "vhdl"],
+    )
+    step_results["Simulation (modelsim/vhdl)"] = (
+        "PASS" if passed_msim_vhdl else "FAIL", log_msim_vhdl)
+
+    # ------------------------------------------------------------------
+    # Run sim (Vivado xsim SV)
+    # ------------------------------------------------------------------
+    passed_xsim_sv, log_xsim_sv = run_step(
+        "Simulation (xsim/sv)",
+        [sys.executable, os.path.join(tools_dir, "sim_timer.py"),
+         "--sim", "xsim", "--proto", "all", "--lang", "sv"],
+    )
+    step_results["Simulation (xsim/sv)"] = (
+        "PASS" if passed_xsim_sv else "FAIL", log_xsim_sv)
+
+    # ------------------------------------------------------------------
+    # Run sim (Vivado xsim VHDL)
+    # ------------------------------------------------------------------
+    passed_xsim_vhdl, log_xsim_vhdl = run_step(
+        "Simulation (xsim/vhdl)",
+        [sys.executable, os.path.join(tools_dir, "sim_timer.py"),
+         "--sim", "xsim", "--proto", "all", "--lang", "vhdl"],
+    )
+    step_results["Simulation (xsim/vhdl)"] = (
+        "PASS" if passed_xsim_vhdl else "FAIL", log_xsim_vhdl)
+
+    # ------------------------------------------------------------------
     # Run formal
     # ------------------------------------------------------------------
     passed_formal, log_formal = run_step(
@@ -166,13 +221,10 @@ def main():
     # ------------------------------------------------------------------
     overall_pass = all(status == "PASS" for status, _ in step_results.values())
 
-    sv_pass   = sum(1 for r in per_test_rows if r["sv_result"]   == "PASS")
-    sv_fail   = sum(1 for r in per_test_rows if r["sv_result"]   == "FAIL")
-    vhdl_pass = sum(1 for r in per_test_rows if r["vhdl_result"] == "PASS")
-    vhdl_fail = sum(1 for r in per_test_rows if r["vhdl_result"] == "FAIL")
-    total_pass = sv_pass + vhdl_pass
-    total_fail = sv_fail + vhdl_fail
-    total_run  = total_pass + total_fail
+    total_pass = sum(1 for r in per_test_rows if r["result"] == "PASS")
+    total_fail = sum(1 for r in per_test_rows if r["result"] == "FAIL")
+    total_skip = sum(1 for r in per_test_rows if r["result"] in ("SKIP", "NO_RUN"))
+    total_run  = total_pass + total_fail + total_skip
 
     if total_fail > 0:
         overall_pass = False
@@ -186,17 +238,15 @@ def main():
         fh.write(f"**Generated:** {timestamp}\n\n")
         fh.write(f"**Overall Result:** {overall}\n\n")
         fh.write(f"**Tests:** {total_pass}/{total_run} passed"
-                 f" (SV: {sv_pass}/{sv_pass + sv_fail},"
-                 f" VHDL: {vhdl_pass}/{vhdl_pass + vhdl_fail})\n\n")
+                 f" ({total_fail} fail, {total_skip} skip/no-run)\n\n")
 
-        # Per-test simulation table — SV and VHDL side by side
         fh.write("## Per-Test Results\n\n")
-        fh.write("| Test                     | Protocol | SV (Icarus) | VHDL (GHDL) |\n")
-        fh.write("|--------------------------|----------|-------------|-------------|\n")
+        fh.write("| Test                     | Protocol | Simulator | Language | Result  |\n")
+        fh.write("|--------------------------|----------|-----------|----------|---------|\n")
         for row in per_test_rows:
             fh.write(
                 f"| {row['test']:<24} | {row['protocol']:<8} "
-                f"| {row['sv_result']:<11} | {row['vhdl_result']:<11} |\n"
+                f"| {row['sim']:<9} | {row['lang']:<8} | {row['result']:<7} |\n"
             )
 
         fh.write("\n## Step Summary\n\n")
@@ -214,8 +264,7 @@ def main():
 
     print(f"\n[regression_timer] Report written to: {report_path}")
     print(f"[regression_timer] Tests: {total_pass}/{total_run} passed"
-          f" (SV: {sv_pass}/{sv_pass + sv_fail},"
-          f" VHDL: {vhdl_pass}/{vhdl_pass + vhdl_fail})")
+          f" ({total_fail} fail, {total_skip} skip/no-run)")
     print(f"[regression_timer] Overall result: {overall}")
 
     sys.exit(0 if overall_pass else 1)

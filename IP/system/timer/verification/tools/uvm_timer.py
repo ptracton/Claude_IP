@@ -105,11 +105,15 @@ UVM_MACROS_INC = os.path.join(_vroot, "data", "xsim", "system_verilog",
 def rtl_files(timer_path: str) -> list:
     """RTL sources compiled into the 'rtl_lib' work library."""
     rtl = os.path.join(timer_path, "design", "rtl", "verilog")
+    common_rtl = os.path.join(
+        os.environ.get("IP_COMMON_PATH", os.path.join(timer_path, "..", "..", "common")),
+        "design", "rtl", "verilog"
+    )
     return [
         os.path.join(rtl, "timer_reg_pkg.sv"),
         os.path.join(rtl, "timer_regfile.sv"),
         os.path.join(rtl, "timer_core.sv"),
-        os.path.join(rtl, "timer_apb_if.sv"),   # MODULE  (not the UVM interface)
+        os.path.join(common_rtl, "claude_apb_if.sv"),  # MODULE  (not the UVM interface)
         os.path.join(rtl, "timer_apb.sv"),
     ]
 

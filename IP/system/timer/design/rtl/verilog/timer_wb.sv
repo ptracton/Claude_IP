@@ -1,6 +1,6 @@
 // timer_wb.sv — Wishbone B4 top-level for Timer IP.
 //
-// Instantiates timer_wb_if, timer_regfile, and timer_core.
+// Instantiates claude_wb_if, timer_regfile, and timer_core.
 // Contains no logic — only port declarations and submodule wiring.
 //
 // Parameters:
@@ -70,7 +70,7 @@ module timer_wb #(
   // -------------------------------------------------------------------------
   // Bus interface submodule
   // -------------------------------------------------------------------------
-  timer_wb_if #(
+  claude_wb_if #(
     .DATA_W (DATA_W),
     .ADDR_W (ADDR_W)
   ) u_wb_if (

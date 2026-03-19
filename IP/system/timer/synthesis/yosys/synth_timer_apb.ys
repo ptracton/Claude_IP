@@ -5,7 +5,7 @@
 read_verilog -sv \
     ../../design/rtl/verilog/timer_core.sv \
     timer_regfile_synth.sv \
-    ../../design/rtl/verilog/timer_apb_if.sv \
+    ../../../../common/design/rtl/verilog/claude_apb_if.sv \
     ../../design/rtl/verilog/timer_apb.sv
 synth -top timer_apb -flatten
 stat

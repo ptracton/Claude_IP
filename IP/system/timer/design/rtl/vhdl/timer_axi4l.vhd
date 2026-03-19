@@ -1,6 +1,6 @@
 -- timer_axi4l.vhd — AXI4-Lite top-level for Timer IP (VHDL-2008).
 --
--- Instantiates timer_axi4l_if, timer_regfile, and timer_core.
+-- Instantiates claude_axi4l_if, timer_regfile, and timer_core.
 -- Contains no logic — only port declarations and submodule wiring.
 -- Port-for-port equivalent to timer_axi4l.sv.
 --
@@ -64,7 +64,7 @@ architecture rtl of timer_axi4l is
   -- -------------------------------------------------------------------------
   -- Component declarations
   -- -------------------------------------------------------------------------
-  component timer_axi4l_if is
+  component claude_axi4l_if is
     generic (
       DATA_W : positive;
       ADDR_W : positive
@@ -97,7 +97,7 @@ architecture rtl of timer_axi4l is
       rd_addr : out std_ulogic_vector(ADDR_W - 1 downto 0);
       rd_data : in  std_ulogic_vector(DATA_W - 1 downto 0)
     );
-  end component timer_axi4l_if;
+  end component claude_axi4l_if;
 
   component timer_regfile is
     port (
@@ -181,7 +181,7 @@ architecture rtl of timer_axi4l is
 begin
 
   -- Bus interface submodule
-  u_axi4l_if : timer_axi4l_if
+  u_axi4l_if : claude_axi4l_if
     generic map (
       DATA_W => DATA_W,
       ADDR_W => ADDR_W

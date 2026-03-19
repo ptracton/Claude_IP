@@ -55,15 +55,18 @@ Supported targets:
    - `IP_NAME_read_reg(uintptr_t base, uint32_t offset)` — raw read.
    - Higher-level functions for each distinct hardware capability.
 5. All public functions carry Doxygen-style comment blocks (`@brief`, `@param`, `@return`).
-6. Write CMake toolchain files:
-   - `firmware/cmake/arm-cortex-m33.cmake` — sets `CMAKE_C_COMPILER arm-none-eabi-gcc`,
-     `CMAKE_C_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfloat-abi=soft"`,
-     `CMAKE_SYSTEM_NAME Generic`.
-   - `firmware/cmake/riscv32.cmake` — sets `CMAKE_C_COMPILER riscv-none-elf-gcc`,
-     `CMAKE_C_FLAGS_INIT "-march=rv32imac_zicsr -mabi=ilp32"`,
-     `CMAKE_SYSTEM_NAME Generic`.
-   - Both toolchain files set `CMAKE_FIND_ROOT_PATH_MODE_*` to prevent host library
-     contamination, and `--specs=nano.specs --specs=nosys.specs` in linker flags.
+6. CMake toolchain files — **use shared files from common, do not create per-IP copies**:
+   - Toolchain files already exist at `${IP_COMMON_PATH}/firmware/cmake/`:
+     - `arm-cortex-m33.cmake` — ARM Cortex-M33 (`arm-none-eabi-gcc`, `-mcpu=cortex-m33 -mthumb -mfloat-abi=soft`)
+     - `riscv32.cmake` — RISC-V 32-bit (`riscv-none-elf-gcc`, `-march=rv32imac_zicsr -mabi=ilp32`)
+   - Both files set `CMAKE_SYSTEM_NAME Generic`, all `CMAKE_FIND_ROOT_PATH_MODE_*` to
+     prevent host library contamination, and `--specs=nano.specs --specs=nosys.specs`.
+   - Pass them to `build.sh` via `${IP_COMMON}/firmware/cmake/<file>.cmake` — do NOT
+     place copies in `firmware/cmake/`. The IP-specific `firmware/cmake/` directory is
+     not needed and must not be created.
+   - In `firmware/build.sh`, resolve the common path as:
+     `IP_COMMON="${IP_COMMON_PATH:-${CLAUDE_IP_NAME_PATH}/../../common}"`
+   - Pass the full absolute path to cmake: `-DCMAKE_TOOLCHAIN_FILE="${IP_COMMON}/firmware/cmake/arm-cortex-m33.cmake"`
 7. Write `firmware/CMakeLists.txt`:
    - Requires a toolchain file via `-DCMAKE_TOOLCHAIN_FILE` — **reject builds without
      a recognised cross-compiler** with `message(FATAL_ERROR ...)`.
@@ -95,8 +98,7 @@ Supported targets:
 | `firmware/include/IP_NAME.h` | Public API header |
 | `firmware/include/platform.h` | Platform MMIO stub (user replaces for target) |
 | `firmware/src/IP_NAME.c` | Driver implementation (C99) |
-| `firmware/cmake/arm-cortex-m33.cmake` | CMake toolchain file for ARM Cortex-M33 |
-| `firmware/cmake/riscv32.cmake` | CMake toolchain file for RISC-V 32-bit (xPack) |
+| *(toolchain files live in `${IP_COMMON_PATH}/firmware/cmake/`)* | Shared; do not create per-IP copies |
 | `firmware/CMakeLists.txt` | CMake build definition (cross-compile only) |
 | `firmware/build.sh` | Build script with `arm`/`riscv`/`clean` options |
 | `firmware/examples/IP_NAME_example.c` | Usage example |

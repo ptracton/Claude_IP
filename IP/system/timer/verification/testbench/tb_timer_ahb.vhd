@@ -18,7 +18,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.timer_test_pkg.all;
+use work.ip_test_pkg.all;
 
 entity tb_timer_ahb is
 end entity tb_timer_ahb;
@@ -114,8 +114,9 @@ begin
   --   Cycle 3: capture HRDATA
   -- -------------------------------------------------------------------------
   p_stim : process is
-    variable rdata_v : std_ulogic_vector(31 downto 0);
-    variable timeout : integer;
+    variable rdata_v    : std_ulogic_vector(31 downto 0);
+    variable saved_count : std_ulogic_vector(31 downto 0);
+    variable timeout    : integer;
   begin
     rst_n  <= '0';
     HSEL   <= '0';
@@ -212,18 +213,27 @@ begin
     wait until rising_edge(clk); HWRITE <= '0';
 
     -- ---- Test: COUNT read-only ----
+    -- Read COUNT before write attempt (save baseline)
+    wait until rising_edge(clk);
+    HSEL <= '1'; HTRANS <= HTRANS_NONSEQ; HADDR <= x"00C"; HWRITE <= '0';
+    wait until rising_edge(clk); HTRANS <= HTRANS_IDLE; HSEL <= '0';
+    wait until rising_edge(clk);
+    wait until rising_edge(clk); saved_count := HRDATA;
+
+    -- Attempt write to COUNT (should be no-op)
     wait until rising_edge(clk);
     HSEL <= '1'; HTRANS <= HTRANS_NONSEQ; HADDR <= x"00C"; HWRITE <= '1';
     wait until rising_edge(clk);
     HTRANS <= HTRANS_IDLE; HSEL <= '0'; HWDATA <= x"FFFFFFFF"; HWSTRB <= x"F";
     wait until rising_edge(clk); HWRITE <= '0';
 
+    -- Read COUNT again: must equal saved value (write was ignored)
     wait until rising_edge(clk);
     HSEL <= '1'; HTRANS <= HTRANS_NONSEQ; HADDR <= x"00C"; HWRITE <= '0';
     wait until rising_edge(clk); HTRANS <= HTRANS_IDLE; HSEL <= '0';
     wait until rising_edge(clk);
     wait until rising_edge(clk); rdata_v := HRDATA;
-    check_eq(rdata_v, x"00000000", "COUNT read-only");
+    check_eq(rdata_v, saved_count, "COUNT read-only");
 
     test_done("test_rw");
 

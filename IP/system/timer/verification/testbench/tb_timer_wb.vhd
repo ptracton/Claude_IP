@@ -15,7 +15,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.timer_test_pkg.all;
+use work.ip_test_pkg.all;
 
 entity tb_timer_wb is
 end entity tb_timer_wb;
@@ -104,8 +104,9 @@ begin
   --          deassert CYC+STB; idle 1 cycle.
   -- -------------------------------------------------------------------------
   p_stim : process is
-    variable rdata_v : std_ulogic_vector(31 downto 0);
-    variable timeout : integer;
+    variable rdata_v     : std_ulogic_vector(31 downto 0);
+    variable saved_count : std_ulogic_vector(31 downto 0);
+    variable timeout     : integer;
   begin
     RST_I <= '1';
     CYC_I <= '0';
@@ -212,6 +213,15 @@ begin
     wait until rising_edge(clk);
 
     -- ---- Test: COUNT read-only ----
+    -- Read COUNT before write attempt (save baseline)
+    wait until rising_edge(clk);
+    CYC_I <= '1'; STB_I <= '1'; WE_I <= '0'; ADR_I <= x"00C"; SEL_I <= x"F";
+    while ACK_O = '0' loop wait until rising_edge(clk); end loop;
+    saved_count := DAT_O;
+    CYC_I <= '0'; STB_I <= '0';
+    wait until rising_edge(clk);
+
+    -- Attempt write to COUNT (should be no-op)
     wait until rising_edge(clk);
     CYC_I <= '1'; STB_I <= '1'; WE_I <= '1';
     ADR_I <= x"00C"; DAT_I <= x"FFFFFFFF"; SEL_I <= x"F";
@@ -219,13 +229,14 @@ begin
     CYC_I <= '0'; STB_I <= '0'; WE_I <= '0';
     wait until rising_edge(clk);
 
+    -- Read COUNT again: must equal saved value (write was ignored)
     wait until rising_edge(clk);
     CYC_I <= '1'; STB_I <= '1'; WE_I <= '0'; ADR_I <= x"00C"; SEL_I <= x"F";
     while ACK_O = '0' loop wait until rising_edge(clk); end loop;
     rdata_v := DAT_O;
     CYC_I <= '0'; STB_I <= '0';
     wait until rising_edge(clk);
-    check_eq(rdata_v, x"00000000", "COUNT read-only");
+    check_eq(rdata_v, saved_count, "COUNT read-only");
 
     test_done("test_rw");
 

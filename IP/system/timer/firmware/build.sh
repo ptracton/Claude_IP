@@ -35,6 +35,7 @@ if [ -z "${CLAUDE_TIMER_PATH}" ]; then
 fi
 
 FIRMWARE_DIR="${CLAUDE_TIMER_PATH}/firmware"
+IP_COMMON="${IP_COMMON_PATH:-${CLAUDE_TIMER_PATH}/../../common}"
 
 # Parse arguments: optional leading "clean" keyword, optional arch filter
 CLEAN=0
@@ -62,8 +63,8 @@ clean_target() {
 
 # ---------------------------------------------------------------------------
 # Helper: build one architecture
-#   $1 = human label  (e.g. "ARM Cortex-M33")
-#   $2 = toolchain file relative to firmware dir  (e.g. cmake/arm-cortex-m33.cmake)
+#   $1 = human label    (e.g. "ARM Cortex-M33")
+#   $2 = toolchain file absolute path
 #   $3 = build subdirectory name  (e.g. arm-cortex-m33)
 #   $4 = required compiler binary name  (checked with command -v)
 # ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ build_target() {
     echo "=== Configuring ${label} ==="
     cmake -S "${FIRMWARE_DIR}" \
           -B "${build_dir}" \
-          -DCMAKE_TOOLCHAIN_FILE="${FIRMWARE_DIR}/${toolchain}" \
+          -DCMAKE_TOOLCHAIN_FILE="${toolchain}" \
           -DCMAKE_BUILD_TYPE=Release \
           --fresh
 
@@ -111,14 +112,14 @@ else
     if [[ "${FILTER}" == "all" || "${FILTER}" == "arm" ]]; then
         build_target \
             "ARM Cortex-M33" \
-            "cmake/arm-cortex-m33.cmake" \
+            "${IP_COMMON}/firmware/cmake/arm-cortex-m33.cmake" \
             "arm-cortex-m33" \
             "arm-none-eabi-gcc"
     fi
     if [[ "${FILTER}" == "all" || "${FILTER}" == "riscv" ]]; then
         build_target \
             "RISC-V 32-bit (rv32imac_zicsr)" \
-            "cmake/riscv32.cmake" \
+            "${IP_COMMON}/firmware/cmake/riscv32.cmake" \
             "riscv32" \
             "riscv-none-elf-gcc"
     fi

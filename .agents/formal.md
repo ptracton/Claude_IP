@@ -70,6 +70,69 @@ Each property file must include at minimum:
 - **Cover properties**: at least one `cover` statement per register, reachable via
   the specific bus protocol for this top-level.
 
+### 1b. Alternative: Flat formal wrapper modules
+
+In practice, Yosys formal verification works better with **standalone flat wrapper modules**
+rather than SVA bind files, because Yosys's bind-file support is limited. Use flat wrappers
+unless you have a specific reason to use bind files.
+
+A flat wrapper replaces the bind file with a self-contained module that instantiates the DUT,
+wires in free-variable inputs, and embeds the SVA properties directly:
+
+```systemverilog
+// IP_NAME_ahb_formal.sv — flat formal wrapper for IP_NAME_ahb
+module IP_NAME_ahb_formal #(
+  parameter int DATA_W = 32,
+  parameter int ADDR_W = 4
+) ();
+  // --- Free variables (symbolic inputs driven by the solver) ---
+  logic        clk, rst_n, HSEL, HWRITE, HREADY_in;
+  logic [11:0] HADDR;
+  logic [1:0]  HTRANS;
+  logic [31:0] HWDATA;
+  logic [3:0]  HWSTRB;
+
+  // Assume-based clocking
+  `ASSUME_CLOCKING(clk)
+
+  // DUT instantiation — connect EVERY port, including inter-submodule signals
+  IP_NAME_ahb #(.DATA_W(DATA_W), .ADDR_W(ADDR_W)) u_dut (
+    .HCLK(clk), .HRESETn(rst_n), ...
+  );
+
+  // Expose submodule signals via hierarchy references for assertions
+  wire ctrl_en    = u_dut.u_regfile.ctrl_en;
+  wire hw_intr_set = u_dut.u_core.hw_intr_set;
+
+  // SVA properties
+  `ifdef FORMAL
+    // ...
+  `endif
+endmodule
+```
+
+**CRITICAL — Connect EVERY port of EVERY submodule.** In a formal wrapper, any unconnected
+input port is treated as a free variable by the SMT solver. The solver will assign it the
+worst-case value to falsify your properties — creating spurious counterexamples.
+
+If a submodule has ports that are not externally driven in the wrapper, declare internal
+`wire` signals and connect them:
+```systemverilog
+wire ctrl_restart;   // output from regfile → input to core
+wire ctrl_irq_mode;
+wire hw_ovf_set;
+// ... connect all of these in both u_regfile and u_core port maps
+```
+
+Failing to connect even one such signal will cause the solver to freely assign it and
+produce false assertion failures that are impossible to reproduce in simulation.
+
+**Yosys-compatible copy of regfile**: If the regfile uses a SV `package` import (e.g.,
+`import IP_NAME_reg_pkg::*`), Yosys may fail to analyze it in `read -formal` mode. In that
+case, create `synthesis/yosys/IP_NAME_regfile_synth.sv` — a copy of the regfile with all
+package references replaced by inline `localparam` definitions. Use this synth copy in the
+`.sby` `[files]` and `[script]` sections. **Keep it in sync with the original regfile.**
+
 ### 2. Write SymbiYosys configuration files
 
 Create BMC and cover `.sby` files per top-level per task in `verification/formal/`:
@@ -122,6 +185,53 @@ Repeat the pattern for `apb`, `axi4l`, and `wb`, substituting the top-level name
 All file paths in `.sby` files must be relative to `CLAUDE_IP_NAME_PATH` and use the
 `CLAUDE_IP_NAME_PATH` environment variable via shell expansion in the runner script —
 never hardcoded absolute paths.
+
+### 2b. Common SVA property pitfalls
+
+**`p_load` — guard for zero load value**: If the IP implements a `safe_load_val` protection
+(treating LOAD=0 as 1 to prevent continuous underflow), a naive "counter loads from LOAD"
+property will fail when `load_val=0`. Guard the assertion:
+
+```systemverilog
+// WRONG: fails when load_val=0 due to safe_load_val forcing count=1
+p_load: assert ((!past_past_ctrl_en && past_ctrl_en) ?
+  hw_count_val == past_load_val : 1'b1);
+
+// CORRECT: exclude the degenerate load_val=0 case
+p_load: assert ((!past_past_ctrl_en && past_ctrl_en &&
+                  past_load_val != {DATA_W{1'b0}}) ?
+  hw_count_val == past_load_val : 1'b1);
+```
+
+**`p_irq_def` — dual IRQ mode**: If the IP has a pulse/level IRQ mode selector (`ctrl_irq_mode`),
+the IRQ formula is not simply `ctrl_intr_en & status_intr`. Account for both modes:
+
+```systemverilog
+// WRONG: ignores pulse mode
+p_irq_def: assert (irq == (ctrl_intr_en & status_intr));
+
+// CORRECT: level mode = status_intr gated; pulse mode = hw_intr_set gated
+p_irq_def: assert (irq ==
+  (ctrl_intr_en & (ctrl_irq_mode ? hw_intr_set : status_intr)));
+```
+
+**`ctrl_restart` priority**: In the core's counter process, `ctrl_restart` should only act
+when `ctrl_en=1`. If `ctrl_en=0` and `ctrl_restart=1` simultaneously, the `ctrl_en=0` stop
+condition must take priority. Failing to enforce this allows the solver to use `ctrl_restart=1`
+to bypass the `ctrl_en=0` branch, producing counterexamples where the timer keeps counting
+after being disabled. Always guard restart with `ctrl_en`:
+
+```systemverilog
+// WRONG: ctrl_restart can bypass ctrl_en=0
+end else if (ctrl_restart && active_q) begin
+  count_q <= safe_load_val; ...
+
+// CORRECT: ctrl_en takes priority
+end else if (ctrl_en && ctrl_restart && active_q) begin
+  count_q <= safe_load_val; ...
+```
+
+Verify this is correct in RTL before adding assumptions in the formal wrapper.
 
 ### 3. Complete `verification/tools/formal_IP_NAME.py`
 

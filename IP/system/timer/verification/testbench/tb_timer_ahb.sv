@@ -63,7 +63,7 @@ module tb_timer_ahb;
   // BFM task library and directed test tasks
   // -------------------------------------------------------------------------
   `include "tasks_ahb.sv"
-  `include "timer_test_pkg.sv"
+  `include "ip_test_pkg.sv"
   `include "test_reset.sv"
   `include "test_rw.sv"
   `include "test_back2back.sv"

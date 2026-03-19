@@ -112,29 +112,27 @@ SV_COMMON_FILES = [
 ]
 
 # (top_module_name, extra_sv_files) for each bus variant
+# claude_*_if files come from common/; paths are expanded at runtime via common_path.
 SV_VARIANTS: List[Tuple[str, List[str]]] = [
-    ("timer_apb",    ["design/rtl/verilog/timer_apb_if.sv",
-                      "design/rtl/verilog/timer_apb.sv"]),
-    ("timer_ahb",    ["design/rtl/verilog/timer_ahb_if.sv",
-                      "design/rtl/verilog/timer_ahb.sv"]),
-    ("timer_axi4l",  ["design/rtl/verilog/timer_axi4l_if.sv",
-                      "design/rtl/verilog/timer_axi4l.sv"]),
-    ("timer_wb",     ["design/rtl/verilog/timer_wb_if.sv",
-                      "design/rtl/verilog/timer_wb.sv"]),
+    ("timer_apb",    ["common:claude_apb_if.sv",   "design/rtl/verilog/timer_apb.sv"]),
+    ("timer_ahb",    ["common:claude_ahb_if.sv",   "design/rtl/verilog/timer_ahb.sv"]),
+    ("timer_axi4l",  ["common:claude_axi4l_if.sv", "design/rtl/verilog/timer_axi4l.sv"]),
+    ("timer_wb",     ["common:claude_wb_if.sv",    "design/rtl/verilog/timer_wb.sv"]),
 ]
 
 # VHDL files in compilation order (packages before consumers)
+# claude_*_if files come from common/; paths are expanded at runtime via common_path.
 VHDL_FILES = [
     "design/rtl/vhdl/timer_reg_pkg.vhd",
     "design/rtl/vhdl/timer_regfile.vhd",
     "design/rtl/vhdl/timer_core.vhd",
-    "design/rtl/vhdl/timer_apb_if.vhd",
+    "common:claude_apb_if.vhd",
     "design/rtl/vhdl/timer_apb.vhd",
-    "design/rtl/vhdl/timer_ahb_if.vhd",
+    "common:claude_ahb_if.vhd",
     "design/rtl/vhdl/timer_ahb.vhd",
-    "design/rtl/vhdl/timer_axi4l_if.vhd",
+    "common:claude_axi4l_if.vhd",
     "design/rtl/vhdl/timer_axi4l.vhd",
-    "design/rtl/vhdl/timer_wb_if.vhd",
+    "common:claude_wb_if.vhd",
     "design/rtl/vhdl/timer_wb.vhd",
 ]
 
@@ -151,19 +149,25 @@ def run_sv_lint(timer_path: str, common_path: str) -> Tuple[bool, List[str]]:
     """
     passed = True
     details: List[str] = []
-    common_rtl = os.path.join(common_path, "rtl", "verilog")
+    common_rtl_sv = os.path.join(common_path, "design", "rtl", "verilog")
+
+    def resolve_sv(f: str) -> str:
+        """Expand 'common:<name>' to an absolute path in common/design/rtl/verilog/."""
+        if f.startswith("common:"):
+            return os.path.join(common_rtl_sv, f[len("common:"):])
+        return os.path.join(timer_path, f)
 
     verilator_ver = get_verilator_version(VERILATOR_BIN)
     details.append(f"[SV] Verilator version: {verilator_ver}")
 
     for top_module, extra_files in SV_VARIANTS:
-        src_files = SV_COMMON_FILES + extra_files
+        src_files = [resolve_sv(f) for f in SV_COMMON_FILES + extra_files]
         cmd = [
             VERILATOR_BIN,
             "--lint-only",
             "-Wall",
             "-Wno-DECLFILENAME",
-            f"-I{common_rtl}",
+            f"-I{common_rtl_sv}",
             f"--top-module", top_module,
         ] + src_files
 
@@ -216,8 +220,18 @@ def run_vhdl_lint(timer_path: str) -> Tuple[bool, List[str]]:
     workdir = os.path.join(timer_path, "verification", "work", "ghdl_lint")
     os.makedirs(workdir, exist_ok=True)
 
+    common_rtl_vhd = os.path.join(
+        os.environ.get("IP_COMMON_PATH", os.path.join(timer_path, "..", "..", "common")),
+        "design", "rtl", "vhdl"
+    )
+
+    def resolve_vhd(f: str) -> str:
+        if f.startswith("common:"):
+            return os.path.join(common_rtl_vhd, f[len("common:"):])
+        return os.path.join(timer_path, f)
+
     for vhd_file in VHDL_FILES:
-        abs_path = os.path.join(timer_path, vhd_file)
+        abs_path = resolve_vhd(vhd_file)
         cmd = [GHDL_BIN, "-a", "--std=08", f"--workdir={workdir}", abs_path]
 
         details.append(f"[VHDL] Analysing {vhd_file} ...")

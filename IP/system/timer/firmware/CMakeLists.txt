@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 # ---------------------------------------------------------------------------
 # Toolchain must be set before project() via -DCMAKE_TOOLCHAIN_FILE.
-# Supported toolchain files (in cmake/):
-#   cmake/arm-cortex-m33.cmake
-#   cmake/riscv32.cmake
+# Supported toolchain files (in ${IP_COMMON_PATH}/firmware/cmake/):
+#   arm-cortex-m33.cmake
+#   riscv32.cmake
 # ---------------------------------------------------------------------------
 project(timer_firmware C)
 
@@ -24,8 +24,8 @@ else()
     message(FATAL_ERROR
         "No recognised cross-compiler configured.\n"
         "Run cmake with a supported toolchain file:\n"
-        "  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-cortex-m33.cmake\n"
-        "  -DCMAKE_TOOLCHAIN_FILE=cmake/riscv32.cmake\n"
+        "  -DCMAKE_TOOLCHAIN_FILE=<IP_COMMON_PATH>/firmware/cmake/arm-cortex-m33.cmake\n"
+        "  -DCMAKE_TOOLCHAIN_FILE=<IP_COMMON_PATH>/firmware/cmake/riscv32.cmake\n"
     )
 endif()
 

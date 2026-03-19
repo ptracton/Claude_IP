@@ -1,9 +1,10 @@
--- timer_test_pkg.vhd — Verbose check helpers for timer directed tests.
+-- ip_test_pkg.vhd — Verbose check helpers for Claude IP directed tests (VHDL-2008).
 --
--- Use: add `use work.timer_test_pkg.all;` to each testbench and call
--- check_eq, test_start, and test_done from the stimulus process.
+-- Shared Claude IP component — add `use work.ip_test_pkg.all;` to each
+-- VHDL testbench and call check_eq, test_start, and test_done from the
+-- stimulus process.
 --
--- Output format (modeled on testing_pkg.vhd):
+-- Output format:
 --
 --   === test_reset ===
 --   #   | Check                            | Expected   | Got        | Status
@@ -14,13 +15,16 @@
 --   test_reset: PASS  (4 checks)
 --
 -- check_eq terminates simulation with severity failure on the first mismatch.
+--
+-- GHDL note: compile with -frelaxed to allow the unprotected shared variable
+-- (chk_num) in VHDL-2008 strict mode.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use std.textio.all;
 
-package timer_test_pkg is
+package ip_test_pkg is
 
   -- Shared check counter — reset by test_start
   shared variable chk_num : integer := 0;
@@ -34,9 +38,9 @@ package timer_test_pkg is
     constant msg      : in string
   );
 
-end package timer_test_pkg;
+end package ip_test_pkg;
 
-package body timer_test_pkg is
+package body ip_test_pkg is
 
   -- -------------------------------------------------------------------------
   -- print — write a line to stdout
@@ -126,4 +130,4 @@ package body timer_test_pkg is
     print(name & ": PASS  (" & int_to_str(chk_num) & " checks)");
   end procedure;
 
-end package body timer_test_pkg;
+end package body ip_test_pkg;

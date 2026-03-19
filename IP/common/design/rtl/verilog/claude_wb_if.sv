@@ -1,6 +1,9 @@
-// timer_wb_if.sv — Wishbone B4 (registered feedback) bus interface for Timer IP.
+// claude_wb_if.sv — Wishbone B4 bus-to-regfile bridge (shared Claude IP component).
 //
-// Translates Wishbone B4 transactions into the flat register-file access bus.
+// Translates Wishbone B4 (registered feedback) transactions into the flat
+// register-file access bus.
+// This module is protocol-generic and contains no IP-specific logic.
+// It is shared across all Claude IP blocks that expose a Wishbone B4 slave port.
 //
 // Wishbone B4 protocol (registered feedback / pipelined variant):
 //   A transaction is valid when CYC_I & STB_I are asserted.
@@ -23,7 +26,7 @@
 //   wr_en, wr_addr, wr_data, wr_strb — write channel
 //   rd_en, rd_addr, rd_data          — read channel
 
-module timer_wb_if #(
+module claude_wb_if #(
   parameter int unsigned DATA_W = 32, // data bus width
   parameter int unsigned ADDR_W = 4   // regfile word-address width
 ) (
@@ -92,4 +95,4 @@ module timer_wb_if #(
   assign DAT_O = rd_data;
   assign ERR_O = 1'b0;
 
-endmodule : timer_wb_if
+endmodule : claude_wb_if

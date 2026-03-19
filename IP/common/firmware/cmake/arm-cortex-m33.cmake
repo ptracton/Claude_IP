@@ -1,5 +1,8 @@
 # arm-cortex-m33.cmake — CMake toolchain file for ARM Cortex-M33 (bare-metal)
 #
+# Shared Claude IP component — used by every IP block that targets ARM Cortex-M33.
+# Reference via ${IP_COMMON_PATH}/firmware/cmake/arm-cortex-m33.cmake
+#
 # Requires: arm-none-eabi-gcc (e.g. GNU Arm Embedded Toolchain or arm-gnu-toolchain)
 # Install:  sudo apt install gcc-arm-none-eabi   (Debian/Ubuntu)
 #           brew install --cask gcc-arm-embedded  (macOS)
@@ -22,7 +25,7 @@ set(CMAKE_C_FLAGS_INIT
 )
 
 # nano.specs reduces code size; nosys.specs satisfies link-time syscall references.
-# Only relevant if TIMER_BUILD_EXAMPLE=ON; the library itself needs no linker flags.
+# Only relevant if <IP_NAME>_BUILD_EXAMPLE=ON; the library itself needs no linker flags.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "--specs=nano.specs --specs=nosys.specs")
 
 # Do not search host paths for libraries/includes

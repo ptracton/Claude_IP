@@ -1,6 +1,6 @@
 -- timer_apb.vhd — APB4 top-level for Timer IP (VHDL-2008).
 --
--- Instantiates timer_apb_if, timer_regfile, and timer_core.
+-- Instantiates claude_apb_if, timer_regfile, and timer_core.
 -- Contains no logic — only port declarations and submodule wiring.
 -- Port-for-port equivalent to timer_apb.sv.
 --
@@ -46,7 +46,7 @@ architecture rtl of timer_apb is
   -- -------------------------------------------------------------------------
   -- Component declarations
   -- -------------------------------------------------------------------------
-  component timer_apb_if is
+  component claude_apb_if is
     generic (
       DATA_W : positive;
       ADDR_W : positive
@@ -71,7 +71,7 @@ architecture rtl of timer_apb is
       rd_addr : out std_ulogic_vector(ADDR_W - 1 downto 0);
       rd_data : in  std_ulogic_vector(DATA_W - 1 downto 0)
     );
-  end component timer_apb_if;
+  end component claude_apb_if;
 
   component timer_regfile is
     port (
@@ -155,7 +155,7 @@ architecture rtl of timer_apb is
 begin
 
   -- Bus interface submodule
-  u_apb_if : timer_apb_if
+  u_apb_if : claude_apb_if
     generic map (
       DATA_W => DATA_W,
       ADDR_W => ADDR_W

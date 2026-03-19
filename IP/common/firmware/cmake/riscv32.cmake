@@ -1,5 +1,8 @@
 # riscv32.cmake — CMake toolchain file for RISC-V 32-bit bare-metal
 #
+# Shared Claude IP component — used by every IP block that targets RISC-V 32-bit.
+# Reference via ${IP_COMMON_PATH}/firmware/cmake/riscv32.cmake
+#
 # Requires: xPack RISC-V Embedded GCC (riscv-none-elf-gcc)
 # Location: /opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin
 # Added to PATH by setup.sh — source it before running cmake.
@@ -25,7 +28,7 @@ set(CMAKE_C_FLAGS_INIT
 )
 
 # nano.specs reduces code size; nosys.specs satisfies link-time syscall references.
-# Only relevant if TIMER_BUILD_EXAMPLE=ON; the library itself needs no linker flags.
+# Only relevant if <IP_NAME>_BUILD_EXAMPLE=ON; the library itself needs no linker flags.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "--specs=nano.specs --specs=nosys.specs")
 
 # Do not search host paths for libraries/includes

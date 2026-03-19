@@ -13,7 +13,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use work.timer_test_pkg.all;
+use work.ip_test_pkg.all;
 
 entity tb_timer_axi4l is
 end entity tb_timer_axi4l;
@@ -121,8 +121,9 @@ begin
   -- Stimulus: all bus transactions inlined to avoid signal-mode issues
   -- -------------------------------------------------------------------------
   p_stim : process is
-    variable rdata_v : std_ulogic_vector(31 downto 0);
-    variable timeout : integer;
+    variable rdata_v     : std_ulogic_vector(31 downto 0);
+    variable saved_count : std_ulogic_vector(31 downto 0);
+    variable timeout     : integer;
   begin
     -- Initialise
     rst_n   <= '0';
@@ -238,6 +239,15 @@ begin
     wait until rising_edge(clk); BREADY <= '0';
 
     -- ---- Test: COUNT read-only ----
+    -- Read COUNT before write attempt (save baseline)
+    wait until rising_edge(clk);
+    ARVALID <= '1'; ARADDR <= x"00C"; RREADY <= '1';
+    wait until rising_edge(clk); ARVALID <= '0';
+    while RVALID = '0' loop wait until rising_edge(clk); end loop;
+    saved_count := RDATA;
+    wait until rising_edge(clk); RREADY <= '0';
+
+    -- Attempt write to COUNT (should be no-op)
     wait until rising_edge(clk);
     AWVALID <= '1'; AWADDR <= x"00C";
     WVALID  <= '1'; WDATA  <= x"FFFFFFFF"; WSTRB <= x"F"; BREADY <= '1';
@@ -245,13 +255,14 @@ begin
     while BVALID = '0' loop wait until rising_edge(clk); end loop;
     wait until rising_edge(clk); BREADY <= '0';
 
+    -- Read COUNT again: must equal saved value (write was ignored)
     wait until rising_edge(clk);
     ARVALID <= '1'; ARADDR <= x"00C"; RREADY <= '1';
     wait until rising_edge(clk); ARVALID <= '0';
     while RVALID = '0' loop wait until rising_edge(clk); end loop;
     rdata_v := RDATA;
     wait until rising_edge(clk); RREADY <= '0';
-    check_eq(rdata_v, x"00000000", "COUNT read-only");
+    check_eq(rdata_v, saved_count, "COUNT read-only");
 
     test_done("test_rw");
 

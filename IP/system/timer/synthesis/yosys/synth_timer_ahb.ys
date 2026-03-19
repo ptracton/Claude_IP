@@ -10,7 +10,7 @@
 read_verilog -sv \
     ../../design/rtl/verilog/timer_core.sv \
     timer_regfile_synth.sv \
-    ../../design/rtl/verilog/timer_ahb_if.sv \
+    ../../../../common/design/rtl/verilog/claude_ahb_if.sv \
     ../../design/rtl/verilog/timer_ahb.sv
 synth -top timer_ahb -flatten
 stat

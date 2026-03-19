@@ -37,14 +37,17 @@ module timer_ahb_formal #(
   wire                ctrl_intr_en;
   wire                ctrl_trig_en;
   wire [7:0]          ctrl_prescale;
+  wire                ctrl_restart;
+  wire                ctrl_irq_mode;
   wire [DATA_W-1:0]   load_val;
   wire                status_intr;
   wire [DATA_W-1:0]   hw_count_val;
   wire                hw_intr_set;
+  wire                hw_ovf_set;
   wire                hw_active;
 
   // Bus interface
-  timer_ahb_if #(.DATA_W(DATA_W), .ADDR_W(ADDR_W)) u_if (
+  claude_ahb_if #(.DATA_W(DATA_W), .ADDR_W(ADDR_W)) u_if (
     .HCLK    (HCLK),
     .HRESETn (HRESETn),
     .HSEL    (HSEL),
@@ -78,32 +81,38 @@ module timer_ahb_formal #(
     .rd_data     (if_rd_data),
     .hw_count_val(hw_count_val),
     .hw_intr_set (hw_intr_set),
+    .hw_ovf_set  (hw_ovf_set),
     .hw_active   (hw_active),
     .ctrl_en     (ctrl_en),
     .ctrl_mode   (ctrl_mode),
     .ctrl_intr_en(ctrl_intr_en),
     .ctrl_trig_en(ctrl_trig_en),
     .ctrl_prescale(ctrl_prescale),
+    .ctrl_restart (ctrl_restart),
+    .ctrl_irq_mode(ctrl_irq_mode),
     .load_val    (load_val),
     .status_intr (status_intr)
   );
 
   // Core
   timer_core #(.DATA_W(DATA_W)) u_core (
-    .clk         (HCLK),
-    .rst_n       (HRESETn),
-    .ctrl_en     (ctrl_en),
-    .ctrl_mode   (ctrl_mode),
-    .ctrl_intr_en(ctrl_intr_en),
-    .ctrl_trig_en(ctrl_trig_en),
+    .clk          (HCLK),
+    .rst_n        (HRESETn),
+    .ctrl_en      (ctrl_en),
+    .ctrl_mode    (ctrl_mode),
+    .ctrl_intr_en (ctrl_intr_en),
+    .ctrl_trig_en (ctrl_trig_en),
     .ctrl_prescale(ctrl_prescale),
-    .load_val    (load_val),
-    .status_intr (status_intr),
-    .hw_count_val(hw_count_val),
-    .hw_intr_set (hw_intr_set),
-    .hw_active   (hw_active),
-    .irq         (irq),
-    .trigger_out (trigger_out)
+    .ctrl_restart (ctrl_restart),
+    .ctrl_irq_mode(ctrl_irq_mode),
+    .load_val     (load_val),
+    .status_intr  (status_intr),
+    .hw_count_val (hw_count_val),
+    .hw_intr_set  (hw_intr_set),
+    .hw_ovf_set   (hw_ovf_set),
+    .hw_active    (hw_active),
+    .irq          (irq),
+    .trigger_out  (trigger_out)
   );
 
   // ---------------------------------------------------------------------------
@@ -169,10 +178,13 @@ module timer_ahb_formal #(
   end
 
   // ---------------------------------------------------------------------------
-  // P1 — IRQ = status_intr & ctrl_intr_en  (stateless)
+  // P1 — IRQ output matches RTL formula:
+  //   level mode (ctrl_irq_mode=0): irq = ctrl_intr_en & status_intr
+  //   pulse mode (ctrl_irq_mode=1): irq = ctrl_intr_en & hw_intr_set
   // ---------------------------------------------------------------------------
   always @(posedge HCLK) begin
-    if (check) p_irq_def: assert (irq == (status_intr & ctrl_intr_en));
+    if (check) p_irq_def: assert (irq ==
+      (ctrl_intr_en & (ctrl_irq_mode ? hw_intr_set : status_intr)));
   end
 
   // ---------------------------------------------------------------------------
@@ -205,9 +217,12 @@ module timer_ahb_formal #(
 
   // ---------------------------------------------------------------------------
   // P6 — Counter loads from load_val one cycle after ctrl_en rises
+  // Guard: past_load_val != 0 because core uses safe_load_val (min 1) when
+  // load_val=0, so hw_count_val=1 rather than 0 in that degenerate case.
   // ---------------------------------------------------------------------------
   always @(posedge HCLK) begin
-    if (check) p_load: assert ((!past_past_ctrl_en && past_ctrl_en) ?
+    if (check) p_load: assert ((!past_past_ctrl_en && past_ctrl_en &&
+                                 past_load_val != {DATA_W{1'b0}}) ?
       (hw_count_val == past_load_val) : 1'b1);
   end
 

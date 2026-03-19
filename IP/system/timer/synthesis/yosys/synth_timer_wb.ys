@@ -10,7 +10,7 @@
 read_verilog -sv \
     ../../design/rtl/verilog/timer_core.sv \
     timer_regfile_synth.sv \
-    ../../design/rtl/verilog/timer_wb_if.sv \
+    ../../../../common/design/rtl/verilog/claude_wb_if.sv \
     ../../design/rtl/verilog/timer_wb.sv
 synth -top timer_wb -flatten
 stat

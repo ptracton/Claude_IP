@@ -11,6 +11,7 @@
 
 task automatic test_rw;
   logic [31:0] rdata;
+  logic [31:0] saved_count;
   begin
     test_start("test_rw");
 
@@ -33,9 +34,11 @@ task automatic test_rw;
     check_eq(rdata, 32'h0000_0010, "LOAD second write");
 
     // --- COUNT (0x0C) — RO: write is ignored ---
-    write_reg(12'h00C, 32'hFFFF_FFFF, 4'hF);
+    // Read baseline before write attempt; hardware may hold any value here.
+    read_reg (12'h00C, saved_count);
+    write_reg(12'h00C, 32'hFFFF_FFFF, 4'hF);   // should be a no-op
     read_reg (12'h00C, rdata);
-    check_eq(rdata, 32'h0000_0000, "COUNT is read-only");
+    check_eq(rdata, saved_count, "COUNT is read-only");
 
     write_reg(12'h008, 32'h0000_0000, 4'hF);
 

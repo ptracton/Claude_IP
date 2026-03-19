@@ -78,7 +78,11 @@ def parse_per_test_results(log_path: str) -> list:
 
     # Fall back to overall status if no per-test lines found (e.g. VHDL/GHDL)
     if not per_test and lines:
-        overall = lines[0] if lines[0] in ("PASS", "FAIL") else "MISSING"
+        overall = lines[0] if lines[0] in ("PASS", "FAIL", "SKIP") else "MISSING"
+        # Guard: if any line contains "FAIL", downgrade a claimed PASS to FAIL.
+        # Catches results.log files written with a weak PASS check.
+        if overall == "PASS" and any("FAIL" in l for l in lines[1:]):
+            overall = "FAIL"
         per_test = {t: overall for t in KNOWN_TESTS}
 
     return list(per_test.items())
@@ -136,6 +140,10 @@ def main():
                         help="Skip Vivado xsim UVM simulation")
     parser.add_argument("--skip-formal", action="store_true")
     parser.add_argument("--skip-lint",   action="store_true")
+    parser.add_argument("--skip-modelsim", action="store_true",
+                        help="Skip ModelSim SV+VHDL simulation")
+    parser.add_argument("--skip-xsim",     action="store_true",
+                        help="Skip Vivado xsim SV+VHDL directed simulation")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------ #
@@ -156,7 +164,41 @@ def main():
         )
 
     # ------------------------------------------------------------------ #
-    # 1b. UVM simulation (Vivado xsim)
+    # 1b. ModelSim directed simulation (SV + VHDL)
+    # ------------------------------------------------------------------ #
+    if not args.skip_modelsim:
+        run_step(
+            "ModelSim SV simulation (all protocols)",
+            [sys.executable,
+             os.path.join(tools_dir, "sim_timer.py"),
+             "--sim", "modelsim", "--proto", "all", "--lang", "sv"],
+        )
+        run_step(
+            "ModelSim VHDL simulation (all protocols)",
+            [sys.executable,
+             os.path.join(tools_dir, "sim_timer.py"),
+             "--sim", "modelsim", "--proto", "all", "--lang", "vhdl"],
+        )
+
+    # ------------------------------------------------------------------ #
+    # 1c. Vivado xsim directed simulation (SV + VHDL)
+    # ------------------------------------------------------------------ #
+    if not args.skip_xsim:
+        run_step(
+            "Vivado xsim SV simulation (all protocols)",
+            [sys.executable,
+             os.path.join(tools_dir, "sim_timer.py"),
+             "--sim", "xsim", "--proto", "all", "--lang", "sv"],
+        )
+        run_step(
+            "Vivado xsim VHDL simulation (all protocols)",
+            [sys.executable,
+             os.path.join(tools_dir, "sim_timer.py"),
+             "--sim", "xsim", "--proto", "all", "--lang", "vhdl"],
+        )
+
+    # ------------------------------------------------------------------ #
+    # 1d. UVM simulation (Vivado xsim)
     # ------------------------------------------------------------------ #
     if not args.skip_uvm:
         run_step(
@@ -193,7 +235,8 @@ def main():
     # ------------------------------------------------------------------ #
     total = len(results)
     n_pass = sum(1 for _, s in results if s == "PASS")
-    n_fail = total - n_pass
+    n_skip = sum(1 for _, s in results if s in ("SKIP", "MISSING"))
+    n_fail = total - n_pass - n_skip
 
     sep = "=" * 60
     lines = []
@@ -203,7 +246,7 @@ def main():
     for label, status in results:
         lines.append(f"  {label:<40} {status}")
     lines.append("-" * 60)
-    lines.append(f"  Total: {total}  Pass: {n_pass}  Fail: {n_fail}")
+    lines.append(f"  Total: {total}  Pass: {n_pass}  Fail: {n_fail}  Skip: {n_skip}")
     lines.append(sep)
     lines.append("REGRESSION PASSED" if n_fail == 0 else "REGRESSION FAILED")
 

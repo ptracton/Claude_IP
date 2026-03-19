@@ -1,6 +1,8 @@
-// timer_apb_if.sv — APB4 bus interface for Timer IP.
+// claude_apb_if.sv — APB4 bus-to-regfile bridge (shared Claude IP component).
 //
 // Translates APB4 transactions into the flat register-file access bus.
+// This module is protocol-generic and contains no IP-specific logic.
+// It is shared across all Claude IP blocks that expose an APB4 slave port.
 //
 // APB4 protocol:
 //   SETUP phase : PSEL asserted, PENABLE deasserted.
@@ -26,7 +28,7 @@
 //   wr_en, wr_addr, wr_data, wr_strb — write channel
 //   rd_en, rd_addr, rd_data          — read channel
 
-module timer_apb_if #(
+module claude_apb_if #(
   parameter int unsigned DATA_W = 32, // data bus width
   parameter int unsigned ADDR_W = 4   // regfile word-address width
 ) (
@@ -91,4 +93,4 @@ module timer_apb_if #(
   assign PREADY  = 1'b1;
   assign PSLVERR = 1'b0;
 
-endmodule : timer_apb_if
+endmodule : claude_apb_if

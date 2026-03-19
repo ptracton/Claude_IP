@@ -16,12 +16,12 @@ smtbmc boolector
 [script]
 read -formal timer_regfile_synth.sv
 read -formal timer_core.sv
-read -formal timer_ahb_if.sv
+read -formal claude_ahb_if.sv
 read -formal timer_ahb_formal.sv
 prep -top timer_ahb_formal
 
 [files]
 ../../synthesis/yosys/timer_regfile_synth.sv
 ../../design/rtl/verilog/timer_core.sv
-../../design/rtl/verilog/timer_ahb_if.sv
+../../../../common/design/rtl/verilog/claude_ahb_if.sv
 timer_ahb_formal.sv

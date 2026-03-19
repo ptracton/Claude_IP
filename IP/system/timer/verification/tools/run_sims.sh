@@ -23,6 +23,7 @@ RTL="${CLAUDE_TIMER_PATH}/design/rtl/verilog"
 VHDL_RTL="${CLAUDE_TIMER_PATH}/design/rtl/vhdl"
 IP_COMMON="${IP_COMMON_PATH:-${CLAUDE_TIMER_PATH}/../../common}"
 TASKS="${IP_COMMON}/verification/tasks"
+COMMON_TESTS="${IP_COMMON}/verification/tests"
 TESTS="${CLAUDE_TIMER_PATH}/verification/tests"
 TB="${CLAUDE_TIMER_PATH}/verification/testbench"
 WORK="${CLAUDE_TIMER_PATH}/verification/work"
@@ -39,17 +40,18 @@ run_icarus() {
 
   echo "--- Icarus ${proto} SV ---"
 
-  # Protocol-specific RTL files
+  # Protocol-specific RTL files (claude_*_if comes from common/)
+  local COMMON_RTL="${IP_COMMON}/design/rtl/verilog"
   local if_files=""
   case "${proto}" in
-    ahb)   if_files="${RTL}/timer_ahb_if.sv ${RTL}/timer_ahb.sv" ;;
-    apb)   if_files="${RTL}/timer_apb_if.sv ${RTL}/timer_apb.sv" ;;
-    axi4l) if_files="${RTL}/timer_axi4l_if.sv ${RTL}/timer_axi4l.sv" ;;
-    wb)    if_files="${RTL}/timer_wb_if.sv ${RTL}/timer_wb.sv" ;;
+    ahb)   if_files="${COMMON_RTL}/claude_ahb_if.sv ${RTL}/timer_ahb.sv" ;;
+    apb)   if_files="${COMMON_RTL}/claude_apb_if.sv ${RTL}/timer_apb.sv" ;;
+    axi4l) if_files="${COMMON_RTL}/claude_axi4l_if.sv ${RTL}/timer_axi4l.sv" ;;
+    wb)    if_files="${COMMON_RTL}/claude_wb_if.sv ${RTL}/timer_wb.sv" ;;
   esac
 
   if "${IVERILOG}" -g2012 -Wall -Wno-timescale \
-       -I "${TASKS}" -I "${TESTS}" \
+       -I "${TASKS}" -I "${TESTS}" -I "${COMMON_TESTS}" \
        "${RTL}/timer_reg_pkg.sv" \
        "${RTL}/timer_regfile.sv" \
        "${RTL}/timer_core.sv" \
@@ -58,7 +60,9 @@ run_icarus() {
        -o "${vvp_out}" > "${log}" 2>&1; then
     "${VVP}" "${vvp_out}" >> "${log}" 2>&1
     local rc=$?
-    if [ ${rc} -eq 0 ] && grep -q "PASS" "${log}"; then
+    if [ ${rc} -eq 0 ] \
+         && grep -q "PASS tb_timer_${proto}" "${log}" \
+         && ! grep -q "FAIL" "${log}"; then
       echo "PASS" > "${result}"
       echo "  PASS: ${result}"
     else
@@ -84,13 +88,14 @@ run_ghdl() {
 
   echo "--- GHDL ${proto} VHDL ---"
 
-  # Protocol-specific VHDL files
+  # Protocol-specific VHDL files (claude_*_if comes from common/)
+  local COMMON_VHDL="${IP_COMMON}/design/rtl/vhdl"
   local if_files=""
   case "${proto}" in
-    ahb)   if_files="${VHDL_RTL}/timer_ahb_if.vhd ${VHDL_RTL}/timer_ahb.vhd" ;;
-    apb)   if_files="${VHDL_RTL}/timer_apb_if.vhd ${VHDL_RTL}/timer_apb.vhd" ;;
-    axi4l) if_files="${VHDL_RTL}/timer_axi4l_if.vhd ${VHDL_RTL}/timer_axi4l.vhd" ;;
-    wb)    if_files="${VHDL_RTL}/timer_wb_if.vhd ${VHDL_RTL}/timer_wb.vhd" ;;
+    ahb)   if_files="${COMMON_VHDL}/claude_ahb_if.vhd ${VHDL_RTL}/timer_ahb.vhd" ;;
+    apb)   if_files="${COMMON_VHDL}/claude_apb_if.vhd ${VHDL_RTL}/timer_apb.vhd" ;;
+    axi4l) if_files="${COMMON_VHDL}/claude_axi4l_if.vhd ${VHDL_RTL}/timer_axi4l.vhd" ;;
+    wb)    if_files="${COMMON_VHDL}/claude_wb_if.vhd ${VHDL_RTL}/timer_wb.vhd" ;;
   esac
 
   local ok=1
@@ -102,9 +107,10 @@ run_ghdl() {
     "${VHDL_RTL}/timer_regfile.vhd" \
     "${VHDL_RTL}/timer_core.vhd" \
     ${if_files} \
+    "${COMMON_TESTS}/ip_test_pkg.vhd" \
     "${TB}/tb_timer_${proto}.vhd"
   do
-    if ! "${GHDL}" -a --std=08 "--workdir=${work_dir}" "${f}" >> "${log}" 2>&1; then
+    if ! "${GHDL}" -a --std=08 -frelaxed "--workdir=${work_dir}" "${f}" >> "${log}" 2>&1; then
       echo "  Analysis failed on ${f}"
       ok=0
       break
@@ -112,17 +118,19 @@ run_ghdl() {
   done
 
   if [ ${ok} -eq 1 ]; then
-    if ! "${GHDL}" -e --std=08 "--workdir=${work_dir}" "tb_timer_${proto}" >> "${log}" 2>&1; then
+    if ! "${GHDL}" -e --std=08 -frelaxed "--workdir=${work_dir}" "tb_timer_${proto}" >> "${log}" 2>&1; then
       echo "  Elaboration failed"
       ok=0
     fi
   fi
 
   if [ ${ok} -eq 1 ]; then
-    "${GHDL}" -r --std=08 "--workdir=${work_dir}" "tb_timer_${proto}" \
+    "${GHDL}" -r --std=08 -frelaxed "--workdir=${work_dir}" "tb_timer_${proto}" \
       --stop-time=1ms >> "${log}" 2>&1
     local rc=$?
-    if [ ${rc} -eq 0 ] && grep -q "PASS" "${log}"; then
+    if [ ${rc} -eq 0 ] \
+         && grep -q "PASS tb_timer_${proto}" "${log}" \
+         && ! grep -q "FAIL" "${log}"; then
       echo "PASS" > "${result}"
       echo "  PASS: ${result}"
     else

@@ -61,6 +61,37 @@ VCOM = _find_tool("vcom")
 VLOG = _find_tool("vlog")
 VSIM = _find_tool("vsim")
 
+# ---------------------------------------------------------------------------
+# Vivado xsim tool paths (for directed tests — no UVM)
+# ---------------------------------------------------------------------------
+
+def _find_vivado_bin() -> str:
+    """Return the Vivado bin directory or '' if not found."""
+    import shutil
+    if shutil.which("xvlog"):
+        return os.path.dirname(shutil.which("xvlog"))
+    for root in ["/opt/Xilinx/Vivado", "/tools/Xilinx/Vivado",
+                 "/opt/xilinx/Vivado"]:
+        if not os.path.isdir(root):
+            continue
+        versions = sorted(
+            [v for v in os.listdir(root)
+             if os.path.isdir(os.path.join(root, v))],
+            reverse=True,
+        )
+        for v in versions:
+            candidate = os.path.join(root, v, "bin")
+            if os.path.isfile(os.path.join(candidate, "xvlog")):
+                return candidate
+    return ""
+
+
+VIVADO_BIN = _find_vivado_bin()
+XVLOG = os.path.join(VIVADO_BIN, "xvlog") if VIVADO_BIN else "xvlog"
+XVHDL = os.path.join(VIVADO_BIN, "xvhdl") if VIVADO_BIN else "xvhdl"
+XELAB = os.path.join(VIVADO_BIN, "xelab") if VIVADO_BIN else "xelab"
+XSIM  = os.path.join(VIVADO_BIN, "xsim")  if VIVADO_BIN else "xsim"
+
 SUPPORTED_PROTOS = ["ahb", "apb", "axi4l", "wb"]
 SUPPORTED_LANGS  = ["sv", "vhdl"]
 
@@ -81,11 +112,13 @@ def sv_files(proto: str, timer_path: str) -> list:
     tb_dir  = os.path.join(timer_path, "verification", "testbench")
 
     # Protocol-specific RTL files
+    # The *_if adapters are common (claude_*_if); the top wrappers are IP-local.
+    common_rtl = os.path.join(common_path, "design", "rtl", "verilog")
     proto_rtl = {
-        "ahb":   ["timer_ahb_if.sv",   "timer_ahb.sv"],
-        "apb":   ["timer_apb_if.sv",   "timer_apb.sv"],
-        "axi4l": ["timer_axi4l_if.sv", "timer_axi4l.sv"],
-        "wb":    ["timer_wb_if.sv",     "timer_wb.sv"],
+        "ahb":   [os.path.join(common_rtl, "claude_ahb_if.sv"),   os.path.join(rtl, "timer_ahb.sv")],
+        "apb":   [os.path.join(common_rtl, "claude_apb_if.sv"),   os.path.join(rtl, "timer_apb.sv")],
+        "axi4l": [os.path.join(common_rtl, "claude_axi4l_if.sv"), os.path.join(rtl, "timer_axi4l.sv")],
+        "wb":    [os.path.join(common_rtl, "claude_wb_if.sv"),     os.path.join(rtl, "timer_wb.sv")],
     }
 
     files = [
@@ -94,7 +127,7 @@ def sv_files(proto: str, timer_path: str) -> list:
         os.path.join(rtl, "timer_core.sv"),
     ]
     for f in proto_rtl[proto]:
-        files.append(os.path.join(rtl, f))
+        files.append(f)
 
     files.append(os.path.join(tb_dir, f"tb_timer_{proto}.sv"))
     return files
@@ -106,11 +139,16 @@ def vhdl_files(proto: str, timer_path: str) -> list:
     tests    = os.path.join(timer_path, "verification", "tests")
     tb_dir   = os.path.join(timer_path, "verification", "testbench")
 
+    common_path = os.environ.get(
+        "IP_COMMON_PATH",
+        os.path.join(timer_path, "..", "..", "common")
+    )
+    common_rtl = os.path.join(common_path, "design", "rtl", "vhdl")
     proto_rtl = {
-        "ahb":   ["timer_ahb_if.vhd",   "timer_ahb.vhd"],
-        "apb":   ["timer_apb_if.vhd",   "timer_apb.vhd"],
-        "axi4l": ["timer_axi4l_if.vhd", "timer_axi4l.vhd"],
-        "wb":    ["timer_wb_if.vhd",     "timer_wb.vhd"],
+        "ahb":   [os.path.join(common_rtl, "claude_ahb_if.vhd"),   os.path.join(rtl, "timer_ahb.vhd")],
+        "apb":   [os.path.join(common_rtl, "claude_apb_if.vhd"),   os.path.join(rtl, "timer_apb.vhd")],
+        "axi4l": [os.path.join(common_rtl, "claude_axi4l_if.vhd"), os.path.join(rtl, "timer_axi4l.vhd")],
+        "wb":    [os.path.join(common_rtl, "claude_wb_if.vhd"),     os.path.join(rtl, "timer_wb.vhd")],
     }
 
     files = [
@@ -119,10 +157,11 @@ def vhdl_files(proto: str, timer_path: str) -> list:
         os.path.join(rtl, "timer_core.vhd"),
     ]
     for f in proto_rtl[proto]:
-        files.append(os.path.join(rtl, f))
+        files.append(f)
 
-    # Test helper package must be analyzed before the testbench
-    files.append(os.path.join(tests, "timer_test_pkg.vhd"))
+    # Test helper package (common) must be analyzed before the testbench
+    common_tests = os.path.join(common_path, "verification", "tests")
+    files.append(os.path.join(common_tests, "ip_test_pkg.vhd"))
     files.append(os.path.join(tb_dir, f"tb_timer_{proto}.vhd"))
     return files
 
@@ -139,6 +178,7 @@ def sv_include_dirs(timer_path: str) -> list:
     )
     return [
         os.path.join(common_path, "verification", "tasks"),
+        os.path.join(common_path, "verification", "tests"),
         os.path.join(timer_path, "verification", "tests"),
     ]
 
@@ -313,10 +353,10 @@ def run_modelsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
     try:
         cp = _run([VLIB, "work"], timeout=30)
     except FileNotFoundError:
-        msg = f"ERROR: vlib not found ({VLIB}). Is ModelSim/Questa in PATH?"
-        print(f"  {msg}")
-        _write_result(results, "FAIL", msg)
-        return False
+        msg = f"vlib not found ({VLIB}). Is ModelSim/Questa in PATH?"
+        print(f"  [modelsim/{proto}_{lang}] WARNING: {msg}")
+        _skip_result(results, msg)
+        return True  # SKIP — tool absent is not a test failure
     full_log += cp.stdout + cp.stderr
     if cp.returncode != 0:
         print(f"  [modelsim/{proto}_{lang}] vlib FAILED:\n{cp.stdout + cp.stderr}")
@@ -431,6 +471,164 @@ def _write_result(path: str, status: str, detail: str) -> None:
     print(f"  -> {path} : {status}")
 
 
+def _skip_result(path: str, msg: str) -> None:
+    """Write a results.log with SKIP status (tool not installed)."""
+    with open(path, "w") as fh:
+        fh.write(f"SKIP\n{msg}\n")
+    print(f"  -> {path} : SKIP")
+
+
+def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
+    """Compile and simulate a directed testbench with Vivado xsim.
+
+    Three-step flow:
+      1. xvlog --sv (SV) or xvhdl --2008 per file (VHDL)
+      2. xelab --snapshot <snap>
+      3. xsim  <snap> --runall   (Popen + DEVNULL — xsim hangs on TTY stdin)
+
+    Returns True on PASS or SKIP (tool absent); False on compile/sim FAIL.
+    """
+    import time as _time
+
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    tb_top   = f"tb_timer_{proto}"
+    snapshot = f"{tb_top}_sim"
+    full_log = ""
+
+    if not VIVADO_BIN:
+        msg = "Vivado (xvlog/xelab/xsim) not found — skipping."
+        print(f"  [xsim/{proto}_{lang}] WARNING: {msg}")
+        _skip_result(results, msg)
+        return True  # SKIP
+
+    def _run(cmd, label, timeout=180):
+        nonlocal full_log
+        print(f"  [xsim/{proto}_{lang}] {label} ...")
+        try:
+            cp = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=timeout, cwd=work_dir,
+            )
+        except FileNotFoundError as exc:
+            msg = f"ERROR: tool not found — {exc}"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        out = cp.stdout + cp.stderr
+        full_log += out
+        if cp.returncode != 0:
+            print(f"  [xsim/{proto}_{lang}] {label} FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Step 1: compile
+    # ------------------------------------------------------------------
+    if lang == "sv":
+        incdirs = sv_include_dirs(timer_path)
+        inc_flags = []
+        for d in incdirs:
+            inc_flags += ["-i", d]
+        compile_cmd = (
+            [XVLOG, "--sv",
+             "--log", os.path.join(work_dir, "xvlog.log")]
+            + inc_flags
+            + sv_files(proto, timer_path)
+        )
+        if not _run(compile_cmd, "xvlog"):
+            return False
+    else:
+        xvhdl_log = os.path.join(work_dir, "xvhdl.log")
+        for f in vhdl_files(proto, timer_path):
+            cmd = [XVHDL, "--2008", "--log", xvhdl_log, f]
+            if not _run(cmd, f"xvhdl {os.path.basename(f)}"):
+                return False
+
+    # ------------------------------------------------------------------
+    # Step 2: elaborate
+    # ------------------------------------------------------------------
+    elab_cmd = [
+        XELAB,
+        "--snapshot", snapshot,
+        "--timescale", "1ns/1ps",
+        "--debug", "typical",
+        "--log", os.path.join(work_dir, "xelab.log"),
+        tb_top,
+    ]
+    if not _run(elab_cmd, "xelab"):
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 3: simulate (Popen + DEVNULL — xsim hangs reading TTY stdin)
+    # ------------------------------------------------------------------
+    xsim_log = os.path.join(work_dir, "xsim_out.log")
+    sim_cmd = [XSIM, snapshot, "--runall", "--log", xsim_log]
+
+    print(f"  [xsim/{proto}_{lang}] Simulating ...")
+    try:
+        proc = subprocess.Popen(
+            sim_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            cwd=work_dir,
+        )
+    except FileNotFoundError as exc:
+        msg = f"ERROR: xsim not found — {exc}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    pass_marker = f"PASS tb_timer_{proto}"
+    fail_marker = "FAIL"
+    deadline = _time.monotonic() + 300
+    sim_out  = ""
+    done     = False
+
+    while _time.monotonic() < deadline:
+        _time.sleep(1)
+        try:
+            with open(xsim_log, errors="replace") as fh:
+                sim_out = fh.read()
+        except OSError:
+            pass
+        if pass_marker in sim_out or fail_marker in sim_out:
+            done = True
+            break
+        if proc.poll() is not None:
+            break
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+    # Final read
+    try:
+        with open(xsim_log, errors="replace") as fh:
+            sim_out = fh.read()
+    except OSError:
+        pass
+    full_log += sim_out
+
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    if not done:
+        print(f"  [xsim/{proto}_{lang}] ERROR: timeout — no PASS/FAIL seen in 300 s")
+
+    print(f"  [xsim/{proto}_{lang}] Output:\n{sim_out.strip()}")
+
+    passed = (pass_marker in sim_out) and (fail_marker not in sim_out)
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -443,7 +641,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--sim",
-        choices=["icarus", "ghdl", "modelsim", "vivado", "all"],
+        choices=["icarus", "ghdl", "modelsim", "xsim", "all"],
         default="icarus",
         help="Simulator to use — icarus/ghdl run from OSS CAD Suite; "
              "modelsim/questa must be in PATH or a known install prefix "
@@ -471,7 +669,7 @@ def main() -> None:
     # Expand 'all'
     protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
     langs  = SUPPORTED_LANGS  if args.lang  == "all" else [args.lang]
-    sims   = (["icarus", "ghdl", "modelsim"] if args.sim == "all"
+    sims   = (["icarus", "ghdl", "modelsim", "xsim"] if args.sim == "all"
               else [args.sim])
 
     work_base = os.path.join(timer_path, "verification", "work")
@@ -487,10 +685,6 @@ def main() -> None:
                     continue
                 if sim == "ghdl" and lang != "vhdl":
                     continue
-                if sim == "vivado":
-                    print(f"  Skipping {sim} (not implemented in this runner)")
-                    continue
-
                 work_dir = os.path.join(work_base, sim, f"{proto}_{lang}")
 
                 if sim == "icarus":
@@ -499,6 +693,8 @@ def main() -> None:
                     ok = run_ghdl(proto, timer_path, work_dir)
                 elif sim == "modelsim":
                     ok = run_modelsim(proto, lang, timer_path, work_dir)
+                elif sim == "xsim":
+                    ok = run_xsim(proto, lang, timer_path, work_dir)
                 else:
                     ok = False
 

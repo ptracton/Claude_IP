@@ -83,7 +83,7 @@ module tb_timer_axi4l;
   // BFM task library and directed test tasks
   // -------------------------------------------------------------------------
   `include "tasks_axi4l.sv"
-  `include "timer_test_pkg.sv"
+  `include "ip_test_pkg.sv"
   `include "test_reset.sv"
   `include "test_rw.sv"
   `include "test_back2back.sv"

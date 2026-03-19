@@ -1,6 +1,6 @@
 // timer_apb.sv — APB4 top-level for Timer IP.
 //
-// Instantiates timer_apb_if, timer_regfile, and timer_core.
+// Instantiates claude_apb_if (common), timer_regfile, and timer_core.
 // Contains no logic — only port declarations and submodule wiring.
 //
 // Parameters:
@@ -65,7 +65,7 @@ module timer_apb #(
   // -------------------------------------------------------------------------
   // Bus interface submodule
   // -------------------------------------------------------------------------
-  timer_apb_if #(
+  claude_apb_if #(
     .DATA_W (DATA_W),
     .ADDR_W (ADDR_W)
   ) u_apb_if (

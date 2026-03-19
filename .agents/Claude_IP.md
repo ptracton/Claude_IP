@@ -33,15 +33,29 @@ The `IP/common/` directory structure is:
 
 ```
 IP/common/
-├── rtl/
-│   ├── verilog/          # Shared SV primitives: CDC sync cells, reset synchronizers, etc.
-│   └── vhdl/             # VHDL-2008 equivalents of every component in verilog/
+├── design/
+│   └── rtl/
+│       ├── verilog/          # Shared SV bus-to-regfile bridges + primitives
+│       │   ├── claude_apb_if.sv      # APB4   → regbus (wr_en/rd_en) bridge
+│       │   ├── claude_ahb_if.sv      # AHB-Lite → regbus bridge
+│       │   ├── claude_axi4l_if.sv    # AXI4-Lite → regbus bridge
+│       │   ├── claude_wb_if.sv       # Wishbone B4 → regbus bridge
+│       │   └── ...                   # CDC sync cells, reset synchronizers, etc.
+│       └── vhdl/             # VHDL-2008 equivalents of every component in verilog/
+│           ├── claude_apb_if.vhd
+│           ├── claude_ahb_if.vhd
+│           ├── claude_axi4l_if.vhd
+│           ├── claude_wb_if.vhd
+│           └── ...
 ├── verification/
 │   ├── tasks/            # Protocol BFM task libraries (one file per bus protocol)
 │   │   ├── ahb_bfm.sv
 │   │   ├── apb_bfm.sv
 │   │   ├── axi4lite_bfm.sv
 │   │   └── wishbone_bfm.sv
+│   ├── tests/            # Generic test helper packages (shared by all IPs)
+│   │   ├── ip_test_pkg.sv    # SV: check_eq, test_start, test_done
+│   │   └── ip_test_pkg.vhd  # VHDL-2008: same helpers
 │   ├── formal/           # Reusable SVA property templates
 │   │   ├── reset_props.sv
 │   │   └── bus_protocol_props.sv
@@ -49,9 +63,19 @@ IP/common/
 │       └── ip_tool_base.py
 ├── firmware/
 │   ├── include/          # platform.h MMIO stub, shared C types
-│   └── cmake/            # Shared CMake modules (used by every IP's firmware/cmake/)
+│   └── cmake/            # Shared CMake toolchain files (used directly by all IPs)
+│       ├── arm-cortex-m33.cmake  # ARM Cortex-M33 bare-metal cross-compilation
+│       └── riscv32.cmake         # RISC-V 32-bit bare-metal cross-compilation
 └── doc/                  # Shared documentation templates
 ```
+
+**Bus bridge components (`claude_*_if`)** are the canonical adapters between standard bus
+protocols (APB4, AHB-Lite, AXI4-Lite, Wishbone B4) and the internal Claude IP register-file
+bus (`wr_en / wr_addr / wr_data / wr_strb / rd_en / rd_addr / rd_data`). Every IP block that
+acts as a bus slave instantiates one of these common bridges — never a per-IP copy. The bridge
+modules have no IP-specific logic and are parameterized by `DATA_W` and `ADDR_W`.
+
+**RULE — New IP blocks must instantiate `claude_*_if` from common, not write their own.**
 
 `IP_COMMON_PATH` is set by `setup.sh` and points to this directory.
 
@@ -209,8 +233,7 @@ IP/
 ├── doc/                                    # Specifications, architecture, and generated docs
 ├── firmware/
 │   ├── build/                              # Compiled output (gitignored)
-│   ├── build.sh                            # Invokes CMake and make
-│   ├── cmake/                              # CMake helper modules
+│   ├── build.sh                            # Invokes CMake (toolchain files from IP/common)
 │   ├── examples/                           # Usage example programs
 │   ├── include/                            # Public C headers (driver API + generated regs)
 │   ├── lib/                                # Built static library output
