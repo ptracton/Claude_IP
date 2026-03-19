@@ -1,0 +1,27 @@
+# vhdl_lint.toml — VHDL lint configuration for the timer IP block.
+#
+# Used by verification/tools/lint_timer.py when running GHDL -a (--std=08).
+# GHDL is the VHDL linter; each file must be analysed in dependency order.
+
+[tool]
+name    = "ghdl"
+binary  = "/opt/oss-cad-suite/bin/ghdl"
+std     = "08"
+
+# Files to analyse, in compilation order (packages before entities/architectures
+# that depend on them).  Paths are relative to the timer IP root directory
+# (${CLAUDE_TIMER_PATH}).
+[files]
+order = [
+  "design/rtl/vhdl/timer_reg_pkg.vhd",
+  "design/rtl/vhdl/timer_regfile.vhd",
+  "design/rtl/vhdl/timer_core.vhd",
+  "design/rtl/vhdl/timer_apb_if.vhd",
+  "design/rtl/vhdl/timer_apb.vhd",
+  "design/rtl/vhdl/timer_ahb_if.vhd",
+  "design/rtl/vhdl/timer_ahb.vhd",
+  "design/rtl/vhdl/timer_axi4l_if.vhd",
+  "design/rtl/vhdl/timer_axi4l.vhd",
+  "design/rtl/vhdl/timer_wb_if.vhd",
+  "design/rtl/vhdl/timer_wb.vhd",
+]

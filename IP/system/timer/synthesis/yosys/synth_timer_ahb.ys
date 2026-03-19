@@ -1,0 +1,17 @@
+# synth_timer_ahb.ys — Yosys synthesis script for Timer IP (AHB variant).
+#
+# Usage (from synthesis/yosys/):
+#   yosys synth_timer_ahb.ys
+#
+# Reads RTL from ../../design/rtl/verilog/
+# Writes synthesised netlist to ./work/timer_ahb_synth.v
+# Prints resource summary (cell counts).
+
+read_verilog -sv \
+    ../../design/rtl/verilog/timer_core.sv \
+    timer_regfile_synth.sv \
+    ../../design/rtl/verilog/timer_ahb_if.sv \
+    ../../design/rtl/verilog/timer_ahb.sv
+synth -top timer_ahb -flatten
+stat
+write_verilog -noattr work/timer_ahb_synth.v

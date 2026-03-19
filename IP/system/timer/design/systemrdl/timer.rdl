@@ -1,0 +1,162 @@
+// timer.rdl — SystemRDL 2.0 register definitions for the timer IP.
+// Single source of truth for all register addresses, fields, access types,
+// reset values, and field semantics.
+//
+// Register map (byte-addressable, base 0x0, all registers 32-bit):
+//   0x00  CTRL    — Control register
+//   0x04  STATUS  — Status register
+//   0x08  LOAD    — Reload/initial count value
+//   0x0C  COUNT   — Current counter value (read-only, hw-updated)
+//   0x10  CAPTURE — Race-free counter snapshot (read-only, latched by CTRL.SNAPSHOT)
+
+addrmap timer_regs {
+    desc = "Timer IP register file";
+    default hw = r;
+    default sw = rw;
+    default reset = 32'h0;
+
+    // -----------------------------------------------------------------------
+    // CTRL — Control register  @ 0x00
+    // -----------------------------------------------------------------------
+    reg ctrl_reg {
+        desc = "Timer control register";
+
+            // Bits [31:15] — reserved, read-as-zero
+        reserved 17;
+
+        // Bit [14] — SNAPSHOT: latch COUNT into CAPTURE register (self-clearing command).
+        //   Write 1 to trigger an atomic snapshot of the running counter.
+        //   Reads as 0; hardware auto-clears after one cycle.
+        field {} SNAPSHOT[1] = 1'b0;
+        SNAPSHOT->desc = "Snapshot command: write 1 to latch COUNT into CAPTURE (self-clearing)";
+        SNAPSHOT->hw   = r;
+        SNAPSHOT->sw   = rw;
+
+        // Bit [13] — IRQ_MODE: interrupt output mode.
+        //   0 = level: irq asserts while STATUS.INTR is set (cleared by W1C).
+        //   1 = pulse: irq is a one-cycle pulse per underflow event.
+        field {} IRQ_MODE[1] = 1'b0;
+        IRQ_MODE->desc = "IRQ output mode: 0=level (STATUS.INTR gated), 1=pulse (one cycle per underflow)";
+        IRQ_MODE->hw   = r;
+        IRQ_MODE->sw   = rw;
+
+        // Bit [12] — RESTART: force-reload counter without toggling EN (self-clearing command).
+        //   Write 1 while timer is running to instantly reload COUNT from LOAD
+        //   and reset the prescaler.  Reads as 0; hardware auto-clears after one cycle.
+        field {} RESTART[1] = 1'b0;
+        RESTART->desc = "Force-reload command: write 1 to reload COUNT from LOAD (self-clearing)";
+        RESTART->hw   = r;
+        RESTART->sw   = rw;
+
+        // Bits [11:4] — PRESCALE[7:0]: clock pre-scale ratio.
+        //   Divide ratio = PRESCALE + 1.  Reset value 0 means divide-by-1.
+        field {} PRESCALE[8] = 8'h00;
+        PRESCALE->desc = "Clock prescale value (divide ratio = PRESCALE + 1)";
+        PRESCALE->hw   = r;
+        PRESCALE->sw   = rw;
+
+        // Bit [3] — TRIG_EN: trigger output enable.
+        field {} TRIG_EN[1] = 1'b0;
+        TRIG_EN->desc = "External trigger output enable (asserted for one cycle at count=0)";
+        TRIG_EN->hw   = r;
+        TRIG_EN->sw   = rw;
+
+        // Bit [2] — INTR_EN: interrupt enable.
+        field {} INTR_EN[1] = 1'b0;
+        INTR_EN->desc = "Interrupt enable (gate for INTR status bit)";
+        INTR_EN->hw   = r;
+        INTR_EN->sw   = rw;
+
+        // Bit [1] — MODE: operating mode.
+        //   0 = repeat/free-run: auto-reload on underflow.
+        //   1 = one-shot: stop after first underflow.
+        field {} MODE[1] = 1'b0;
+        MODE->desc = "Operating mode: 0=repeat/free-run, 1=one-shot";
+        MODE->hw   = r;
+        MODE->sw   = rw;
+
+        // Bit [0] — EN: timer enable.
+        field {} EN[1] = 1'b0;
+        EN->desc = "Timer enable (1=running, 0=halted)";
+        EN->hw   = r;
+        EN->sw   = rw;
+    };
+
+    // -----------------------------------------------------------------------
+    // STATUS — Status register  @ 0x04
+    // -----------------------------------------------------------------------
+    reg status_reg {
+        desc = "Timer status register";
+
+        // Bits [31:3] — reserved, read-as-zero
+        reserved 29;
+
+        // Bit [2] — OVF: overrun flag (W1C).
+        //   Set by hardware when an underflow occurs while INTR is already set
+        //   (timer fired again before the interrupt was cleared by software).
+        field {} OVF[1] = 1'b0;
+        OVF->desc  = "Overrun flag: set when underflow fires while INTR is already pending (W1C)";
+        OVF->hw    = w;
+        OVF->sw    = w;
+        OVF->woclr;
+
+        // Bit [1] — ACTIVE: timer is currently running (read-only, set by hw).
+        field {} ACTIVE[1] = 1'b0;
+        ACTIVE->desc = "Timer is running (reflects CTRL.EN and one-shot completion)";
+        ACTIVE->hw   = w;
+        ACTIVE->sw   = r;
+
+        // Bit [0] — INTR: interrupt pending.
+        //   W1C — write 1 to clear; hardware sets on underflow.
+        field {} INTR[1] = 1'b0;
+        INTR->desc  = "Interrupt pending (set by hw on underflow, cleared by writing 1)";
+        INTR->hw    = w;
+        INTR->sw    = w;
+        INTR->woclr;
+    };
+
+    // -----------------------------------------------------------------------
+    // LOAD — Reload / initial count value  @ 0x08
+    // -----------------------------------------------------------------------
+    reg load_reg {
+        desc = "Timer reload / initial count value register";
+
+        field {} VALUE[32] = 32'h0000_0000;
+        VALUE->desc = "32-bit reload value loaded into counter on start and on underflow (repeat mode)";
+        VALUE->hw   = r;
+        VALUE->sw   = rw;
+    };
+
+    // -----------------------------------------------------------------------
+    // COUNT — Current counter value  @ 0x0C
+    // -----------------------------------------------------------------------
+    reg count_reg {
+        desc = "Current counter value register (read-only; written by timer_core)";
+
+        field {} VALUE[32] = 32'h0000_0000;
+        VALUE->desc = "Current value of the 32-bit down-counter";
+        VALUE->hw   = w;
+        VALUE->sw   = r;
+    };
+
+    // -----------------------------------------------------------------------
+    // Address map
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // CAPTURE — Race-free counter snapshot  @ 0x10
+    // -----------------------------------------------------------------------
+    reg capture_reg {
+        desc = "Race-free counter snapshot register (read-only; latched when CTRL.SNAPSHOT is written)";
+
+        field {} VALUE[32] = 32'h0000_0000;
+        VALUE->desc = "Latched snapshot of the 32-bit counter value at the time CTRL.SNAPSHOT was written";
+        VALUE->hw   = w;
+        VALUE->sw   = r;
+    };
+
+    ctrl_reg    CTRL    @ 0x00;
+    status_reg  STATUS  @ 0x04;
+    load_reg    LOAD    @ 0x08;
+    count_reg   COUNT   @ 0x0C;
+    capture_reg CAPTURE @ 0x10;
+};

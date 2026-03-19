@@ -59,18 +59,22 @@ IP/common/
 
 ## SystemVerilog Interface Prohibition (mandatory for all sub-agents)
 
-**RULE — Do NOT use SystemVerilog `interface` constructs anywhere in this project.**
+**RULE — Do NOT use SystemVerilog `interface` constructs in directed-test files.**
 
 Icarus Verilog does not support SV `interface` blocks. Since Icarus is a required
 simulator for all directed tests, `interface` is forbidden in every RTL source file,
-every testbench, every BFM task library, and every UVM file in this project.
+every directed-test testbench, and every BFM task library.
 
 All inter-module connections — including the internal register-access bus between
 `IP_NAME_<proto>_if`, `IP_NAME_regfile`, and `IP_NAME_core` — must be expressed as
-explicit individual `input` / `output` ports on every module boundary. No exceptions.
+explicit individual `input` / `output` ports on every module boundary.
 
-Any code that uses `interface`, `modport`, or `virtual interface` is a quality-gate
-failure and must be rewritten before the step can be marked complete.
+**UVM exception**: UVM runs exclusively on Vivado xsim, which fully supports SV
+interfaces. `virtual interface` is the standard UVM VIF mechanism and is **permitted**
+inside `verification/tasks/uvm/`. It must not appear outside that directory.
+
+Any use of `interface` / `modport` / `virtual interface` outside `verification/tasks/uvm/`
+is a quality-gate failure and must be rewritten before the step can be marked complete.
 
 ---
 
@@ -227,8 +231,9 @@ IP/
     ├── tools/
     │   ├── formal_IP_NAME.py               # Formal verification runner (Yosys)
     │   ├── lint_IP_NAME.py                 # Lint runner
-    │   ├── regression_IP_NAME.py           # Regression runner and reporter
-    │   └── sim_IP_NAME.py                  # Simulation runner (all simulators)
+    │   ├── run_regression.py               # Regression runner and reporter
+    │   ├── sim_IP_NAME.py                  # Simulation runner (Icarus/GHDL/ModelSim)
+    │   └── uvm_IP_NAME.py                  # UVM runner (Vivado xsim)
     └── work/                               # Simulator working directories (gitignored)
 ```
 
@@ -265,7 +270,7 @@ deliverables exist before starting work.
 | rtl (3) | directed_tests (4), formal (5), uvm (6), lint (8), synthesis (10) | `design/rtl/verilog/`, `design/rtl/vhdl/` |
 | directed_tests (4) | formal (5), regression (7) | `verification/work/*/results.log` |
 | formal (5) | regression (7) | `verification/formal/results.log` |
-| uvm (6) | regression (7) | `verification/work/vivado/uvm_*.log` |
+| uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
 | lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
 | All (2–9) | cleanup (11) | Full passing regression |
 
@@ -294,11 +299,12 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | Verilator | 5.0+ (via OSS CAD Suite) | SV linting |
 | Yosys | 0.36+ (via OSS CAD Suite) | Open-source synthesis |
 | OSS CAD Suite | `/opt/oss-cad-suite/bin` | Open-source EDA toolchain |
-| ModelSim ASE | `/opt/intelFPGA_pro/21.1/modelsim_ase/bin` | Mixed-language simulation |
-| Vivado | `/opt/Xilinx/Vivado/2023.2/settings64.sh` | UVM simulation + synthesis |
-| Quartus Prime | 22.1 | Intel synthesis |
+| ModelSim ASE | `/opt/intelFPGA_lite/23.1std/modelsim_ase/bin` | Mixed-language simulation |
+| Vivado | `/opt/Xilinx/Vivado/2023.2/settings64.sh` | UVM simulation + synthesis (target: Zynq-7010) |
+| Quartus Prime Lite | `/opt/intelFPGA_lite/23.1std/quartus/bin` | Intel synthesis (target: Cyclone V SE 5CSEMA4U23C6) |
+| arm-none-eabi-gcc | system package (`apt install gcc-arm-none-eabi`) | ARM Cortex-M33 firmware cross-compiler |
+| riscv-none-elf-gcc | xPack 15.2.0 at `/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin` | RISC-V 32-bit firmware cross-compiler |
 | PeakRDL | 2.0+ (Python venv) | SystemRDL compilation |
-| GCC | 11.0+ | Firmware compilation |
 | CMake | 3.20+ | Firmware build system |
 | Python | 3.10+ | Tool scripts |
 | Python venv | `<repo_root>/virtualenv/CLAUDE_IP/bin/activate` | Isolated Python environment |

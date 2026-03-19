@@ -6,10 +6,25 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
 
 ## Prerequisites
 
-- `firmware/include/IP_NAME_regs.h` exists and passes `gcc -fsyntax-only`.
+- `firmware/include/IP_NAME_regs.h` exists and passes cross-compiler syntax check.
 - `firmware/include/`, `firmware/src/`, `firmware/examples/`, `firmware/cmake/` directories exist.
 - `IP_COMMON_PATH` is set (sourced from `setup.sh`).
-- `gcc` 11.0+ and `cmake` 3.20+ are on `$PATH`.
+- `cmake` 3.20+ is on `$PATH`.
+- Cross-compilers are on `$PATH` (added by `setup.sh` at the **end** of the file):
+  - ARM Cortex-M33: `arm-none-eabi-gcc`
+  - RISC-V 32-bit:  `riscv-none-elf-gcc` (xPack, at `/opt/xpack-riscv-none-elf-gcc-*/bin`)
+
+## Cross-Compilation Requirement (mandatory)
+
+**RULE — Firmware is NEVER built with the host (x86-64) GCC.** The driver targets embedded
+bare-metal SoC platforms. All compilation and syntax-checking must use cross-compilers.
+
+Supported targets:
+
+| Target         | Compiler           | Flags                               | Library output                        |
+|----------------|--------------------|-------------------------------------|---------------------------------------|
+| ARM Cortex-M33 | `arm-none-eabi-gcc` | `-mcpu=cortex-m33 -mthumb -mfloat-abi=soft` | `firmware/lib/arm-cortex-m33/libIP_NAME.a` |
+| RISC-V 32-bit  | `riscv-none-elf-gcc` (xPack) | `-march=rv32imac_zicsr -mabi=ilp32` | `firmware/lib/riscv32/libIP_NAME.a` |
 
 ## Common Components
 
@@ -17,13 +32,8 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
 
 - `${IP_COMMON_PATH}/firmware/include/platform.h` — the canonical platform MMIO stub.
   The IP-specific `firmware/include/platform.h` must be a symlink or a copy of this
-  file; do not write a new one from scratch. Users replace only the common version when
-  porting to a new target.
-- `${IP_COMMON_PATH}/firmware/cmake/` — shared CMake modules. The IP's `firmware/cmake/`
-  directory includes these modules; do not duplicate CMake logic.
-- If new shared firmware utilities (e.g., common error codes, ring-buffer helpers) are
-  developed, place them in `${IP_COMMON_PATH}/firmware/` rather than in the IP-specific
-  `firmware/src/` so every IP can benefit.
+  file; do not write a new one from scratch.
+- `${IP_COMMON_PATH}/firmware/cmake/` — shared CMake modules. Do not duplicate CMake logic.
 
 ## Responsibilities
 
@@ -32,44 +42,51 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
    - Does **not** expose driver internals.
    - Includes `IP_NAME_regs.h` for register definitions.
 2. Write `firmware/include/platform.h`:
-   - Isolates platform-specific memory-mapped I/O in a single stub file.
    - Defines `MMIO_READ32(addr)` and `MMIO_WRITE32(addr, val)` macros backed by
      `volatile uint32_t *` casts.
-   - This is the only file a user needs to replace when porting to a new target.
+   - This is the only file a user replaces when porting to a new target.
 3. Write the driver implementation `firmware/src/IP_NAME.c`:
    - Uses **only** `firmware/include/IP_NAME_regs.h` for register definitions.
    - No hardcoded addresses or magic numbers.
+   - Pure C99 — no compiler extensions, no OS or RTOS dependencies.
 4. Driver API must include at minimum:
-   - `IP_NAME_init(uintptr_t base_addr)` — initialize peripheral, apply reset defaults.
+   - `IP_NAME_init(uintptr_t base_addr)` — initialize peripheral to known state.
    - `IP_NAME_write_reg(uintptr_t base, uint32_t offset, uint32_t value)` — raw write.
-   - `IP_NAME_read_reg(uintptr_t base, uint32_t offset, uint32_t *value)` — raw read.
+   - `IP_NAME_read_reg(uintptr_t base, uint32_t offset)` — raw read.
    - Higher-level functions for each distinct hardware capability.
-5. All public functions carry Doxygen-style comment blocks: `@brief`, `@param`, `@return`,
-   `@note` where applicable.
-6. Driver is pure C99 — no compiler extensions, no OS or RTOS dependencies.
-7. Write `firmware/build.sh`:
-   - Runs `cmake` out-of-source into `firmware/build/`.
-   - Builds static library `firmware/lib/libIP_NAME.a`.
-   - Must be callable without arguments after `setup.sh` is sourced.
-8. Write `firmware/cmake/IP_NAME.cmake` — CMake targets for the library and examples.
-9. Write `firmware/examples/main.c`:
+5. All public functions carry Doxygen-style comment blocks (`@brief`, `@param`, `@return`).
+6. Write CMake toolchain files:
+   - `firmware/cmake/arm-cortex-m33.cmake` — sets `CMAKE_C_COMPILER arm-none-eabi-gcc`,
+     `CMAKE_C_FLAGS_INIT "-mcpu=cortex-m33 -mthumb -mfloat-abi=soft"`,
+     `CMAKE_SYSTEM_NAME Generic`.
+   - `firmware/cmake/riscv32.cmake` — sets `CMAKE_C_COMPILER riscv-none-elf-gcc`,
+     `CMAKE_C_FLAGS_INIT "-march=rv32imac_zicsr -mabi=ilp32"`,
+     `CMAKE_SYSTEM_NAME Generic`.
+   - Both toolchain files set `CMAKE_FIND_ROOT_PATH_MODE_*` to prevent host library
+     contamination, and `--specs=nano.specs --specs=nosys.specs` in linker flags.
+7. Write `firmware/CMakeLists.txt`:
+   - Requires a toolchain file via `-DCMAKE_TOOLCHAIN_FILE` — **reject builds without
+     a recognised cross-compiler** with `message(FATAL_ERROR ...)`.
+   - Detects the architecture tag from `CMAKE_C_COMPILER` (`arm-none-eabi` → `arm-cortex-m33`,
+     `riscv` → `riscv32`).
+   - Outputs `libIP_NAME.a` to `firmware/lib/<arch>/`.
+   - Example executable (`TIMER_BUILD_EXAMPLE`) defaults **OFF** — linking a bare-metal
+     executable without a startup file generates spurious newlib syscall warnings.
+8. Write `firmware/build.sh`:
+   - Accepts optional positional arguments: `arm`, `riscv`, or nothing (builds both).
+   - Accepts a leading `clean` argument: `bash build.sh clean`, `bash build.sh clean arm`,
+     `bash build.sh clean riscv` — removes `build/<arch>/` and `lib/<arch>/`.
+   - Skips a target gracefully (with `WARNING:` message) if the cross-compiler is not on PATH.
+   - Uses `--fresh` flag on `cmake` to guarantee a clean configure.
+   - Reports library paths at the end.
+9. Write `firmware/examples/IP_NAME_example.c`:
    - Self-contained example demonstrating every public API function.
    - Compiles cleanly against `libIP_NAME.a`.
-10. Update `README.md` — replace both `[TBD]` placeholders in the **Firmware** section:
-    - **Code Size**: run `size firmware/lib/libIP_NAME.a` and report `.text`, `.data`, and
-      `.bss` bytes for the driver object. Include the GCC version, target architecture
-      (`-march` flag), and optimization level used.
-
-      ```markdown
-      | Section | Bytes |
-      |---------|-------|
-      | .text   | NNN   |
-      | .data   | NN    |
-      | .bss    | NN    |
-      ```
-
-    - **API Summary**: table of every public function with its signature and a one-line
-      description drawn from the Doxygen `@brief` field.
+10. Update `README.md` — **Firmware** section:
+    - **Build Targets**: table of cross-compilation targets, toolchains, flags, output paths.
+    - **Code Size**: run `riscv-none-elf-size` / `arm-none-eabi-size` and report `.text`,
+      `.data`, `.bss` bytes per target.
+    - **API Summary**: table of every public function with signature and `@brief` description.
 
 ## Outputs
 
@@ -77,14 +94,22 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
 |----------|-------------|
 | `firmware/include/IP_NAME.h` | Public API header |
 | `firmware/include/platform.h` | Platform MMIO stub (user replaces for target) |
-| `firmware/src/IP_NAME.c` | Driver implementation |
-| `firmware/build.sh` | CMake + make build script |
-| `firmware/cmake/IP_NAME.cmake` | CMake build targets |
-| `firmware/examples/main.c` | Usage example |
+| `firmware/src/IP_NAME.c` | Driver implementation (C99) |
+| `firmware/cmake/arm-cortex-m33.cmake` | CMake toolchain file for ARM Cortex-M33 |
+| `firmware/cmake/riscv32.cmake` | CMake toolchain file for RISC-V 32-bit (xPack) |
+| `firmware/CMakeLists.txt` | CMake build definition (cross-compile only) |
+| `firmware/build.sh` | Build script with `arm`/`riscv`/`clean` options |
+| `firmware/examples/IP_NAME_example.c` | Usage example |
+| `firmware/lib/arm-cortex-m33/libIP_NAME.a` | ARM Cortex-M33 static library |
+| `firmware/lib/riscv32/libIP_NAME.a` | RISC-V 32-bit static library |
 
 ## Quality Gate
 
-- `gcc -std=c99 -Wall -Wextra -Werror -fsyntax-only firmware/include/IP_NAME.h` passes.
-- `firmware/build.sh` builds `firmware/lib/libIP_NAME.a` without warnings.
-- `cleanup.sh` removes `firmware/build/`, `firmware/obj/`, `firmware/lib/` cleanly.
+- `arm-none-eabi-gcc -fsyntax-only -std=c99 firmware/include/IP_NAME.h` passes.
+- `riscv-none-elf-gcc -fsyntax-only -std=c99 firmware/include/IP_NAME.h` passes.
+- `bash firmware/build.sh arm` builds `firmware/lib/arm-cortex-m33/libIP_NAME.a` without warnings.
+- `bash firmware/build.sh riscv` builds `firmware/lib/riscv32/libIP_NAME.a` without warnings.
+- `bash firmware/build.sh clean` removes both `build/` subdirectories and `lib/` subdirectories.
 - No `#include` of anything outside `firmware/include/` and generated headers in driver sources.
+- **No host GCC output** — any `.a` file compiled with `x86-64-linux-gnu-gcc` or plain `gcc`
+  is a quality gate failure.

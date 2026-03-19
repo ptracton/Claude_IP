@@ -1,0 +1,21 @@
+# synth_timer.ys — Yosys synthesis script for Timer IP (APB variant, reference).
+#
+# This script synthesises the APB top-level as a standalone reference run.
+# For all four protocol variants (apb, ahb, axi4l, wb) use run_synth.py which
+# invokes the per-protocol scripts synth_timer_{apb,ahb,axi4l,wb}.ys.
+#
+# Usage (from synthesis/yosys/):
+#   yosys synth_timer.ys
+#
+# Reads RTL from ../../design/rtl/verilog/
+# Writes synthesised netlist to ./work/timer_apb_synth.v
+# Prints resource summary (cell counts).
+
+read_verilog -sv ../../design/rtl/verilog/timer_reg_pkg.sv
+read_verilog -sv ../../design/rtl/verilog/timer_regfile.sv
+read_verilog -sv ../../design/rtl/verilog/timer_core.sv
+read_verilog -sv ../../design/rtl/verilog/timer_apb_if.sv
+read_verilog -sv ../../design/rtl/verilog/timer_apb.sv
+synth -top timer_apb -flatten
+stat
+write_verilog -noattr work/timer_apb_synth.v

@@ -207,3 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 virtualenv/CLAUDE_IP/*
+*.o
+*.a
+*.so
+*.cf
+*.vvp
+*/*/*/verification/work/*

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# cleanup.sh — Remove all build and simulation artifacts for timer
+# Usage: bash timer/cleanup.sh
+
+# Guard: require CLAUDE_TIMER_PATH
+if [ -z "${CLAUDE_TIMER_PATH}" ]; then
+    echo "ERROR: CLAUDE_TIMER_PATH is not set."
+    echo "       Please run:  source timer/setup.sh"
+    exit 1
+fi
+
+set -e
+
+echo "Cleaning timer build and simulation artifacts..."
+
+# Simulator working directories
+rm -rf "${CLAUDE_TIMER_PATH}/verification/work"/*
+
+# Firmware build artifacts
+rm -rf "${CLAUDE_TIMER_PATH}/firmware/build"/*
+rm -rf "${CLAUDE_TIMER_PATH}/firmware/obj"/*
+rm -rf "${CLAUDE_TIMER_PATH}/firmware/lib"/*
+
+# Synthesis outputs (Vivado and Quartus reports, logs, and project directories)
+python3 "${CLAUDE_TIMER_PATH}/synthesis/run_vendor_synth.py" --clean
+
+# Formal verification results (keep scripts and properties)
+bash "${CLAUDE_TIMER_PATH}/verification/formal/run_formal.sh" --clean
+
+# Lint logs (keep config and waivers)
+rm -f "${CLAUDE_TIMER_PATH}/verification/lint/lint_results.log"
+
+# Python cache directories
+find "${CLAUDE_TIMER_PATH}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${CLAUDE_TIMER_PATH}" -name "*.pyc" -o -name "*.pyo" | xargs rm -f 2>/dev/null || true
+
+echo "Clean complete."

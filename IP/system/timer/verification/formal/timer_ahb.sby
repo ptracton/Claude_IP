@@ -1,0 +1,27 @@
+# timer_ahb.sby — SymbiYosys formal verification for timer_ahb (AHB-Lite).
+#
+# Usage (from the verification/formal directory):
+#   sby -f timer_ahb.sby
+#
+# Modes: bmc (bounded model check, depth 20)
+# All assertions are in timer_ahb_formal.sv (flat wrapper — no bind required).
+
+[options]
+mode bmc
+depth 20
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal timer_regfile_synth.sv
+read -formal timer_core.sv
+read -formal timer_ahb_if.sv
+read -formal timer_ahb_formal.sv
+prep -top timer_ahb_formal
+
+[files]
+../../synthesis/yosys/timer_regfile_synth.sv
+../../design/rtl/verilog/timer_core.sv
+../../design/rtl/verilog/timer_ahb_if.sv
+timer_ahb_formal.sv

@@ -1,0 +1,33 @@
+# verilator.flags — Verilator lint flags for the timer IP block.
+#
+# Used by verification/tools/lint_timer.py.
+# One flag (or flag + argument) per line.  Blank lines and lines starting
+# with '#' are ignored by lint_timer.py.
+
+# Lint-only mode: perform static checks only, do not generate C++.
+--lint-only
+
+# Enable all warnings.
+-Wall
+
+# DECLFILENAME: Verilator requires each module to live in a file whose name
+# matches the module name.  This repo uses descriptive multi-module file
+# conventions for the package file, so this warning is suppressed globally.
+-Wno-DECLFILENAME
+
+# Include path for shared RTL primitives (sync cells, etc.)
+# Resolved at runtime via ${IP_COMMON_PATH}/rtl/verilog/
+# (lint_timer.py adds this dynamically)
+
+# RTL source files (order matters: packages before consumers)
+# design/rtl/verilog/timer_reg_pkg.sv
+# design/rtl/verilog/timer_regfile.sv
+# design/rtl/verilog/timer_core.sv
+# design/rtl/verilog/timer_apb_if.sv    (APB variant)
+# design/rtl/verilog/timer_apb.sv
+# design/rtl/verilog/timer_ahb_if.sv    (AHB variant)
+# design/rtl/verilog/timer_ahb.sv
+# design/rtl/verilog/timer_axi4l_if.sv  (AXI4-Lite variant)
+# design/rtl/verilog/timer_axi4l.sv
+# design/rtl/verilog/timer_wb_if.sv     (Wishbone variant)
+# design/rtl/verilog/timer_wb.sv

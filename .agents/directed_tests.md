@@ -89,6 +89,44 @@ Create one file per bus protocol under `verification/testbench/`:
 | `tb_IP_NAME_wb.vhd` | `IP_NAME_wb` |
 
 Each VHDL testbench instantiates its named VHDL DUT and drives all tests.
+All VHDL testbenches must `use work.IP_NAME_test_pkg.all` and call `test_start()`,
+`test_done()`, and `check_eq()` from the shared test package (see item 2a below).
+
+#### 2a. Write `verification/tests/IP_NAME_test_pkg.vhd`
+
+A shared VHDL package that provides verbose, formatted test output functions usable by
+all four VHDL testbenches:
+
+```vhdl
+package IP_NAME_test_pkg is
+  shared variable chk_num : integer := 0;  -- GHDL needs -frelaxed for this
+  procedure test_start(name : string);
+  procedure test_done(name : string);
+  procedure check_eq(
+    actual   : std_ulogic_vector(31 downto 0);
+    expected : std_ulogic_vector(31 downto 0);
+    msg      : string
+  );
+end package;
+```
+
+`check_eq` must:
+- Increment `chk_num`
+- Print a formatted line: `[N] <msg> | exp=<hex> | got=<hex> | PASS/FAIL`
+- Call `report "FAIL: <msg>" severity failure` on mismatch
+
+**GHDL shared variable constraint**: VHDL-2008 strict mode requires shared variables to
+use a protected type. `chk_num : integer` is not protected. Compile GHDL with `-frelaxed`
+to downgrade this to a warning. **Add `-frelaxed` to every GHDL command** (analyze,
+elaborate, simulate) in `sim_IP_NAME.py`.
+
+**Compilation order**: `IP_NAME_test_pkg.vhd` **must be analyzed before any testbench**
+that uses it. Place it first in the `vhdl_files()` list in `sim_IP_NAME.py`, before the
+testbench `.vhd` file.
+
+**Check patterns for masked STATUS bits**: use `check_eq(rdata and x"00000001", x"00000001",
+"STATUS.INTR set")` rather than inline `if rdata(0) /= '1' then report...`. This ensures
+`check_eq` counts the check and prints the formatted output.
 
 ### 3. Write reusable BFM task libraries
 
@@ -116,11 +154,45 @@ all four testbenches through the appropriate BFM interface:
 ### 5. Complete `verification/tools/sim_IP_NAME.py`
 
 - Accepts `--proto {ahb,apb,axi4l,wb,all}` and `--lang {sv,vhdl,all}`.
+- Accepts `--sim {icarus,ghdl,modelsim,all}`.
 - Builds the correct file list for the selected simulator, DUT top-level, and language.
 - No compile-time defines for protocol — the testbench file selects the DUT.
 - Captures simulator stdout/stderr.
 - Writes `verification/work/<sim>/<proto>_<lang>/results.log` with `PASS` or `FAIL`.
 - Exits non-zero if any result is `FAIL`.
+
+**GHDL flags**: add `-frelaxed` to the analyze, elaborate, and simulate commands.
+`IP_NAME_test_pkg.vhd` must appear first in the VHDL file list.
+
+**ModelSim (`vsim -c`) hangs with `subprocess.run()`**: ModelSim reads stdin
+indefinitely even after the simulation completes when stdin is not a real terminal.
+Do NOT use `subprocess.run()` for vsim. Use `subprocess.Popen` with
+`stdin=subprocess.DEVNULL`, write stdout/stderr to a log file, and poll:
+
+```python
+proc = subprocess.Popen(
+    vsim_cmd, stdout=log_fh, stderr=log_fh,
+    stdin=subprocess.DEVNULL, cwd=work_dir
+)
+deadline = time.monotonic() + 300
+pass_marker = f"PASS tb_IP_NAME_{proto}"
+fail_marker = "FAIL"
+done = False
+while time.monotonic() < deadline:
+    time.sleep(1)
+    with open(log_path) as fh:
+        sim_out = fh.read()
+    if pass_marker in sim_out or fail_marker in sim_out:
+        done = True; break
+    if proc.poll() is not None:
+        break
+proc.terminate(); proc.wait(timeout=10)
+```
+
+**ModelSim do-file**: write only `run -all\n` — do NOT include `quit -f`. With
+`stdin=subprocess.DEVNULL`, `quit -f` triggers a crash ("Unexpected EOF on RPC channel")
+because vsim's internal IPC tries to read from the closed stdin pipe. Omitting it is safe:
+`run -all` returns naturally when the simulation reaches a VHDL `wait;` deadlock.
 
 ### 6. Run and verify
 

@@ -1,0 +1,12 @@
+# synth_timer_apb.ys — Yosys synthesis: Timer IP APB4 variant.
+# Uses timer_regfile_synth.sv (localparams) instead of the source regfile
+# to avoid the SV2012 "module X import pkg::*" syntax Yosys 0.60 can't parse.
+
+read_verilog -sv \
+    ../../design/rtl/verilog/timer_core.sv \
+    timer_regfile_synth.sv \
+    ../../design/rtl/verilog/timer_apb_if.sv \
+    ../../design/rtl/verilog/timer_apb.sv
+synth -top timer_apb -flatten
+stat
+write_verilog -noattr work/timer_apb_synth.v

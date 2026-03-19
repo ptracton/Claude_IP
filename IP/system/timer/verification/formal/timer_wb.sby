@@ -1,0 +1,27 @@
+# timer_wb.sby — SymbiYosys formal verification for timer_wb (Wishbone B4).
+#
+# Usage (from the verification/formal directory):
+#   sby -f timer_wb.sby
+#
+# Modes: bmc (bounded model check, depth 20)
+# All assertions are in timer_wb_formal.sv (flat wrapper — no bind required).
+
+[options]
+mode bmc
+depth 20
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal timer_regfile_synth.sv
+read -formal timer_core.sv
+read -formal timer_wb_if.sv
+read -formal timer_wb_formal.sv
+prep -top timer_wb_formal
+
+[files]
+../../synthesis/yosys/timer_regfile_synth.sv
+../../design/rtl/verilog/timer_core.sv
+../../design/rtl/verilog/timer_wb_if.sv
+timer_wb_formal.sv

@@ -86,13 +86,25 @@ export IP_COMMON_PATH="$(dirname "${CLAUDE_IP_NAME_PATH}")/common"
 export IP_NAME="IP_NAME"
 
 # ---------------------------------------------------------------------------
-# OSS CAD Suite  (Icarus Verilog, GHDL, Verilator, Yosys, nextpnr, etc.)
+# Convenience paths derived from CLAUDE_IP_NAME_PATH
 # ---------------------------------------------------------------------------
-export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
-export PATH="${OSS_CAD_SUITE_PATH}/bin:${PATH}"
+export IP_DESIGN_PATH="${CLAUDE_IP_NAME_PATH}/design"
+export IP_VERIFICATION_PATH="${CLAUDE_IP_NAME_PATH}/verification"
+export IP_FIRMWARE_PATH="${CLAUDE_IP_NAME_PATH}/firmware"
+export IP_SYNTHESIS_PATH="${CLAUDE_IP_NAME_PATH}/synthesis"
+export IP_DOC_PATH="${CLAUDE_IP_NAME_PATH}/doc"
 
 # ---------------------------------------------------------------------------
-# Vivado 2023.2
+# External tool paths — declare variables here; update PATH at the END of
+# this file, AFTER all sourced scripts, so nothing overwrites our entries.
+# ---------------------------------------------------------------------------
+export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
+export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
+export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
+export MODELSIM_PATH="/opt/intelFPGA_lite/23.1std/modelsim_ase/bin"
+
+# ---------------------------------------------------------------------------
+# Vivado 2023.2  (settings64.sh modifies PATH — must source before our PATH update)
 # ---------------------------------------------------------------------------
 if [ -f "/opt/Xilinx/Vivado/2023.2/settings64.sh" ]; then
     source "/opt/Xilinx/Vivado/2023.2/settings64.sh"
@@ -101,13 +113,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# ModelSim ASE 21.1
-# ---------------------------------------------------------------------------
-export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
-export PATH="${MODELSIM_PATH}:${PATH}"
-
-# ---------------------------------------------------------------------------
-# Python virtual environment  (PeakRDL and all tool scripts)
+# Python virtual environment  (activation modifies PATH — must source before our PATH update)
 # ---------------------------------------------------------------------------
 CLAUDE_IP_VENV="$(dirname "${CLAUDE_IP_NAME_PATH}")/virtualenv/CLAUDE_IP/bin/activate"
 if [ -f "${CLAUDE_IP_VENV}" ]; then
@@ -119,13 +125,10 @@ fi
 unset CLAUDE_IP_VENV
 
 # ---------------------------------------------------------------------------
-# Convenience paths derived from CLAUDE_IP_NAME_PATH
+# PATH — updated LAST so these entries are never overwritten by sourced scripts
+# (Vivado settings64.sh and venv activation both modify PATH)
 # ---------------------------------------------------------------------------
-export IP_DESIGN_PATH="${CLAUDE_IP_NAME_PATH}/design"
-export IP_VERIFICATION_PATH="${CLAUDE_IP_NAME_PATH}/verification"
-export IP_FIRMWARE_PATH="${CLAUDE_IP_NAME_PATH}/firmware"
-export IP_SYNTHESIS_PATH="${CLAUDE_IP_NAME_PATH}/synthesis"
-export IP_DOC_PATH="${CLAUDE_IP_NAME_PATH}/doc"
+export PATH="${XPACK_RISCV_PATH}/bin:${OSS_CAD_SUITE_PATH}/bin:${QUARTUS_PATH}:${MODELSIM_PATH}:${PATH}"
 
 echo "IP_NAME environment ready. CLAUDE_IP_NAME_PATH=${CLAUDE_IP_NAME_PATH}"
 ```
