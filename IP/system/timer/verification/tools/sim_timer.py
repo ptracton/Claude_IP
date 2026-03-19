@@ -421,8 +421,8 @@ def run_modelsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
     deadline = time.monotonic() + 300
     sim_out  = ""
     done     = False
-    pass_marker = f"PASS tb_timer_{proto}"
-    fail_marker = "FAIL"
+    pass_marker  = f"PASS tb_timer_{proto}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
 
     while time.monotonic() < deadline:
         time.sleep(1)
@@ -432,7 +432,7 @@ def run_modelsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
                 sim_out = fh.read()
         except OSError:
             pass
-        if pass_marker in sim_out or fail_marker in sim_out:
+        if pass_marker in sim_out or any(m in sim_out for m in fail_markers):
             done = True
             break
         if proc.poll() is not None:   # vsim exited on its own
@@ -458,7 +458,7 @@ def run_modelsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
     print(f"  [modelsim/{proto}_{lang}] Simulation output:\n{sim_out.strip()}")
 
-    passed = (pass_marker in sim_out) and (fail_marker not in sim_out)
+    passed = (pass_marker in sim_out) and not any(m in sim_out for m in fail_markers)
     _write_result(results, "PASS" if passed else "FAIL", sim_out)
     return passed
 
@@ -582,8 +582,8 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
         _write_result(results, "FAIL", full_log + "\n" + msg)
         return False
 
-    pass_marker = f"PASS tb_timer_{proto}"
-    fail_marker = "FAIL"
+    pass_marker  = f"PASS tb_timer_{proto}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
     deadline = _time.monotonic() + 300
     sim_out  = ""
     done     = False
@@ -595,20 +595,21 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
                 sim_out = fh.read()
         except OSError:
             pass
-        if pass_marker in sim_out or fail_marker in sim_out:
+        if pass_marker in sim_out or any(m in sim_out for m in fail_markers):
             done = True
             break
         if proc.poll() is not None:
             break
 
-    proc.terminate()
+    # Give xsim up to 15 s to exit cleanly (e.g. after std.env.stop).
+    # If it doesn't exit on its own, force-kill it.
     try:
-        proc.wait(timeout=10)
+        proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
 
-    # Final read
+    # Final read after process is confirmed dead
     try:
         with open(xsim_log, errors="replace") as fh:
             sim_out = fh.read()
@@ -624,7 +625,15 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
     print(f"  [xsim/{proto}_{lang}] Output:\n{sim_out.strip()}")
 
-    passed = (pass_marker in sim_out) and (fail_marker not in sim_out)
+    # A FATAL_ERROR that appears after the PASS banner is caused by our
+    # process termination (xsimk orphaned), not a real simulation failure.
+    # Only treat fail markers as failures when they precede the PASS banner.
+    pass_pos = sim_out.find(pass_marker)
+    if pass_pos >= 0:
+        pre_pass = sim_out[:pass_pos]
+        passed = not any(m in pre_pass for m in fail_markers)
+    else:
+        passed = False
     _write_result(results, "PASS" if passed else "FAIL", full_log)
     return passed
 

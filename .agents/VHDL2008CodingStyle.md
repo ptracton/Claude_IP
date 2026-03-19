@@ -2901,3 +2901,41 @@ text body for explanations, examples, and exceptions.
 *   Bit vectors use `downto`; element arrays use `0 to N-1`.
 *   `shared variable` without `protected` type is prohibited in RTL.
 *   VHDL-2008 external names are permitted in test benches only.
+
+## Testbench Simulation Termination
+
+**RULE — Every VHDL testbench must terminate the simulation cleanly using
+`std.env.stop`.**
+
+Do NOT end the stimulus process with `wait;`. An infinite `wait;` prevents
+simulators (especially Vivado xsim in `--runall` mode) from exiting naturally,
+causing the simulation kernel to either run indefinitely or crash with a
+`FATAL_ERROR` after the process runner kills it.
+
+**Required pattern** in every VHDL testbench stimulus process:
+
+```vhdl
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.ip_test_pkg.all;
+use std.env.all;           -- Required for stop procedure
+
+...
+
+  p_stim : process is
+  begin
+    ...
+    report "PASS tb_IP_NAME_proto: all tests passed" severity note;
+    stop;    -- Terminate simulation cleanly (NOT wait;)
+  end process p_stim;
+```
+
+**Rules:**
+- Add `use std.env.all;` to the library/use clause block at the top of the file.
+- Replace the final `wait;` in the stimulus process with `stop;`.
+- `stop` (from `std.env`) causes a clean simulation exit on all supported
+  simulators: GHDL (`--std=08`), ModelSim 2021.1+, Vivado xsim 2023.2+.
+- Timeout and error processes may still use `wait;` as a backstop (they are
+  unreachable after `severity failure` terminates the simulation).
+- `shared variable` without `protected` type is prohibited in RTL.

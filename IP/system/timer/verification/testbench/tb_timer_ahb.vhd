@@ -19,6 +19,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.ip_test_pkg.all;
+use std.env.all;
 
 entity tb_timer_ahb is
 end entity tb_timer_ahb;
@@ -310,7 +311,7 @@ begin
 
     sim_done <= true;
     report "PASS tb_timer_ahb: all tests passed" severity note;
-    wait;
+    stop;
   end process p_stim;
 
 end architecture sim;

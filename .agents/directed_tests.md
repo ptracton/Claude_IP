@@ -89,8 +89,14 @@ Create one file per bus protocol under `verification/testbench/`:
 | `tb_IP_NAME_wb.vhd` | `IP_NAME_wb` |
 
 Each VHDL testbench instantiates its named VHDL DUT and drives all tests.
-All VHDL testbenches must `use work.IP_NAME_test_pkg.all` and call `test_start()`,
+All VHDL testbenches must `use work.ip_test_pkg.all` and call `test_start()`,
 `test_done()`, and `check_eq()` from the shared test package (see item 2a below).
+
+**RULE — Add `use std.env.all;` and end the stimulus process with `stop;` (not `wait;`).**
+See `.agents/VHDL2008CodingStyle.md` §Testbench Simulation Termination for the full rule.
+Without `stop;`, Vivado xsim runs forever after tests complete, then crashes with
+`FATAL_ERROR` when the process runner kills it. GHDL and ModelSim are also more
+robust when `stop;` is used.
 
 #### 2a. VHDL test package — use common `ip_test_pkg`
 
@@ -214,24 +220,45 @@ proc = subprocess.Popen(
     stdin=subprocess.DEVNULL, cwd=work_dir
 )
 deadline = time.monotonic() + 300
-pass_marker = f"PASS tb_IP_NAME_{proto}"
-fail_marker = "FAIL"
+pass_marker  = f"PASS tb_IP_NAME_{proto}"
+fail_markers = ["FAIL", "FATAL_ERROR"]   # FATAL_ERROR not caught by "FAIL"
 done = False
 while time.monotonic() < deadline:
     time.sleep(1)
     with open(log_path) as fh:
         sim_out = fh.read()
-    if pass_marker in sim_out or fail_marker in sim_out:
+    if pass_marker in sim_out or any(m in sim_out for m in fail_markers):
         done = True; break
     if proc.poll() is not None:
         break
-proc.terminate(); proc.wait(timeout=10)
+proc.terminate()
+try:
+    proc.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    proc.kill(); proc.wait()
+```
+
+**Fail-marker rule**: always check for both `"FAIL"` and `"FATAL_ERROR"`.
+`"FATAL_ERROR"` does not contain the substring `"FAIL"`, so a single `fail_marker = "FAIL"`
+will silently miss simulator kernel crashes.
+
+**Position-based PASS/FAIL determination**: A `FATAL_ERROR` that appears *after* the
+PASS banner in the log is caused by our process termination (simulator kernel orphaned),
+not a real test failure. Evaluate pass/fail based on position:
+
+```python
+pass_pos = sim_out.find(pass_marker)
+if pass_pos >= 0:
+    pre_pass = sim_out[:pass_pos]
+    passed = not any(m in pre_pass for m in fail_markers)
+else:
+    passed = False
 ```
 
 **ModelSim do-file**: write only `run -all\n` — do NOT include `quit -f`. With
 `stdin=subprocess.DEVNULL`, `quit -f` triggers a crash ("Unexpected EOF on RPC channel")
 because vsim's internal IPC tries to read from the closed stdin pipe. Omitting it is safe:
-`run -all` returns naturally when the simulation reaches a VHDL `wait;` deadlock.
+`run -all` returns naturally when the simulation reaches `std.env.stop`.
 
 ### ModelSim GUI .do files (for interactive waveform viewing)
 
