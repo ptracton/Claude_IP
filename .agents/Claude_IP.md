@@ -223,6 +223,9 @@ IP/
 └── verification/
     ├── formal/                             # Yosys formal verification scripts and results
     ├── lint/                               # Lint results and waiver files
+    ├── modelsim/                           # ModelSim GUI .do scripts (compile+sim and wave)
+    │   ├── tb_IP_NAME_<proto>.do           # Compile + vsim + run (one per bus protocol)
+    │   └── tb_IP_NAME_<proto>_wave.do      # Wave config only, loadable independently
     ├── regression/                         # Regression reports
     ├── tasks/                              # Reusable simulation task libraries
     ├── testbench/
@@ -234,7 +237,11 @@ IP/
     │   ├── run_regression.py               # Regression runner and reporter
     │   ├── sim_IP_NAME.py                  # Simulation runner (Icarus/GHDL/ModelSim)
     │   └── uvm_IP_NAME.py                  # UVM runner (Vivado xsim)
-    └── work/                               # Simulator working directories (gitignored)
+    ├── vivado/                             # Vivado xsim GUI projects (one per bus protocol)
+    │   ├── create_project_<proto>.tcl      # Creates .xpr targeting xc7z010clg400-1
+    │   ├── wave_<proto>.tcl                # xsim waveform config (auto-sourced at sim start)
+    │   └── work/                           # Generated project files (gitignored)
+    └── work/                               # Icarus/GHDL/ModelSim working dirs (gitignored)
 ```
 
 ---
@@ -299,7 +306,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | Verilator | 5.0+ (via OSS CAD Suite) | SV linting |
 | Yosys | 0.36+ (via OSS CAD Suite) | Open-source synthesis |
 | OSS CAD Suite | `/opt/oss-cad-suite/bin` | Open-source EDA toolchain |
-| ModelSim ASE | `/opt/intelFPGA_lite/23.1std/modelsim_ase/bin` | Mixed-language simulation |
+| ModelSim ASE | `/opt/intelFPGA_pro/21.1/modelsim_ase/bin` | Mixed-language simulation |
 | Vivado | `/opt/Xilinx/Vivado/2023.2/settings64.sh` | UVM simulation + synthesis (target: Zynq-7010) |
 | Quartus Prime Lite | `/opt/intelFPGA_lite/23.1std/quartus/bin` | Intel synthesis (target: Cyclone V SE 5CSEMA4U23C6) |
 | arm-none-eabi-gcc | system package (`apt install gcc-arm-none-eabi`) | ARM Cortex-M33 firmware cross-compiler |

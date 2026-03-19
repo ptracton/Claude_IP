@@ -34,7 +34,7 @@ export TIMER_DOC_PATH="${CLAUDE_TIMER_PATH}/doc"
 export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
 export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
 export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
-export MODELSIM_PATH="/opt/intelFPGA_lite/23.1std/modelsim_ase/bin"
+export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
 
 # ---------------------------------------------------------------------------
 # Vivado 2023.2  (sources its own settings64.sh which modifies PATH)

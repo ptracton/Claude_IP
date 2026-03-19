@@ -194,6 +194,215 @@ proc.terminate(); proc.wait(timeout=10)
 because vsim's internal IPC tries to read from the closed stdin pipe. Omitting it is safe:
 `run -all` returns naturally when the simulation reaches a VHDL `wait;` deadlock.
 
+### ModelSim GUI .do files (for interactive waveform viewing)
+
+In addition to the batch-mode runner in `sim_IP_NAME.py`, provide GUI `.do` files so the
+user can open ModelSim and see waveforms without running the Python script.
+
+**RULE — Split every testbench into two `.do` files.** Place both under
+`verification/modelsim/`:
+
+| File | Purpose |
+|------|---------|
+| `tb_IP_NAME_<proto>.do` | Compile RTL + TB, call `vsim`, source the wave file, `run -all` |
+| `tb_IP_NAME_<proto>_wave.do` | `add wave` commands only — loadable independently from the GUI |
+
+The main `.do` must source the wave file with:
+```tcl
+do [file join [file dirname [info script]] tb_IP_NAME_<proto>_wave.do]
+```
+
+**Wave file format** — match the format ModelSim saves when you use File > Save Format:
+
+```tcl
+onerror {resume}
+quietly WaveActivateNextPane {} 0
+add wave -noupdate -divider {Clock & Reset}
+add wave -noupdate -radix binary    /tb_IP_NAME_<proto>/clk
+add wave -noupdate -radix binary    /tb_IP_NAME_<proto>/rst_n
+add wave -noupdate -divider {<Protocol> Bus}
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/<BUS_SIG>
+...
+add wave -noupdate -divider {DUT: regfile}
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/clk
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/rst_n
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_en
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_addr
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_data
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_strb
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_en
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_addr
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_data
+add wave -noupdate -radix hexadecimal /tb_IP_NAME_<proto>/u_dut/u_regfile/hw_count_val
+...  (all regfile ports and internal _q registers)
+TreeUpdate [SetDefaultTree]
+WaveRestoreCursors {{Cursor 1} {0 ps} 0}
+quietly wave cursor active 0
+configure wave -namecolwidth 217
+configure wave -valuecolwidth 100
+configure wave -justifyvalue left
+configure wave -signalnamewidth 0
+configure wave -snapdistance 10
+configure wave -datasetprefix 0
+configure wave -rowmargin 4
+configure wave -childrowmargin 2
+configure wave -gridoffset 0
+configure wave -gridperiod 1
+configure wave -griddelta 40
+configure wave -timeline 0
+configure wave -timelineunits ps
+update
+WaveRestoreZoom {0 ps} {624750 ps}
+```
+
+Key rules:
+- Use `-noupdate` on every `add wave` command.
+- Use `{Braces}` for divider names with spaces.
+- Show all regfile **ports** (not just internal register names) plus the internal `_q` storage signals.
+- End with `TreeUpdate`, `WaveRestoreCursors`, and `WaveRestoreZoom` as ModelSim expects.
+
+**Path setup** in the main `.do` — use env var with fallback to script location:
+```tcl
+if {[info exists env(CLAUDE_IP_NAME_PATH)]} {
+    set TIMER $env(CLAUDE_IP_NAME_PATH)
+} else {
+    set TIMER [file normalize [file dirname [info script]]/../..]
+}
+```
+
+### Vivado GUI simulation projects (for interactive waveform viewing)
+
+**RULE — Always create Vivado simulation projects for every bus interface.** This is
+mandatory, not optional. Place all files under `verification/vivado/`:
+
+| File | Purpose |
+|------|---------|
+| `create_project_<proto>.tcl` | Creates the Vivado project; run once to generate the `.xpr` |
+| `wave_<proto>.tcl` | Adds waveform groups; sourced automatically at simulation start |
+
+Projects target **`xc7z010clg400-1`** (Zynq-7010) — the same part used for synthesis.
+Generated project files go under `verification/vivado/work/<proto>/` (gitignored).
+
+#### `create_project_<proto>.tcl` structure
+
+```tcl
+# create_project_<proto>.tcl — Vivado project for IP_NAME <PROTO> simulation
+# Usage:
+#   vivado -mode tcl -source create_project_<proto>.tcl
+#   or: source create_project_<proto>.tcl  (from the Vivado Tcl console)
+
+set script_dir [file normalize [file dirname [info script]]]
+
+if {[info exists ::env(CLAUDE_IP_NAME_PATH)]} {
+    set ip_dir $::env(CLAUDE_IP_NAME_PATH)
+} else {
+    set ip_dir [file normalize "${script_dir}/../.."]
+}
+if {[info exists ::env(IP_COMMON_PATH)]} {
+    set common_dir $::env(IP_COMMON_PATH)
+} else {
+    set common_dir [file normalize "${ip_dir}/../../common"]
+}
+
+set rtl_dir   "${ip_dir}/design/rtl/verilog"
+set tasks_dir "${common_dir}/verification/tasks"
+set tests_dir "${ip_dir}/verification/tests"
+set tb_dir    "${ip_dir}/verification/testbench"
+set work_dir  "${ip_dir}/verification/vivado/work/<proto>"
+set wave_tcl  "${script_dir}/wave_<proto>.tcl"
+
+create_project tb_IP_NAME_<proto> "${work_dir}" -part xc7z010clg400-1 -force
+set_property simulator_language Mixed [current_project]
+set_property target_language Verilog  [current_project]
+
+add_files -norecurse [list \
+    "${rtl_dir}/IP_NAME_reg_pkg.sv" \
+    "${rtl_dir}/IP_NAME_regfile.sv" \
+    "${rtl_dir}/IP_NAME_core.sv"    \
+    "${rtl_dir}/IP_NAME_<proto>_if.sv" \
+    "${rtl_dir}/IP_NAME_<proto>.sv" \
+]
+foreach f [get_files -of_objects [get_filesets sources_1] -filter {FILE_EXT == ".sv"}] {
+    set_property file_type SystemVerilog $f
+}
+
+add_files -norecurse -sim_only "${tb_dir}/tb_IP_NAME_<proto>.sv"
+set_property file_type SystemVerilog [get_files tb_IP_NAME_<proto>.sv]
+
+set_property top              tb_IP_NAME_<proto> [get_filesets sim_1]
+set_property top_lib          xil_defaultlib     [get_filesets sim_1]
+set_property include_dirs     [list "${tasks_dir}" "${tests_dir}"] \
+                              [get_filesets sim_1]
+set_property -name {xsim.simulate.runtime}    -value {1ms}         -objects [get_filesets sim_1]
+set_property -name {xsim.simulate.custom_tcl} -value "${wave_tcl}" -objects [get_filesets sim_1]
+
+update_compile_order -fileset sources_1
+update_compile_order -fileset sim_1
+
+puts "Project created: ${work_dir}/tb_IP_NAME_<proto>.xpr"
+```
+
+#### `wave_<proto>.tcl` structure
+
+```tcl
+# wave_<proto>.tcl — Vivado xsim wave configuration for IP_NAME <PROTO> testbench
+# Sourced automatically via xsim.simulate.custom_tcl.
+# Can also be sourced manually from the Vivado Tcl console.
+
+add_wave_divider "Clock & Reset"
+add_wave /tb_IP_NAME_<proto>/clk
+add_wave /tb_IP_NAME_<proto>/rst_n          ;# use RST_I for Wishbone
+
+add_wave_divider "<Protocol> Bus"
+add_wave /tb_IP_NAME_<proto>/<BUS_SIG>
+add_wave -radix hex /tb_IP_NAME_<proto>/<BUS_DATA_SIG>
+# ... all bus signals
+
+add_wave_divider "IP Outputs"
+add_wave /tb_IP_NAME_<proto>/irq
+add_wave /tb_IP_NAME_<proto>/trigger_out
+
+add_wave_divider "DUT: regfile ports"
+add_wave /tb_IP_NAME_<proto>/u_dut/u_regfile/clk
+add_wave /tb_IP_NAME_<proto>/u_dut/u_regfile/rst_n
+add_wave /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_en
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_addr
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_data
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/wr_strb
+add_wave /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_en
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_addr
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/rd_data
+# ... all hw_* and ctrl_* output ports
+
+add_wave_divider "DUT: regfile storage"
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/ctrl_q
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/status_q
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/load_q
+add_wave -radix hex /tb_IP_NAME_<proto>/u_dut/u_regfile/count_q
+# ... any additional _q registers
+
+add_wave_divider "DUT: core internals"
+add_wave /tb_IP_NAME_<proto>/u_dut/u_core/ctrl_en
+# ... key internal state signals (counters, flags, pulses)
+```
+
+Key rules for wave files:
+- Use `add_wave_divider "Name"` (plain string, no braces).
+- Use `add_wave -radix hex` for multi-bit data/address signals.
+- Cover all regfile **ports** and internal `_q` storage signals.
+- Cover key core internals: counter values, prescaler, `tick`, interrupt/trigger pulses.
+- For Wishbone, replace `rst_n` with `RST_I` at the TB level (the regfile port is still `rst_n`).
+
+#### How to use (for README)
+
+Always add an **Interactive Simulation (GUI)** section to the IP `README.md` documenting:
+
+1. Create project (once): `vivado -mode tcl -source verification/vivado/create_project_apb.tcl`
+2. Open: `File > Open Project > verification/vivado/work/apb/tb_IP_NAME_apb.xpr`
+3. Run: `Flow > Run Simulation > Run Behavioral Simulation`
+4. Re-run after changes: **Restart** then **Run All** in xsim toolbar
+5. Reload waves: `source /path/to/verification/vivado/wave_apb.tcl`
+
 ### 6. Run and verify
 
 Run Icarus Verilog (SV) and GHDL (VHDL) for all four protocols. All eight combinations
@@ -247,6 +456,10 @@ Include the simulator versions and the date the results were generated.
 | `verification/tests/test_*.sv` | Directed SV test files |
 | `verification/tools/sim_IP_NAME.py` | Completed simulation runner |
 | `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination |
+| `verification/modelsim/tb_IP_NAME_<proto>.do` | ModelSim GUI compile+sim script (4 files) |
+| `verification/modelsim/tb_IP_NAME_<proto>_wave.do` | ModelSim waveform config (4 files) |
+| `verification/vivado/create_project_<proto>.tcl` | Vivado project creation script (4 files) |
+| `verification/vivado/wave_<proto>.tcl` | Vivado xsim waveform config (4 files) |
 
 ## Quality Gate
 
@@ -255,3 +468,12 @@ Include the simulator versions and the date the results were generated.
   failure is injected into any testbench.
 - No testbench or task code resides in `design/rtl/`.
 - No compile-time DUT-selection defines in any testbench — DUT is named explicitly.
+- All four `verification/modelsim/tb_IP_NAME_<proto>.do` files exist and reference their
+  corresponding `_wave.do` files.
+- All four `verification/vivado/create_project_<proto>.tcl` files exist, target
+  `xc7z010clg400-1`, set `xsim.simulate.custom_tcl` to the corresponding `wave_<proto>.tcl`,
+  and include the correct RTL + TB sources with `include_dirs` for tasks and tests.
+- All four `verification/vivado/wave_<proto>.tcl` files exist and cover Clock/Reset,
+  bus signals, IP outputs, regfile ports, regfile storage, and core internals.
+- `README.md` contains an **Interactive Simulation (GUI)** section documenting both
+  ModelSim and Vivado usage.

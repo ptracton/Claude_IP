@@ -136,6 +136,104 @@ Directed simulation using Icarus Verilog. Five test sequences run per variant.
 
 Results generated: 2026-03-18. See `verification/work/icarus/*/results.log` for full output.
 
+## Interactive Simulation (GUI)
+
+Scripts for waveform-based simulation are provided for both ModelSim and Vivado.
+All scripts require `source timer/setup.sh` before use.
+
+### ModelSim
+
+Each bus variant has two `.do` files in `verification/modelsim/`:
+
+| File | Purpose |
+|------|---------|
+| `tb_timer_<proto>.do` | Compiles RTL + testbench, starts vsim, loads waves, runs to completion |
+| `tb_timer_<proto>_wave.do` | Wave-only file — reload independently via File > Load > Macro File |
+
+**To run from the ModelSim GUI:**
+
+1. Open ModelSim (`vsim`)
+2. In the Transcript window:
+   ```tcl
+   do /path/to/verification/modelsim/tb_timer_apb.do
+   ```
+3. The waveform window opens with all signal groups pre-configured and the simulation runs to completion.
+
+**To reload just the waveforms** (after re-running simulation manually):
+```tcl
+do /path/to/verification/modelsim/tb_timer_apb_wave.do
+```
+
+Replace `apb` with `ahb`, `axi4l`, or `wb` for other bus variants.
+
+---
+
+### Vivado (xsim)
+
+Each bus variant has two Tcl files in `verification/vivado/`:
+
+| File | Purpose |
+|------|---------|
+| `create_project_<proto>.tcl` | Creates a Vivado project targeting `xc7z010clg400-1` with all sources and simulation settings |
+| `wave_<proto>.tcl` | Adds waveform groups when simulation starts (sourced automatically via `xsim.simulate.custom_tcl`) |
+
+Projects are created once in `verification/vivado/work/<proto>/` and can then be reopened.
+
+**Step 1 — Create the project** (one time per variant):
+
+```bash
+source timer/setup.sh
+vivado -mode tcl -source verification/vivado/create_project_apb.tcl
+```
+
+Or from the Vivado Tcl console:
+```tcl
+source /path/to/verification/vivado/create_project_apb.tcl
+```
+
+**Step 2 — Open the project in Vivado:**
+
+```
+File > Open Project > verification/vivado/work/apb/tb_timer_apb.xpr
+```
+
+**Step 3 — Run simulation:**
+
+```
+Flow > Run Simulation > Run Behavioral Simulation
+```
+
+Vivado compiles the design, launches xsim, and automatically loads the pre-configured
+waveform groups from `wave_apb.tcl`.  The simulation runs for 1 ms (sufficient to
+complete all directed tests).
+
+**To re-run after source changes** — in the xsim toolbar click **Restart** then **Run All**,
+or from the Tcl console:
+```tcl
+restart
+run -all
+```
+
+**To reload waveforms** after clearing the wave window:
+```tcl
+source /path/to/verification/vivado/wave_apb.tcl
+```
+
+#### Waveform groups (all variants)
+
+| Group | Contents |
+|-------|----------|
+| Clock & Reset | `clk`, reset signal |
+| Bus signals | Protocol-specific (APB/AHB/AXI4-Lite/WB) |
+| IP Outputs | `irq`, `trigger_out` |
+| DUT: regfile ports | All `wr_*`, `rd_*`, `ctrl_*`, `load_val`, `status_intr` ports |
+| DUT: regfile storage | `ctrl_q`, `status_q`, `load_q`, `count_q`, `capture_q` |
+| DUT: core internals | `count_q`, `prescale_cnt_q`, `tick`, `hw_intr_set`, `hw_ovf_set`, `hw_active` |
+
+Replace `apb` with `ahb`, `axi4l`, or `wb` for other variants.
+
+---
+
 ## Formal Verification Results
 
 Bounded model checking (BMC, depth 20) using SymbiYosys with smtbmc/boolector.

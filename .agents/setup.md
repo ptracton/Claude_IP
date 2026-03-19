@@ -101,7 +101,7 @@ export IP_DOC_PATH="${CLAUDE_IP_NAME_PATH}/doc"
 export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
 export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
 export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
-export MODELSIM_PATH="/opt/intelFPGA_lite/23.1std/modelsim_ase/bin"
+export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
 
 # ---------------------------------------------------------------------------
 # Vivado 2023.2  (settings64.sh modifies PATH — must source before our PATH update)
@@ -168,11 +168,8 @@ rm -rf "${CLAUDE_IP_NAME_PATH}/firmware/build"/*
 rm -rf "${CLAUDE_IP_NAME_PATH}/firmware/obj"/*
 rm -rf "${CLAUDE_IP_NAME_PATH}/firmware/lib"/*
 
-# Synthesis intermediates (keep reports and scripts)
-find "${CLAUDE_IP_NAME_PATH}/synthesis" \
-    \( -name "*.jou" -o -name "*.log" -o -name "*.pb" \
-       -o -name ".Xil" -o -name "db" -o -name "incremental_db" \) \
-    -exec rm -rf {} + 2>/dev/null || true
+# Synthesis outputs (Vivado and Quartus reports, logs, and project directories)
+python3 "${CLAUDE_IP_NAME_PATH}/synthesis/run_vendor_synth.py" --clean
 
 # Formal verification results (keep scripts and properties)
 rm -f "${CLAUDE_IP_NAME_PATH}/verification/formal/results.log"
