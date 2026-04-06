@@ -1,0 +1,16 @@
+# vhdl_lint.toml — VHDL linter configuration for bus_matrix IP.
+#
+# Used by lint_bus_matrix.py (GHDL syntax check mode).
+# If vhdl_ls or vunit becomes available, this configuration can be extended.
+
+[ghdl]
+std = "08"
+relaxed = true
+files = [
+    "design/rtl/vhdl/bus_matrix_decoder.vhd",
+    "design/rtl/vhdl/bus_matrix_arb.vhd",
+    "design/rtl/vhdl/bus_matrix_core.vhd",
+    "design/rtl/vhdl/bus_matrix_ahb.vhd",
+    "design/rtl/vhdl/bus_matrix_axi.vhd",
+    "design/rtl/vhdl/bus_matrix_wb.vhd",
+]

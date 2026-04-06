@@ -1,0 +1,6 @@
+--lint-only
+-Wall
+-I${DESIGN_DIR}
+${DESIGN_DIR}/bus_matrix_decoder.sv
+${DESIGN_DIR}/bus_matrix_arb.sv
+${DESIGN_DIR}/bus_matrix_core.sv

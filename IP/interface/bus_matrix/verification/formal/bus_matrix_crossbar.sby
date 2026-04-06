@@ -1,0 +1,25 @@
+# bus_matrix_crossbar.sby — SymbiYosys configuration for crossbar/core properties.
+#
+# Verifies P7 (single-master per slave) with bounded model checking.
+# Run: sby -f bus_matrix_crossbar.sby
+
+[options]
+mode bmc
+depth 20
+multiclock off
+
+[engines]
+smtbmc boolector
+
+[script]
+read -sv bus_matrix_arb.sv
+read -sv bus_matrix_decoder.sv
+read -sv bus_matrix_core.sv
+read -sv bus_matrix_props.sv
+prep -top bus_matrix_props
+
+[files]
+../../design/rtl/verilog/bus_matrix_arb.sv
+../../design/rtl/verilog/bus_matrix_decoder.sv
+../../design/rtl/verilog/bus_matrix_core.sv
+bus_matrix_props.sv
