@@ -27,6 +27,9 @@ rm -rf "${CLAUDE_TIMER_PATH}/firmware/lib"/*
 # Synthesis outputs (Vivado and Quartus reports, logs, and project directories)
 python3 "${CLAUDE_TIMER_PATH}/synthesis/run_vendor_synth.py" --clean
 
+# Design Compiler outputs (netlists, reports, VHDL library dirs, DC intermediates)
+bash "${CLAUDE_TIMER_PATH}/synthesis/clean.sh"
+
 # Formal verification results (keep scripts and properties)
 bash "${CLAUDE_TIMER_PATH}/verification/formal/run_formal.sh" --clean
 

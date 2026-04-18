@@ -17,6 +17,13 @@ import sys
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+# ---------------------------------------------------------------------------
+# Host detection
+# ---------------------------------------------------------------------------
+
+import socket
+ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+
 
 # ---------------------------------------------------------------------------
 # Environment guard

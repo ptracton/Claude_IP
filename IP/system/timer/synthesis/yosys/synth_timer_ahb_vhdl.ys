@@ -1,0 +1,15 @@
+# synth_timer_ahb_vhdl.ys — Yosys synthesis for Timer IP (AHB, VHDL-2008).
+#
+# Requires the ghdl plugin: yosys -m ghdl synth_timer_ahb_vhdl.ys
+
+plugin -i ghdl
+ghdl --std=08 \
+    ../../../../common/design/rtl/vhdl/claude_ahb_if.vhd \
+    ../../design/rtl/vhdl/timer_reg_pkg.vhd \
+    ../../design/rtl/vhdl/timer_regfile.vhd \
+    ../../design/rtl/vhdl/timer_core.vhd \
+    ../../design/rtl/vhdl/timer_ahb.vhd \
+    -e timer_ahb
+synth -top timer_ahb -flatten
+stat
+write_verilog -noattr work/timer_ahb_vhdl_synth.v

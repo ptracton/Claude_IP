@@ -1,35 +1,57 @@
 #!/usr/bin/env python3
 """sim_timer.py — Simulation runner for the timer IP block.
 
-Supports Icarus Verilog (SV) and GHDL (VHDL) simulators.
+Supports Icarus Verilog (SV), GHDL (VHDL), ModelSim/Questa, Vivado xsim,
+Synopsys VCS MX (SV+VHDL), and Cadence Xcelium (SV+VHDL).
+
+On ecs-vdi.ecs.csun.edu only VCS and Xcelium are available; Icarus, GHDL,
+ModelSim, and xsim are rejected with a clear error on that host.
 
 Results are written to:
     ${CLAUDE_TIMER_PATH}/verification/work/<sim>/<proto>_<lang>/results.log
 
 Usage examples:
-    python3 sim_timer.py --sim icarus --proto apb --lang sv
-    python3 sim_timer.py --sim ghdl   --proto all --lang vhdl
-    python3 sim_timer.py --sim icarus --proto all --lang all
-    python3 sim_timer.py --proto all --lang all   (runs icarus+ghdl)
+    python3 sim_timer.py --sim icarus   --proto apb --lang sv
+    python3 sim_timer.py --sim ghdl     --proto all --lang vhdl
+    python3 sim_timer.py --sim vcs      --proto all --lang all
+    python3 sim_timer.py --sim xcelium  --proto all --lang all
+    python3 sim_timer.py --proto all --lang all   (runs icarus+ghdl on standard hosts;
+                                                   vcs+xcelium on ecs-vdi)
 """
 
 import argparse
 import os
+import socket
 import subprocess
 import sys
 
+# ---------------------------------------------------------------------------
+# Host detection
+# ---------------------------------------------------------------------------
+ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+
+# Simulators that are not available on ecs-vdi
+_ECS_VDI_BLOCKED = {"icarus", "ghdl", "modelsim", "xsim"}
 
 # ---------------------------------------------------------------------------
 # Environment guard
 # ---------------------------------------------------------------------------
 def get_timer_path() -> str:
-    """Return CLAUDE_TIMER_PATH or exit with an error."""
+    """Return the timer IP root directory.
+
+    Prefers CLAUDE_TIMER_PATH if set.  Falls back to computing the path from
+    the location of this script (verification/tools/sim_timer.py → ../../).
+    """
     path = os.environ.get("CLAUDE_TIMER_PATH")
-    if not path:
-        print("ERROR: CLAUDE_TIMER_PATH is not set.")
-        print("       Please run:  source timer/setup.sh")
-        sys.exit(1)
-    return path
+    if path:
+        return path
+    # Auto-detect: this file lives at <timer_root>/verification/tools/sim_timer.py
+    detected = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    )
+    print(f"INFO: CLAUDE_TIMER_PATH not set — using auto-detected path: {detected}")
+    print("      Run 'source setup.sh' to suppress this message.")
+    return detected
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +233,8 @@ def run_icarus(proto: str, timer_path: str, work_dir: str) -> bool:
     try:
         cp = subprocess.run(
             compile_cmd,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=120
         )
     except FileNotFoundError:
@@ -231,8 +253,8 @@ def run_icarus(proto: str, timer_path: str, work_dir: str) -> bool:
     try:
         rp = subprocess.run(
             [VVP, vvp_out],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=120
         )
     except FileNotFoundError:
@@ -270,7 +292,7 @@ def run_ghdl(proto: str, timer_path: str, work_dir: str) -> bool:
     for f in files:
         cmd = [GHDL, "-a", "--std=08", "-frelaxed", f"--workdir={work_dir}", f]
         try:
-            cp = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
         except FileNotFoundError:
             msg = f"ERROR: ghdl not found at {GHDL}"
             print(msg)
@@ -286,7 +308,7 @@ def run_ghdl(proto: str, timer_path: str, work_dir: str) -> bool:
     # Elaboration
     print(f"  [ghdl/{proto}_vhdl] Elaborating {tb_top} ...")
     elab_cmd = [GHDL, "-e", "--std=08", "-frelaxed", f"--workdir={work_dir}", tb_top]
-    cp = subprocess.run(elab_cmd, capture_output=True, text=True,
+    cp = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                         timeout=60, cwd=work_dir)
     out = cp.stdout + cp.stderr
     full_log += out
@@ -299,7 +321,7 @@ def run_ghdl(proto: str, timer_path: str, work_dir: str) -> bool:
     print(f"  [ghdl/{proto}_vhdl] Simulating ...")
     sim_cmd = [GHDL, "-r", "--std=08", "-frelaxed", f"--workdir={work_dir}",
                tb_top, "--stop-time=1ms"]
-    rp = subprocess.run(sim_cmd, capture_output=True, text=True,
+    rp = subprocess.run(sim_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                         timeout=120, cwd=work_dir)
     out = rp.stdout + rp.stderr
     full_log += out
@@ -345,7 +367,7 @@ def run_modelsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
         fh.write("run -all\n")
 
     def _run(cmd, timeout=60):
-        return subprocess.run(cmd, capture_output=True, text=True,
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                               timeout=timeout, cwd=work_dir, errors="replace")
 
     # -- Step 1: vlib --------------------------------------------------------
@@ -508,7 +530,7 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
         print(f"  [xsim/{proto}_{lang}] {label} ...")
         try:
             cp = subprocess.run(
-                cmd, capture_output=True, text=True,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
                 timeout=timeout, cwd=work_dir,
             )
         except FileNotFoundError as exc:
@@ -639,6 +661,273 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# VCS MX runner (ecs-vdi only)
+# ---------------------------------------------------------------------------
+
+def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
+    """Compile and simulate with Synopsys VCS MX. Returns True on PASS.
+
+    SV flow  (2 steps):
+      1. vcs -full64 -sverilog -timescale=1ns/1ps +incdir+... <sv-files> -o simv
+      2. ./simv
+
+    VHDL flow (3 steps — vcs treats .vhd files as Verilog without vhdlan):
+      1. vhdlan -full64 <vhd-files>          (analyze VHDL into work library)
+      2. vcs -full64 -e <tb-top> -o simv     (elaborate)
+      3. ./simv
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    simv     = os.path.join(work_dir, f"simv_{proto}_{lang}")
+    tb_top   = f"tb_timer_{proto}"
+    full_log = ""
+
+    if lang == "sv":
+        # ── SV: single vcs compilation step ───────────────────────────────
+        incdirs = sv_include_dirs(timer_path)
+        incflag = "+incdir+" + "+".join(incdirs)
+        # -timescale sets the default for files that lack a `timescale directive;
+        # VCS requires all modules to agree on timescale when any one specifies it.
+        compile_cmd = (
+            ["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps", incflag]
+            + sv_files(proto, timer_path)
+            + ["-o", simv]
+        )
+        print(f"  [vcs/{proto}_{lang}] Compiling ...")
+        try:
+            cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log = cp.stdout + cp.stderr
+        if cp.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] Compile FAILED:\n{full_log}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+    else:
+        # ── VHDL: vhdlan (analyze) then vcs -e (elaborate) ───────────────
+        src = vhdl_files(proto, timer_path)
+
+        # Step 1: vhdlan — VHDL analysis into work library
+        # -vhdl08: enable VHDL-2008 (required for conditional variable assignments,
+        #          "when...else" in sequential context, etc.)
+        vhdlan_cmd = ["vhdlan", "-full64", "-vhdl08"] + src
+        print(f"  [vcs/{proto}_{lang}] Analyzing VHDL (vhdlan) ...")
+        try:
+            ap = subprocess.run(vhdlan_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vhdlan not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log += ap.stdout + ap.stderr
+        if ap.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] vhdlan FAILED:\n{full_log}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+        # Step 2: vcs — elaborate (design unit is a positional arg, not -e)
+        elab_cmd = ["vcs", "-full64", tb_top, "-o", simv]
+        print(f"  [vcs/{proto}_{lang}] Elaborating (vcs -e) ...")
+        try:
+            ep = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        full_log += ep.stdout + ep.stderr
+        if ep.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] Elaborate FAILED:\n{ep.stdout + ep.stderr}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+    # ── Simulate ──────────────────────────────────────────────────────────
+    print(f"  [vcs/{proto}_{lang}] Simulating {tb_top} ...")
+    try:
+        rp = subprocess.run([simv], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=120, cwd=work_dir)
+    except FileNotFoundError:
+        msg = f"ERROR: compiled binary not found at {simv}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    sim_out = rp.stdout + rp.stderr
+    full_log += sim_out
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    print(f"  [vcs/{proto}_{lang}] Output:\n{sim_out.strip()}")
+
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# Xcelium runner (ecs-vdi only)
+# ---------------------------------------------------------------------------
+
+def run_xcelium(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
+    """Compile, elaborate, and simulate with Cadence Xcelium. Returns True on PASS.
+
+    SV flow  (1 step via xrun):
+      xrun -64 -access +rwc -timescale 1ns/1ps -sv +incdir+... <sv-files> -top <tb_top>
+
+    VHDL flow (3 steps — xrun does not expose xmvhdl's -v2k8 flag directly):
+      1. xmvhdl -64 -work work -v2k8 <vhd-files>   (analyze VHDL-2008)
+      2. xmelab -64 -access +rwc -log elab.log <tb_top>  (elaborate)
+      3. xmsim  -64 -log sim.log <tb_top>           (simulate)
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path  = os.path.join(work_dir, "sim.log")
+    results   = os.path.join(work_dir, "results.log")
+    tb_top    = f"tb_timer_{proto}"
+    full_log  = ""
+
+    def _run(cmd, label, timeout=180):
+        """Run a subprocess; return (stdout+stderr, returncode) or raise on tool-not-found."""
+        try:
+            p = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               universal_newlines=True, timeout=timeout, cwd=work_dir)
+            return p.stdout + p.stderr, p.returncode
+        except FileNotFoundError:
+            raise RuntimeError("ERROR: {} not found — is Cadence Xcelium in PATH?".format(cmd[0]))
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("ERROR: {} timed out after {}s".format(label, timeout))
+
+    if lang == "sv":
+        # ── SV: single xrun step ──────────────────────────────────────────
+        incdirs = sv_include_dirs(timer_path)
+        incflag = "+incdir+" + "+".join(incdirs)
+        xrun_cmd = [
+            "xrun", "-64", "-access", "+rwc",
+            # Set default timescale for modules that lack a `timescale directive;
+            # xmelab requires all modules to agree on timescale when any one specifies it.
+            "-timescale", "1ns/1ps",
+            "-log", log_path,
+            "-work", "work",
+            "-sv", incflag,
+        ] + sv_files(proto, timer_path) + ["-top", tb_top]
+
+        print(f"  [xcelium/{proto}_{lang}] Running xrun ...")
+        try:
+            out, rc = _run(xrun_cmd, "xrun")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+
+        try:
+            with open(log_path, errors="replace") as fh:
+                full_log = fh.read()
+        except OSError:
+            full_log = out
+
+    else:
+        # ── VHDL: xmvhdl → xmelab → xmsim ───────────────────────────────
+        src = vhdl_files(proto, timer_path)
+        elab_log = os.path.join(work_dir, "elab.log")
+
+        # Step 1: xmvhdl — VHDL-2008 analysis
+        # -V200X:        enable VHDL-200X (2008) + VHDL-93 features
+        # -INC_V200X_PKG: implicitly include *_additions packages (e.g.
+        #                  std_logic_1164_additions) so that to_hstring and
+        #                  other 2008 subprograms are visible without an
+        #                  explicit use clause in user code.
+        # -WORK must be uppercase for xmvhdl.
+        vhdl_cmd = ["xmvhdl", "-64", "-WORK", "work", "-V200X", "-INC_V200X_PKG"] + src
+        print(f"  [xcelium/{proto}_{lang}] Analyzing VHDL (xmvhdl -V200X) ...")
+        try:
+            out, rc = _run(vhdl_cmd, "xmvhdl")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log += out
+        if rc != 0:
+            print(f"  [xcelium/{proto}_{lang}] xmvhdl FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+        # Step 2: xmelab — elaborate
+        elab_cmd = ["xmelab", "-64", "-access", "+rwc", "-log", elab_log, tb_top]
+        print(f"  [xcelium/{proto}_{lang}] Elaborating (xmelab) ...")
+        try:
+            out, rc = _run(elab_cmd, "xmelab")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        try:
+            with open(elab_log, errors="replace") as fh:
+                full_log += fh.read()
+        except OSError:
+            full_log += out
+        if rc != 0:
+            print(f"  [xcelium/{proto}_{lang}] xmelab FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+        # Step 3: xmsim — simulate
+        sim_cmd = ["xmsim", "-64", "-log", log_path, tb_top]
+        print(f"  [xcelium/{proto}_{lang}] Simulating (xmsim) ...")
+        try:
+            out, rc = _run(sim_cmd, "xmsim", timeout=120)
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        try:
+            with open(log_path, errors="replace") as fh:
+                full_log += fh.read()
+        except OSError:
+            full_log += out
+
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    # Filter cosmetic CLE-10/ERR-3 lines that xmsim emits when std.env.stop is
+    # called; they are unavoidable with the 3-step xmvhdl/xmelab/xmsim flow and
+    # do not affect pass/fail determination (they appear after the PASS marker).
+    display_log = "\n".join(
+        ln for ln in full_log.splitlines()
+        if "CLE-10" not in ln and "ERR-3" not in ln
+    )
+    print(f"  [xcelium/{proto}_{lang}] Output (tail):\n{display_log[-800:].strip()}")
+
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR", "ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -650,11 +939,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--sim",
-        choices=["icarus", "ghdl", "modelsim", "xsim", "all"],
-        default="icarus",
-        help="Simulator to use — icarus/ghdl run from OSS CAD Suite; "
-             "modelsim/questa must be in PATH or a known install prefix "
-             "(default: %(default)s)",
+        choices=["icarus", "ghdl", "modelsim", "xsim", "vcs", "xcelium", "all"],
+        default=None,
+        help="Simulator to use. On ecs-vdi.ecs.csun.edu only vcs and xcelium are "
+             "available. 'all' selects icarus+ghdl on standard hosts and "
+             "vcs+xcelium on ecs-vdi. (default: icarus on standard hosts, vcs on ecs-vdi)",
     )
     parser.add_argument(
         "--proto",
@@ -675,11 +964,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Apply ecs-vdi restrictions before expanding 'all'
+    sim_arg = args.sim
+    if sim_arg is None:
+        sim_arg = "vcs" if ON_ECS_VDI else "icarus"
+
+    if ON_ECS_VDI and sim_arg in _ECS_VDI_BLOCKED:
+        print(f"ERROR: --sim {sim_arg} is not available on ecs-vdi.ecs.csun.edu.")
+        print("       Use --sim vcs or --sim xcelium on this host.")
+        sys.exit(1)
+
     # Expand 'all'
     protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
     langs  = SUPPORTED_LANGS  if args.lang  == "all" else [args.lang]
-    sims   = (["icarus", "ghdl", "modelsim", "xsim"] if args.sim == "all"
-              else [args.sim])
+    if sim_arg == "all":
+        sims = ["vcs", "xcelium"] if ON_ECS_VDI else ["icarus", "ghdl", "modelsim", "xsim"]
+    else:
+        sims = [sim_arg]
 
     work_base = os.path.join(timer_path, "verification", "work")
 
@@ -689,7 +990,7 @@ def main() -> None:
     for sim in sims:
         for proto in protos:
             for lang in langs:
-                # Skip invalid combinations
+                # Skip invalid combinations for single-language simulators
                 if sim == "icarus" and lang != "sv":
                     continue
                 if sim == "ghdl" and lang != "vhdl":
@@ -704,6 +1005,10 @@ def main() -> None:
                     ok = run_modelsim(proto, lang, timer_path, work_dir)
                 elif sim == "xsim":
                     ok = run_xsim(proto, lang, timer_path, work_dir)
+                elif sim == "vcs":
+                    ok = run_vcs(proto, lang, timer_path, work_dir)
+                elif sim == "xcelium":
+                    ok = run_xcelium(proto, lang, timer_path, work_dir)
                 else:
                     ok = False
 

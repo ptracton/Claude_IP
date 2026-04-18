@@ -1,0 +1,15 @@
+# synth_timer_axi4l_vhdl.ys — Yosys synthesis for Timer IP (AXI4-Lite, VHDL-2008).
+#
+# Requires the ghdl plugin: yosys -m ghdl synth_timer_axi4l_vhdl.ys
+
+plugin -i ghdl
+ghdl --std=08 \
+    ../../../../common/design/rtl/vhdl/claude_axi4l_if.vhd \
+    ../../design/rtl/vhdl/timer_reg_pkg.vhd \
+    ../../design/rtl/vhdl/timer_regfile.vhd \
+    ../../design/rtl/vhdl/timer_core.vhd \
+    ../../design/rtl/vhdl/timer_axi4l.vhd \
+    -e timer_axi4l
+synth -top timer_axi4l -flatten
+stat
+write_verilog -noattr work/timer_axi4l_vhdl_synth.v

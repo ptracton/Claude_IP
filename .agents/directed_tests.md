@@ -13,6 +13,45 @@ Step 3 complete (`design/rtl/verilog/` and `design/rtl/vhdl/` populated and pars
 - `verification/tools/sim_IP_NAME.py` skeleton exists from Step 1.
 - `IP_COMMON_PATH` is set (sourced from `setup.sh`).
 
+## Machine-Specific Environment: ecs-vdi.ecs.csun.edu
+
+When the agent is running on the host `ecs-vdi.ecs.csun.edu`, the following tools are
+**not available** and must not be invoked:
+
+- Icarus Verilog (`iverilog` / `vvp`)
+- GHDL
+- Vivado / xsim
+- ModelSim / Questa (`vsim`)
+- Altera tools
+- cocotb
+- The project Python virtual environment (`venv`)
+
+On this host the **only** supported simulators are:
+
+| Tool | Language | Command |
+|------|----------|---------|
+| Synopsys VCS MX | SystemVerilog and VHDL | `vcs` (on `$PATH`) |
+| Cadence Xcelium | SystemVerilog and VHDL | `xrun` (on `$PATH`) |
+
+VCS MX licenses (`VCSMXRunTime_Net`, `VCSMXCompiler_Net`) are available on this host.
+Run **both** VCS MX and Xcelium for all protocol/language combinations — this
+cross-validates the design against two independent simulator front-ends.
+
+`sim_IP_NAME.py` must detect this environment at startup:
+
+```python
+import socket
+ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+```
+
+When `ON_ECS_VDI` is `True`:
+- Default `--sim` to `vcs,xcelium` (not `icarus,ghdl`).
+- Skip any Vivado and ModelSim output generation.
+- Do not generate or reference `.do` files or Tcl project scripts (those require tools that
+  are unavailable on this host).
+- All Python code must work without activating a virtualenv — use only the system Python
+  packages that are available.
+
 ## Common Components
 
 **Check `${IP_COMMON_PATH}/verification/tasks/` before writing any new BFM task library.**
@@ -47,9 +86,10 @@ formatting and structure.
 **RULE — No silent deviations.** Any line that cannot comply must carry an inline comment
 explaining why. Deviations without a comment are a quality-gate failure.
 
-**RULE — No SystemVerilog `interface` constructs.** Icarus Verilog does not support SV
-`interface` / `modport` / `virtual interface`. All testbench and BFM connections must use
-explicit individual signals. Using `interface` is a quality-gate failure.
+**RULE — No SystemVerilog `interface` constructs.** All testbench and BFM connections must
+use explicit individual signals. Using `interface` / `modport` / `virtual interface` is a
+quality-gate failure. (Icarus Verilog does not support them; keeping this rule ensures
+testbenches remain portable across all supported simulators.)
 
 ## Responsibilities
 
@@ -199,7 +239,9 @@ all four testbenches through the appropriate BFM interface:
 ### 5. Complete `verification/tools/sim_IP_NAME.py`
 
 - Accepts `--proto {ahb,apb,axi4l,wb,all}` and `--lang {sv,vhdl,all}`.
-- Accepts `--sim {icarus,ghdl,modelsim,all}`.
+- Accepts `--sim {icarus,ghdl,modelsim,vcs,xcelium,all}`.
+- Detects `ON_ECS_VDI` at startup (see **Machine-Specific Environment** above); when true,
+  rejects `icarus`, `ghdl`, `modelsim`, and `vivado` with a clear error message.
 - Builds the correct file list for the selected simulator, DUT top-level, and language.
 - No compile-time defines for protocol — the testbench file selects the DUT.
 - Captures simulator stdout/stderr.
@@ -237,6 +279,215 @@ try:
 except subprocess.TimeoutExpired:
     proc.kill(); proc.wait()
 ```
+
+**Synopsys VCS MX (SV and VHDL — ecs-vdi only)**
+
+VCS MX does NOT use the same flow for SV and VHDL. `subprocess.run()` is safe for all
+steps — VCS does not hang on stdin **except for the VHDL simulate step** (see below).
+
+**SV flow — 2 steps** (`vcs -sverilog` → `./simv`):
+
+```python
+def run_vcs_sv(proto, tasks_dir, tests_dir, sv_files, work_dir, log_path):
+    simv = os.path.join(work_dir, f"simv_{proto}_sv")
+    incflag = f"+incdir+{tasks_dir}+{tests_dir}"
+    compile_cmd = [
+        "vcs", "-full64", "-sverilog",
+        # -timescale: default for RTL files that lack a `timescale directive.
+        # Required when any module (e.g. testbench) specifies `timescale but
+        # others don't — VCS enforces agreement across the entire compile unit.
+        "-timescale=1ns/1ps",
+        incflag,
+    ] + sv_files + ["-o", simv]
+
+    cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log = cp.stdout + cp.stderr
+    if cp.returncode != 0:
+        return False, full_log
+
+    rp = subprocess.run([simv], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log += rp.stdout + rp.stderr
+    return full_log
+```
+
+**VHDL flow — 3 steps** (`vhdlan` → `vcs` elaborate → `./simv`):
+
+Do **NOT** use `vcs -full64 -vhdl <files>` — VCS MX parses `.vhd` files with the
+Verilog parser when invoked this way and fails on VHDL comments and syntax. The correct
+VHDL flow uses `vhdlan` (the dedicated VHDL analyzer) followed by a separate elaboration
+step.
+
+```python
+def run_vcs_vhdl(proto, vhd_files, work_dir, log_path):
+    tb_top = f"tb_IP_NAME_{proto}"
+    simv   = os.path.join(work_dir, f"simv_{proto}_vhdl")
+    full_log = ""
+
+    # Step 1 — analyze VHDL into work library
+    # -vhdl08: VHDL-2008 mode; required for "end package <name>",
+    #          hex literals assigned to std_ulogic_vector, and
+    #          conditional variable assignments inside subprograms.
+    # ip_test_pkg.vhd must appear first in vhd_files (dependency order).
+    vhdlan_cmd = ["vhdlan", "-full64", "-vhdl08"] + vhd_files
+    ap = subprocess.run(vhdlan_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log += ap.stdout + ap.stderr
+    if ap.returncode != 0:
+        return False, full_log
+
+    # Step 2 — elaborate (design unit is a positional argument, NOT -e)
+    elab_cmd = ["vcs", "-full64", tb_top, "-o", simv]
+    ep = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log += ep.stdout + ep.stderr
+    if ep.returncode != 0:
+        return False, full_log
+
+    # Step 3 — simulate
+    # stdin=DEVNULL: prevents ./simv from opening an interactive UCLI prompt
+    # and hanging when stdin is not a terminal.
+    rp = subprocess.run([simv], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log += rp.stdout + rp.stderr
+    return full_log
+```
+
+Key VCS MX flags summary:
+- `-full64` — 64-bit mode (required on ecs-vdi).
+- `-sverilog` — enable SystemVerilog parsing (SV only).
+- `-timescale=1ns/1ps` — default timescale for files that lack `` `timescale ``; VCS
+  requires all modules in a compile unit to agree on timescale when any one specifies it.
+- `+incdir+dir1+dir2` — include search path for `` `include `` directives (SV only).
+- `vhdlan -vhdl08` — VHDL-2008 mode (conditional variable assignments, hex literals to
+  `std_ulogic_vector`, `end package <name>` — all VHDL-2008 features rejected in -93 mode).
+- Elaboration: `vcs -full64 <tb_top> -o simv` — the design unit is a **positional arg**
+  (passing it as `-e <tb_top>` causes "No TopModule/Entity supplied" error).
+- `stdin=subprocess.DEVNULL` on `./simv` — without this, VHDL simulation hangs waiting
+  for the UCLI interactive prompt.
+
+**Cadence Xcelium (SV and VHDL — ecs-vdi only)**
+
+Xcelium also uses different flows for SV and VHDL. For SV, `xrun` (single step) works.
+For VHDL, `xrun` does **not** expose the VHDL-2008 flag needed by the design, so the
+3-step `xmvhdl` → `xmelab` → `xmsim` flow is required.
+
+**SV flow — 1 step via `xrun`**:
+
+```python
+def run_xcelium_sv(proto, tasks_dir, tests_dir, sv_files, work_dir, log_path):
+    top = f"tb_IP_NAME_{proto}"
+    incflag = f"+incdir+{tasks_dir}+{tests_dir}"
+    xrun_cmd = [
+        "xrun", "-64", "-access", "+rwc",
+        # -timescale: default for RTL files that lack a `timescale directive.
+        # xmelab requires all modules to agree on timescale when any specifies it.
+        "-timescale", "1ns/1ps",
+        "-log", log_path,
+        "-work", "work",
+        "-sv", incflag,
+    ] + sv_files + ["-top", top]
+
+    subprocess.run(xrun_cmd, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   cwd=work_dir)
+    # xrun writes its own log to log_path; read it for PASS/FAIL detection.
+```
+
+**VHDL flow — 3 steps** (`xmvhdl` → `xmelab` → `xmsim`):
+
+Do **NOT** try to pass VHDL-2008 flags through `xrun` for VHDL — the flags that work
+for `xmvhdl` directly (`-V200X`) are not recognized by `xrun` (`-v2k8` and `-2008` are
+also rejected). Use the 3-step flow which gives direct access to `xmvhdl` options.
+
+```python
+def run_xcelium_vhdl(proto, vhd_files, work_dir, log_path):
+    tb_top   = f"tb_IP_NAME_{proto}"
+    elab_log = os.path.join(work_dir, "elab.log")
+    full_log = ""
+
+    # Step 1 — xmvhdl: VHDL-2008 analysis
+    # -V200X:        VHDL-200X (2008) + VHDL-93 features.  Required for
+    #                "end package <name>", hex literals → std_ulogic_vector,
+    #                and conditional variable assignments in subprograms.
+    # -INC_V200X_PKG: implicitly include *_additions packages so that
+    #                to_hstring(STD_ULOGIC_VECTOR) is visible without an
+    #                explicit "use ieee.std_logic_1164_additions.all".
+    #                In Xcelium, to_hstring is in std_logic_1164_additions,
+    #                NOT in std_logic_1164 itself (even in -V200X mode).
+    # -WORK:         must be uppercase for xmvhdl (unlike xrun's -work).
+    # ip_test_pkg.vhd must appear first in vhd_files (dependency order).
+    vhdl_cmd = [
+        "xmvhdl", "-64", "-WORK", "work", "-V200X", "-INC_V200X_PKG"
+    ] + vhd_files
+    ap = subprocess.run(vhdl_cmd, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    full_log += ap.stdout + ap.stderr
+    if ap.returncode != 0:
+        return False, full_log
+
+    # Step 2 — xmelab: elaborate
+    elab_cmd = ["xmelab", "-64", "-access", "+rwc", "-log", elab_log, tb_top]
+    ep = subprocess.run(elab_cmd, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        universal_newlines=True, cwd=work_dir)
+    try:
+        with open(elab_log, errors="replace") as fh:
+            full_log += fh.read()
+    except OSError:
+        full_log += ep.stdout + ep.stderr
+    if ep.returncode != 0:
+        return False, full_log
+
+    # Step 3 — xmsim: simulate
+    sim_cmd = ["xmsim", "-64", "-log", log_path, tb_top]
+    subprocess.run(sim_cmd, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                   universal_newlines=True, cwd=work_dir)
+    try:
+        with open(log_path, errors="replace") as fh:
+            full_log += fh.read()
+    except OSError:
+        pass
+    return full_log
+```
+
+**CLE-10 / ERR-3 cosmetic messages**: when a VHDL-2008 `stop` statement (from
+`std.env`) terminates the xmsim simulation, Xcelium emits:
+
+```
+Error: Message for 'CLE-10' has occurred (ERR-3)
+Error: Message for 'CLE-10' has occurred (ERR-3)
+```
+
+These are **not real errors**. They are Xcelium's C-runtime layer noticing that the
+simulation subprocess exited with its internal "stop called" exit code. They appear
+*after* the PASS banner in the log and use mixed-case `"Error:"` (not `"ERROR"`), so
+they do not trip the all-caps fail-marker check. Filter them from displayed output:
+
+```python
+display_log = "\n".join(
+    ln for ln in full_log.splitlines()
+    if "CLE-10" not in ln and "ERR-3" not in ln
+)
+```
+
+Key Xcelium flags summary:
+- `-64` — 64-bit mode (required on ecs-vdi).
+- `-access +rwc` — full read/write/connect access (avoid access errors on shared variables).
+- `-timescale 1ns/1ps` — default timescale for SV files lacking `` `timescale `` (xrun only).
+- `-log <path>` — xrun/xmsim write their log file here; read it for PASS/FAIL detection.
+- `-work work` / `-WORK work` — compiled library location (`-work` for xrun/xmelab,
+  `-WORK` uppercase for xmvhdl).
+- `xmvhdl -V200X` — VHDL-2008 mode (not `-v2k8`, not `-2008` — both rejected by xmvhdl).
+- `xmvhdl -INC_V200X_PKG` — auto-includes `std_logic_1164_additions` so `to_hstring`
+  is visible; do not add `use ieee.std_logic_1164_additions.all` to source (not portable).
+- Add `"ERROR"` to `fail_markers` — Xcelium uses it for elaboration errors that do not
+  contain `"FAIL"`. Use case-sensitive matching: `"Error:"` (CLE-10) will not match.
 
 **Fail-marker rule**: always check for both `"FAIL"` and `"FATAL_ERROR"`.
 `"FATAL_ERROR"` does not contain the substring `"FAIL"`, so a single `fail_marker = "FAIL"`
@@ -471,6 +722,8 @@ Always add an **Interactive Simulation (GUI)** section to the IP `README.md` doc
 
 ### 6. Run and verify
 
+**Standard environment** (any host other than `ecs-vdi.ecs.csun.edu`):
+
 Run Icarus Verilog (SV) and GHDL (VHDL) for all four protocols. All eight combinations
 must produce `PASS` before marking this step complete:
 
@@ -484,6 +737,34 @@ verification/work/ghdl/apb_vhdl/results.log    → PASS
 verification/work/ghdl/axi4l_vhdl/results.log  → PASS
 verification/work/ghdl/wb_vhdl/results.log     → PASS
 ```
+
+**ecs-vdi.ecs.csun.edu environment**:
+
+Run both Synopsys VCS MX and Cadence Xcelium for all four protocols and both languages.
+All sixteen combinations must produce `PASS` before marking this step complete:
+
+```
+verification/work/vcs/ahb_sv/results.log         → PASS
+verification/work/vcs/apb_sv/results.log         → PASS
+verification/work/vcs/axi4l_sv/results.log       → PASS
+verification/work/vcs/wb_sv/results.log          → PASS
+verification/work/vcs/ahb_vhdl/results.log       → PASS
+verification/work/vcs/apb_vhdl/results.log       → PASS
+verification/work/vcs/axi4l_vhdl/results.log     → PASS
+verification/work/vcs/wb_vhdl/results.log        → PASS
+verification/work/xcelium/ahb_sv/results.log     → PASS
+verification/work/xcelium/apb_sv/results.log     → PASS
+verification/work/xcelium/axi4l_sv/results.log   → PASS
+verification/work/xcelium/wb_sv/results.log      → PASS
+verification/work/xcelium/ahb_vhdl/results.log   → PASS
+verification/work/xcelium/apb_vhdl/results.log   → PASS
+verification/work/xcelium/axi4l_vhdl/results.log → PASS
+verification/work/xcelium/wb_vhdl/results.log    → PASS
+```
+
+On ecs-vdi, do **not** invoke `sim_IP_NAME.py --sim icarus`, `--sim ghdl`, or
+`--sim modelsim` — those simulators are not installed and the script must reject them
+with a descriptive error message when `ON_ECS_VDI` is `True`.
 
 ### 7. Update `README.md`
 
@@ -521,7 +802,7 @@ Include the simulator versions and the date the results were generated.
 | `verification/tasks/tasks_<proto>.sv` | Reusable SV BFM task library (if not in common) |
 | `verification/tests/test_*.sv` | Directed SV test files |
 | `verification/tools/sim_IP_NAME.py` | Completed simulation runner |
-| `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination |
+| `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination (icarus/ghdl on standard hosts; vcs/xcelium on ecs-vdi) |
 | `verification/modelsim/tb_IP_NAME_<proto>.do` | ModelSim GUI compile+sim script (4 files) |
 | `verification/modelsim/tb_IP_NAME_<proto>_wave.do` | ModelSim waveform config (4 files) |
 | `verification/vivado/create_project_<proto>.tcl` | Vivado project creation script (4 files) |
@@ -529,9 +810,14 @@ Include the simulator versions and the date the results were generated.
 
 ## Quality Gate
 
-- All eight `results.log` files (4 protocols × 2 languages) contain `PASS`.
+- **Standard hosts**: all eight `results.log` files (4 protocols × 2 languages, icarus + ghdl)
+  contain `PASS`.
+- **ecs-vdi.ecs.csun.edu**: all sixteen `results.log` files (4 protocols × 2 languages × 2
+  simulators: vcs + xcelium) contain `PASS`.
 - `sim_IP_NAME.py --proto all --lang all` exits non-zero when a deliberate assertion
   failure is injected into any testbench.
+- On ecs-vdi, `sim_IP_NAME.py --sim icarus` (or `--sim ghdl` or `--sim modelsim`) prints a
+  clear error and exits non-zero without attempting to invoke the unavailable tool.
 - No testbench or task code resides in `design/rtl/`.
 - No compile-time DUT-selection defines in any testbench — DUT is named explicitly.
 - All four `verification/modelsim/tb_IP_NAME_<proto>.do` files exist and reference their

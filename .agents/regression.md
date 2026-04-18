@@ -6,32 +6,82 @@ Steps 4, 5, and 6 complete (all directed tests, formal verification, and UVM tes
 
 ## Prerequisites
 
-- `verification/work/icarus/<proto>_sv/results.log` contains `PASS` for all 4 protocols.
-- `verification/work/ghdl/<proto>_vhdl/results.log` contains `PASS` for all 4 protocols.
+- On standard hosts: `verification/work/icarus/<proto>_sv/results.log` and `verification/work/ghdl/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
+- On ecs-vdi.ecs.csun.edu: `verification/work/vcs/<proto>_sv/results.log` and `verification/work/xcelium/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
 - `verification/work/formal/<proto>/results.log` contains `PASS` for all protocols.
-- `verification/work/xsim/uvm/results.log` contains `PASS` (UVM, Step 6).
+- On standard hosts: `verification/work/xsim/uvm/results.log` contains `PASS` (UVM, Step 6).
 - `verification/lint/lint_results.log` contains `PASS` (coordinate with lint sub-agent, Step 8).
 - `verification/regression/` directory exists.
 - `verification/tools/run_regression.py` skeleton exists from Step 1.
 - `CLAUDE_<IP_NAME>_PATH` is set (sourced from `setup.sh`).
 
+## Machine-Specific Environment: ecs-vdi.ecs.csun.edu
+
+When the agent is running on the host `ecs-vdi.ecs.csun.edu`, the following tools are
+**not available** and must not be invoked:
+
+- Icarus Verilog (`iverilog` / `vvp`)
+- GHDL
+- Vivado / xsim (including UVM)
+- ModelSim / Questa (`vsim`)
+- Altera tools
+- cocotb
+- The project Python virtual environment (`venv`)
+
+On this host the **only** supported simulators are:
+
+| Tool | Language | Command |
+|------|----------|---------|
+| Synopsys VCS MX | SystemVerilog and VHDL | `vcs` (on `$PATH`) |
+| Cadence Xcelium | SystemVerilog and VHDL | `xrun` (on `$PATH`) |
+
+VCS MX licenses (`VCSMXRunTime_Net`, `VCSMXCompiler_Net`) are available on this host.
+Run **both** VCS MX and Xcelium for all protocol/language combinations — this
+cross-validates the design against two independent simulator front-ends.
+
+Formal verification (SymbiYosys) and linting are available on this host.
+
+`run_regression.py` must detect this environment at startup:
+
+```python
+import socket
+ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+```
+
+When `ON_ECS_VDI` is `True`:
+- Skip Icarus, GHDL, ModelSim, and xsim simulations.
+- Skip UVM (since it requires xsim).
+- Run only VCS and Xcelium simulations, formal verification, and linting.
+- All Python code must work without activating a virtualenv — use only the system Python
+  packages that are available.
+
 ## Responsibilities
 
 ### 1. Complete `verification/tools/run_regression.py`
 
+- Located in `${IP_COMMON_PATH}/verification/tools/run_regression.py`.
+- Takes the IP name as the first argument (e.g., `python3 run_regression.py timer`).
 - Sources `setup.sh` environment at startup (via `os.environ` / `CLAUDE_<IP_NAME>_PATH`).
+- Detects the host environment at startup using `socket.getfqdn()`.
 - Accepts flags: `--skip-sim`, `--skip-uvm`, `--skip-formal`, `--skip-lint`,
   `--skip-modelsim`, `--skip-xsim`.
-- Runs steps in order:
-  1. `sim_IP_NAME.py --sim icarus --proto all --lang sv`
-  2. `sim_IP_NAME.py --sim ghdl --proto all --lang vhdl`
-  3. `sim_IP_NAME.py --sim modelsim --proto all --lang sv`   ← skip if `--skip-modelsim`
-  4. `sim_IP_NAME.py --sim modelsim --proto all --lang vhdl` ← skip if `--skip-modelsim`
-  5. `sim_IP_NAME.py --sim xsim --proto all --lang sv`       ← skip if `--skip-xsim`
-  6. `sim_IP_NAME.py --sim xsim --proto all --lang vhdl`     ← skip if `--skip-xsim`
-  7. `uvm_IP_NAME.py --test IP_NAME_base_test`  ← **separate script, NOT a flag on sim**; skip if `--skip-uvm`
-  8. `run_formal.py --proto all`                ← skip if `--skip-formal`
-  9. Lint results (read `verification/lint/lint_results.log`) ← skip if `--skip-lint`
+- Runs steps in order based on host availability:
+  - On standard hosts (not ecs-vdi):
+    1. `sim_<IP_NAME>.py --sim icarus --proto all --lang sv`
+    2. `sim_<IP_NAME>.py --sim ghdl --proto all --lang vhdl`
+    3. `sim_<IP_NAME>.py --sim modelsim --proto all --lang sv`   ← skip if `--skip-modelsim`
+    4. `sim_<IP_NAME>.py --sim modelsim --proto all --lang vhdl` ← skip if `--skip-modelsim`
+    5. `sim_<IP_NAME>.py --sim xsim --proto all --lang sv`       ← skip if `--skip-xsim`
+    6. `sim_<IP_NAME>.py --sim xsim --proto all --lang vhdl`     ← skip if `--skip-xsim`
+    7. `uvm_<IP_NAME>.py --test <IP_NAME>_base_test`  ← **separate script, NOT a flag on sim**; skip if `--skip-uvm`
+  - On ecs-vdi.ecs.csun.edu:
+    1. `sim_<IP_NAME>.py --sim vcs --proto all --lang sv`
+    2. `sim_<IP_NAME>.py --sim vcs --proto all --lang vhdl`
+    3. `sim_<IP_NAME>.py --sim xcelium --proto all --lang sv`
+    4. `sim_<IP_NAME>.py --sim xcelium --proto all --lang vhdl`
+  - On all hosts:
+    8. `run_formal.py --proto all`                ← skip if `--skip-formal`
+    9. Lint results (read `verification/lint/lint_results.log`) ← skip if `--skip-lint`
 - Collects exit codes and reads `results.log` files.
 - Writes `verification/work/regression_results.log` with a complete pass/fail table.
 - Exits non-zero if **any** test is `FAIL`. `SKIP` (tool not installed) is neutral — not a failure.
@@ -73,9 +123,11 @@ if uvm_work.exists():
 
 ### 3. Results table format
 
+On standard hosts:
+
 ```
 ============================================================
-IP_NAME Regression Results
+<IP_NAME> Regression Results
 ============================================================
   sim/icarus/ahb_sv/test_reset          PASS
   sim/icarus/ahb_sv/test_rw             PASS
@@ -91,7 +143,31 @@ IP_NAME Regression Results
   formal/apb                            PASS
   formal/axi4l                          PASS
   formal/wb                             PASS
-  uvm/xsim/IP_NAME_base_test            PASS
+  uvm/xsim/<IP_NAME>_base_test          PASS
+  lint                                  PASS
+------------------------------------------------------------
+  Total: N  Pass: N  Fail: 0  Skip: 0
+============================================================
+REGRESSION PASSED
+```
+
+On ecs-vdi.ecs.csun.edu (VCS and Xcelium only, no UVM):
+
+```
+============================================================
+<IP_NAME> Regression Results
+============================================================
+  sim/vcs/ahb_sv/test_reset             PASS
+  sim/vcs/ahb_sv/test_rw                PASS
+  ...
+  sim/vcs/wb_vhdl/test_timer_ops        PASS
+  sim/xcelium/ahb_sv/test_reset         PASS
+  ...
+  sim/xcelium/wb_vhdl/test_timer_ops    PASS
+  formal/ahb                            PASS
+  formal/apb                            PASS
+  formal/axi4l                          PASS
+  formal/wb                             PASS
   lint                                  PASS
 ------------------------------------------------------------
   Total: N  Pass: N  Fail: 0  Skip: 0

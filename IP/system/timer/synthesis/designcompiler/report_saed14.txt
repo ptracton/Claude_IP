@@ -1,0 +1,24 @@
+========================================================================
+Design Compiler Synthesis Report — timer IP
+Target PDK    : SAED14 (14nm)
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-04-18
+========================================================================
+
+STATUS: PASS — synthesis completed successfully.
+
+------------------------------------------------------------------------
+Synthesis Results
+------------------------------------------------------------------------
+  Total cells  : 849
+  Flip-flops   : 208
+
+Per-variant area and timing reports:
+  synthesis/designcompiler/reports/saed14/
+
+Netlists and SDF:
+  synthesis/designcompiler/netlists/saed14/
+
+Full log:
+  synthesis/designcompiler/dc_saed14_run.log
+========================================================================

@@ -16,7 +16,10 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
 1. Run `cleanup.sh` (created in Step 1) to remove all build and simulation artifacts:
    - `verification/work/` contents.
    - `firmware/build/`, `firmware/obj/`, `firmware/lib/`.
-   - Synthesis intermediate files in `synthesis/*/`.
+   - Synthesis intermediate files in `synthesis/*/` via two calls:
+     - `python3 synthesis/run_vendor_synth.py --clean` — Vivado, Quartus outputs.
+     - `bash synthesis/clean.sh` — Design Compiler outputs (`reports/`, `netlists/`,
+       `ARCH/`, `ENTI/`, `PACK/`, `dc_saed90_run.log`, `dc_saed32_run.log`, etc.).
    - Vivado journal and log files (`.jou`, `.log`, `.pb`).
    - Quartus `db/` and `incremental_db/` directories.
 2. Update `.gitignore` (at the `IP_NAME/` root) to exclude:
