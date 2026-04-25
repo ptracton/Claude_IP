@@ -27,7 +27,7 @@ read_verilog -sv $DESIGN_DIR/bus_matrix_ahb.sv
 # Write OOC clock constraint to a temp XDC file
 set xdc_file "$OUT_DIR/${TOP}_ooc.xdc"
 set fh [open $xdc_file w]
-puts $fh "create_clock -period 10.000 -name PCLK \[get_ports clk\]"
+puts $fh "create_clock -period 10.000 -name CLK \[get_ports clk\]"
 close $fh
 read_xdc $xdc_file
 

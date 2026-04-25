@@ -1,0 +1,16 @@
+# synth_bus_matrix_ahb_vhdl.ys — Yosys VHDL synthesis for bus_matrix_ahb
+# Requires ghdl plugin (OSS CAD Suite).
+# Run from IP/interface/bus_matrix/:
+#   yosys synthesis/yosys/synth_bus_matrix_ahb_vhdl.ys
+
+plugin -i ghdl
+ghdl --std=08 \
+    design/rtl/vhdl/bus_matrix_decoder.vhd \
+    design/rtl/vhdl/bus_matrix_arb.vhd \
+    design/rtl/vhdl/bus_matrix_core.vhd \
+    design/rtl/vhdl/bus_matrix_ahb.vhd \
+    -e bus_matrix_ahb
+
+synth -top bus_matrix_ahb -flatten
+stat
+write_verilog -noattr synthesis/yosys/work/bus_matrix_ahb_vhdl_synth.v

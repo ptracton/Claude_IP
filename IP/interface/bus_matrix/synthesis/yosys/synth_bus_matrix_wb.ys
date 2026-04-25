@@ -1,0 +1,12 @@
+# synth_bus_matrix_wb.ys — Yosys SV synthesis for bus_matrix_wb
+# Run from IP/interface/bus_matrix/:
+#   yosys synthesis/yosys/synth_bus_matrix_wb.ys
+
+read_verilog -sv design/rtl/verilog/bus_matrix_decoder.sv
+read_verilog -sv design/rtl/verilog/bus_matrix_arb.sv
+read_verilog -sv design/rtl/verilog/bus_matrix_core.sv
+read_verilog -sv design/rtl/verilog/bus_matrix_wb.sv
+
+synth -top bus_matrix_wb -flatten
+stat
+write_verilog -noattr synthesis/yosys/work/bus_matrix_wb_synth.v

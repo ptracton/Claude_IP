@@ -3,6 +3,15 @@
 # Usage: source IP/interface/bus_matrix/setup.sh
 
 # ---------------------------------------------------------------------------
+# Guard: must be sourced, not executed
+# ---------------------------------------------------------------------------
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "ERROR: setup.sh must be sourced, not executed directly."
+    echo "       Use:  source setup.sh   or   . setup.sh"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Self-locate: set CLAUDE_BUS_MATRIX_PATH to the directory containing this file
 # ---------------------------------------------------------------------------
 export CLAUDE_BUS_MATRIX_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,29 +45,52 @@ export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
 export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
 
 # ---------------------------------------------------------------------------
-# Vivado 2023.2  (sources its own settings64.sh which modifies PATH)
+# Host detection
 # ---------------------------------------------------------------------------
-if [ -f "/opt/Xilinx/Vivado/2023.2/settings64.sh" ]; then
-    source "/opt/Xilinx/Vivado/2023.2/settings64.sh"
+_HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
+if [ "${_HOSTNAME}" = "ecs-vdi.ecs.csun.edu" ]; then
+    _ON_ECS_VDI=1
 else
-    echo "WARNING: Vivado not found at /opt/Xilinx/Vivado/2023.2/settings64.sh"
+    _ON_ECS_VDI=0
+fi
+
+# ---------------------------------------------------------------------------
+# Vivado 2023.2  (sources its own settings64.sh which modifies PATH)
+# Not available on ecs-vdi.
+# ---------------------------------------------------------------------------
+if [ "${_ON_ECS_VDI}" -eq 0 ]; then
+    if [ -f "/opt/Xilinx/Vivado/2023.2/settings64.sh" ]; then
+        source "/opt/Xilinx/Vivado/2023.2/settings64.sh"
+    else
+        echo "WARNING: Vivado not found at /opt/Xilinx/Vivado/2023.2/settings64.sh"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
 # Python virtual environment  (activation script modifies PATH)
+# Not activated on ecs-vdi — use system Python there.
 # ---------------------------------------------------------------------------
-CLAUDE_IP_VENV="$(cd "${CLAUDE_BUS_MATRIX_PATH}/../../.." && pwd)/virtualenv/CLAUDE_IP/bin/activate"
-if [ -f "${CLAUDE_IP_VENV}" ]; then
-    source "${CLAUDE_IP_VENV}"
-else
-    echo "WARNING: Python venv not found at ${CLAUDE_IP_VENV}"
-    echo "         Run: python3 -m venv $(cd "${CLAUDE_BUS_MATRIX_PATH}/../../.." && pwd)/virtualenv/CLAUDE_IP"
+if [ "${_ON_ECS_VDI}" -eq 0 ]; then
+    CLAUDE_IP_VENV="$(cd "${CLAUDE_BUS_MATRIX_PATH}/../../.." && pwd)/virtualenv/CLAUDE_IP/bin/activate"
+    if [ -f "${CLAUDE_IP_VENV}" ]; then
+        source "${CLAUDE_IP_VENV}"
+    else
+        echo "WARNING: Python venv not found at ${CLAUDE_IP_VENV}"
+        echo "         Run: python3 -m venv $(cd "${CLAUDE_BUS_MATRIX_PATH}/../../.." && pwd)/virtualenv/CLAUDE_IP"
+    fi
+    unset CLAUDE_IP_VENV
 fi
-unset CLAUDE_IP_VENV
 
 # ---------------------------------------------------------------------------
 # PATH — updated last so these entries are never overwritten by sourced scripts
+# On ecs-vdi: no PATH changes needed — VCS and Xcelium are already on the
+#             system PATH; OSS CAD Suite, Quartus, ModelSim, and XPACK are
+#             not installed on that host.
 # ---------------------------------------------------------------------------
-export PATH="${XPACK_RISCV_PATH}/bin:${OSS_CAD_SUITE_PATH}/bin:${QUARTUS_PATH}:${MODELSIM_PATH}:${PATH}"
+if [ "${_ON_ECS_VDI}" -eq 0 ]; then
+    export PATH="${XPACK_RISCV_PATH}/bin:${OSS_CAD_SUITE_PATH}/bin:${QUARTUS_PATH}:${MODELSIM_PATH}:${PATH}"
+fi
+
+unset _HOSTNAME _ON_ECS_VDI
 
 echo "bus_matrix environment ready. CLAUDE_BUS_MATRIX_PATH=${CLAUDE_BUS_MATRIX_PATH}"

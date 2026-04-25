@@ -17,6 +17,7 @@ rm -rf "${CLAUDE_BUS_MATRIX_PATH}/verification/work"/*
 if [ -f "${CLAUDE_BUS_MATRIX_PATH}/synthesis/run_vendor_synth.py" ]; then
     python3 "${CLAUDE_BUS_MATRIX_PATH}/synthesis/run_vendor_synth.py" --clean 2>/dev/null || true
 fi
+bash "${CLAUDE_BUS_MATRIX_PATH}/synthesis/clean.sh" 2>/dev/null || true
 
 rm -f  "${CLAUDE_BUS_MATRIX_PATH}/verification/formal/results.log"
 rm -rf "${CLAUDE_BUS_MATRIX_PATH}/verification/formal/work"

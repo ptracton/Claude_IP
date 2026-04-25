@@ -55,6 +55,39 @@ def get_timer_path() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Post-synthesis PDK configs (Design Compiler netlists + SAED cell libraries)
+# ---------------------------------------------------------------------------
+_SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
+_SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
+_SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
+
+POSTSYN_PDK_CONFIGS = {
+    "saed90": {
+        "label":     "SAED90 (90 nm)",
+        "cell_libs": [
+            f"{_SAED90_PDK}/Digital_Standard_cell_Library/verilog/saed90nm.v",
+        ],
+    },
+    "saed32": {
+        "label":     "SAED32 (32 nm)",
+        "cell_libs": [
+            f"{_SAED32_EDK}/lib/stdcell_rvt/verilog/saed32nm.v",
+        ],
+    },
+    "saed14": {
+        "label":     "SAED14 (14 nm)",
+        "cell_libs": [
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/base/saed14rvt_base.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso.v",
+        ],
+    },
+}
+
+SUPPORTED_PDKS = list(POSTSYN_PDK_CONFIGS.keys())
+
+# ---------------------------------------------------------------------------
 # Tool paths
 # ---------------------------------------------------------------------------
 OSS_CAD = "/opt/oss-cad-suite/bin"
@@ -690,7 +723,8 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
         # -timescale sets the default for files that lack a `timescale directive;
         # VCS requires all modules to agree on timescale when any one specifies it.
         compile_cmd = (
-            ["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps", incflag]
+            ["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps",
+             "-debug_acc+all", incflag]
             + sv_files(proto, timer_path)
             + ["-o", simv]
         )
@@ -733,7 +767,7 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
             return False
 
         # Step 2: vcs — elaborate (design unit is a positional arg, not -e)
-        elab_cmd = ["vcs", "-full64", tb_top, "-o", simv]
+        elab_cmd = ["vcs", "-full64", "-debug_acc+all", tb_top, "-o", simv]
         print(f"  [vcs/{proto}_{lang}] Elaborating (vcs -e) ...")
         try:
             ep = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -750,11 +784,13 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
             return False
 
     # ── Simulate ──────────────────────────────────────────────────────────
-    print(f"  [vcs/{proto}_{lang}] Simulating {tb_top} ...")
+    print(f"  [vcs/{proto}_{lang}] Simulating {tb_top} (waveforms → vcdplus.vpd) ...")
     try:
-        rp = subprocess.run([simv], stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            universal_newlines=True, timeout=120, cwd=work_dir)
+        rp = subprocess.run(
+            [simv],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120, cwd=work_dir)
     except FileNotFoundError:
         msg = f"ERROR: compiled binary not found at {simv}"
         print(f"  {msg}")
@@ -767,6 +803,129 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
         fh.write(full_log)
 
     print(f"  [vcs/{proto}_{lang}] Output:\n{sim_out.strip()}")
+
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# Post-synthesis VCS runner (ecs-vdi only — requires DC netlists + SAED libs)
+# ---------------------------------------------------------------------------
+
+def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> bool:
+    """Gate-level simulation with VCS using a DC netlist and SDF back-annotation.
+
+    The gate-level netlist (always Verilog) and SDF are taken from:
+        synthesis/designcompiler/netlists/<pdk>/timer_<proto>.v / .sdf
+
+    The SV testbench is reused unchanged; --lang is ignored (the netlist is
+    always Verilog regardless of which RTL language was synthesised).
+
+    SDF back-annotation uses the typical corner.  +notimingcheck suppresses
+    setup/hold violations so functional correctness can be evaluated without
+    the testbench needing a PVT-matched clock period.
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    tb_top   = f"tb_timer_{proto}"
+    simv     = os.path.join(work_dir, f"simv_{proto}_{pdk}_postsyn")
+    tag      = f"postsyn-vcs/{proto}/{pdk}"
+    full_log = ""
+
+    netlist_dir = os.path.join(
+        timer_path, "synthesis", "designcompiler", "netlists", pdk
+    )
+    netlist  = os.path.join(netlist_dir, f"timer_{proto}.v")
+    sdf_file = os.path.join(netlist_dir, f"timer_{proto}.sdf")
+
+    # ── Pre-flight checks ────────────────────────────────────────────────
+    if not os.path.isfile(netlist):
+        msg = (f"ERROR: netlist not found at {netlist}\n"
+               f"       Run synthesis/run_vendor_synth.py --dc{pdk[4:]} first.")
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    cfg      = POSTSYN_PDK_CONFIGS[pdk]
+    missing  = [f for f in cfg["cell_libs"] if not os.path.isfile(f)]
+    if missing:
+        msg = "ERROR: cell library models not found:\n" + "\n".join(missing)
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # ── Source file list ─────────────────────────────────────────────────
+    rtl    = os.path.join(timer_path, "design", "rtl", "verilog")
+    tb_dir = os.path.join(timer_path, "verification", "testbench")
+    incdirs = sv_include_dirs(timer_path)
+    incflag = "+incdir+" + "+".join(incdirs)
+
+    src_files = (
+        [os.path.join(rtl, "timer_reg_pkg.sv")]   # package used by testbench
+        + cfg["cell_libs"]                          # SAED standard-cell models
+        + [netlist]                                 # DC gate-level netlist
+        + [os.path.join(tb_dir, f"{tb_top}.sv")]   # SV testbench (always SV)
+    )
+
+    # ── Compile ───────────────────────────────────────────────────────────
+    compile_cmd = [
+        "vcs", "-full64", "-sverilog", "-timescale=1ns/1ps",
+        "-debug_acc+all",
+        "+notimingcheck",   # suppress setup/hold violations; verify function only
+        "+neg_tchk",        # tolerate negative timing values in SDF
+        incflag,
+    ]
+    if os.path.isfile(sdf_file):
+        compile_cmd += ["-sdf", f"typ:{tb_top}.u_dut:{sdf_file}"]
+        print(f"  [{tag}] Compiling with SDF back-annotation ({pdk}) ...")
+    else:
+        print(f"  [{tag}] Compiling (no SDF found — functional only) ...")
+
+    compile_cmd += src_files + ["-o", simv]
+
+    try:
+        cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=240, cwd=work_dir)
+    except FileNotFoundError:
+        msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    full_log = cp.stdout + cp.stderr
+    if cp.returncode != 0:
+        print(f"  [{tag}] Compile FAILED:\n{full_log}")
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    # ── Simulate ──────────────────────────────────────────────────────────
+    print(f"  [{tag}] Simulating {tb_top} (waveforms → vcdplus.vpd) ...")
+    try:
+        rp = subprocess.run(
+            [simv], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120, cwd=work_dir,
+        )
+    except FileNotFoundError:
+        msg = f"ERROR: compiled binary not found at {simv}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    sim_out = rp.stdout + rp.stderr
+    full_log += sim_out
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    print(f"  [{tag}] Output:\n{sim_out.strip()}")
 
     pass_marker  = f"PASS {tb_top}"
     fail_markers = ["FAIL", "FATAL_ERROR"]
@@ -962,6 +1121,20 @@ def main() -> None:
         default=None,
         help="Name of a specific test (informational only; all tests run by default)",
     )
+    parser.add_argument(
+        "--postsyn",
+        action="store_true",
+        default=False,
+        help="Run post-synthesis simulation using DC gate-level netlists and SDF "
+             "back-annotation (ecs-vdi only, VCS only). Use --pdk to select the PDK.",
+    )
+    parser.add_argument(
+        "--pdk",
+        choices=SUPPORTED_PDKS + ["all"],
+        default="all",
+        help="PDK for post-synthesis simulation: saed90, saed32, saed14, or all "
+             "(default: %(default)s). Ignored unless --postsyn is given.",
+    )
     args = parser.parse_args()
 
     # Apply ecs-vdi restrictions before expanding 'all'
@@ -1017,19 +1190,40 @@ def main() -> None:
                 if not ok:
                     all_pass = False
 
+    # ── Post-synthesis simulation ─────────────────────────────────────────
+    if args.postsyn:
+        if not ON_ECS_VDI:
+            print("WARNING: --postsyn is only supported on ecs-vdi.ecs.csun.edu "
+                  "(requires VCS and SAED PDK libraries). Skipping.")
+        else:
+            pdks = SUPPORTED_PDKS if args.pdk == "all" else [args.pdk]
+            for pdk in pdks:
+                for proto in protos:
+                    work_dir = os.path.join(work_base, "postsyn", pdk, proto)
+                    ok = run_vcs_postsyn(proto, pdk, timer_path, work_dir)
+                    label = f"postsyn-vcs/{proto}/{pdk}"
+                    results_summary.append((label, "PASS" if ok else "FAIL"))
+                    if not ok:
+                        all_pass = False
+
     # Print summary
+    GREEN = "\033[32m"
+    RED   = "\033[31m"
+    RESET = "\033[0m"
+
     print("\n" + "=" * 60)
     print("Simulation Results Summary")
     print("=" * 60)
     for label, status in results_summary:
-        print(f"  {label:<35} {status}")
+        color = GREEN if status == "PASS" else RED
+        print(f"  {label:<35} {color}{status}{RESET}")
     print("=" * 60)
 
     if not all_pass:
-        print("One or more simulations FAILED.")
+        print(f"One or more simulations {RED}FAILED{RESET}.")
         sys.exit(1)
     else:
-        print("All simulations PASSED.")
+        print(f"All simulations {GREEN}PASSED{RESET}.")
         sys.exit(0)
 
 
