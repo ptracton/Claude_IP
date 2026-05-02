@@ -99,7 +99,7 @@ analyze -format vhdl {timer_reg_pkg.vhd timer_regfile.vhd timer_core.vhd}
 # Helper: compile one design and write reports + netlist
 # =========================================================================
 
-proc synth_variant { variant clk_port rpt_dir net_dir suffix } {
+proc synth_variant { variant clk_port reset_port rpt_dir net_dir suffix } {
     puts "\n=========================================="
     puts "Synthesizing: $variant$suffix"
     puts "=========================================="
@@ -110,6 +110,15 @@ proc synth_variant { variant clk_port rpt_dir net_dir suffix } {
     create_clock -period 10 $clk_port
     set_clock_transition 0.1 $clk_port
     set_clock_latency    0.2 $clk_port
+
+    # Mark the synchronous reset port as an ideal network.
+    # The reset fans out to every DFF's D-input reset mux, making it the
+    # highest-fanout net in the design.  DC's wire-load model assigns a
+    # very large RC to such nets, producing a hundreds-of-nanoseconds
+    # INTERCONNECT entry in the SDF that breaks functional gate-level sim.
+    # set_ideal_network zeroes the wire-load for this port only, leaving
+    # all data/control port delays unaffected.
+    set_ideal_network [get_ports $reset_port]
 
     compile -map_effort low
 
@@ -134,9 +143,16 @@ proc synth_variant { variant clk_port rpt_dir net_dir suffix } {
 # SystemVerilog variants (clock port is always 'clk')
 # =========================================================================
 
+array set sv_resets {
+    timer_apb   PRESETn
+    timer_ahb   HRESETn
+    timer_axi4l ARESETn
+    timer_wb    RST_I
+}
+
 foreach variant {timer_apb timer_ahb timer_axi4l timer_wb} {
     analyze -format sverilog "${variant}.sv"
-    synth_variant $variant clk $RPT_DIR $NET_DIR ""
+    synth_variant $variant clk $sv_resets($variant) $RPT_DIR $NET_DIR ""
 }
 
 # =========================================================================
@@ -150,9 +166,16 @@ array set vhdl_clocks {
     timer_wb    CLK_I
 }
 
+array set vhdl_resets {
+    timer_apb   PRESETn
+    timer_ahb   HRESETn
+    timer_axi4l ARESETn
+    timer_wb    RST_I
+}
+
 foreach variant {timer_apb timer_ahb timer_axi4l timer_wb} {
     analyze -format vhdl "${variant}.vhd"
-    synth_variant $variant $vhdl_clocks($variant) $RPT_DIR $NET_DIR "_vhdl"
+    synth_variant $variant $vhdl_clocks($variant) $vhdl_resets($variant) $RPT_DIR $NET_DIR "_vhdl"
 }
 
 puts "\n=========================================="

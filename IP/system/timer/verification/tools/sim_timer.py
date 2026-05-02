@@ -67,11 +67,17 @@ POSTSYN_PDK_CONFIGS = {
         "cell_libs": [
             f"{_SAED90_PDK}/Digital_Standard_cell_Library/verilog/saed90nm.v",
         ],
+        "db_libs": [
+            f"{_SAED90_PDK}/Digital_Standard_cell_Library/synopsys/models/saed90nm_typ.db",
+        ],
     },
     "saed32": {
         "label":     "SAED32 (32 nm)",
         "cell_libs": [
             f"{_SAED32_EDK}/lib/stdcell_rvt/verilog/saed32nm.v",
+        ],
+        "db_libs": [
+            f"{_SAED32_EDK}/lib/stdcell_rvt/db_nldm/saed32rvt_tt1p05v25c.db",
         ],
     },
     "saed14": {
@@ -81,6 +87,12 @@ POSTSYN_PDK_CONFIGS = {
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg.v",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl.v",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso.v",
+        ],
+        "db_libs": [
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/base/saed14rvt_base_tt0p8v25c.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/cg/saed14rvt_cg_tt0p8v25c.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/dlvl/saed14rvt_dlvl_tt0p8v25c_i0p8v.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/iso/saed14rvt_iso_tt0p8v25c.db",
         ],
     },
 }
@@ -879,8 +891,9 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
     compile_cmd = [
         "vcs", "-full64", "-sverilog", "-timescale=1ns/1ps",
         "-debug_acc+all",
-        "+notimingcheck",   # suppress setup/hold violations; verify function only
-        "+neg_tchk",        # tolerate negative timing values in SDF
+        "+notimingcheck",      # suppress setup/hold violations; verify function only
+        "+neg_tchk",           # tolerate negative timing values in SDF
+        "+vcs+initreg+random", # enable initreg so +vcs+initreg+0 works at runtime
         incflag,
     ]
     if os.path.isfile(sdf_file):
@@ -907,10 +920,12 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
         return False
 
     # ── Simulate ──────────────────────────────────────────────────────────
+    # +vcs+initreg+0 initialises all gate-level flip-flops to 0 at time 0,
+    # preventing X-propagation before the testbench reset is applied.
     print(f"  [{tag}] Simulating {tb_top} (waveforms → vcdplus.vpd) ...")
     try:
         rp = subprocess.run(
-            [simv], stdin=subprocess.DEVNULL,
+            [simv, "+vcs+initreg+0"], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             universal_newlines=True, timeout=120, cwd=work_dir,
         )
@@ -936,6 +951,198 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
         passed = False
     _write_result(results, "PASS" if passed else "FAIL", full_log)
     return passed
+
+
+# ---------------------------------------------------------------------------
+# PrimePower (PTPX) power analysis (ecs-vdi only — requires pt_shell + SAED DB)
+# ---------------------------------------------------------------------------
+
+def _print_power_report(tag: str, overall_rpt: str, cells_rpt: str, nets_rpt: str) -> None:
+    """Print overall power, top-10 cells, and top-10 nets to stdout."""
+    print(f"\n  [{tag}] {'=' * 55}")
+    print(f"  [{tag}] Power Analysis Report")
+    print(f"  [{tag}] {'=' * 55}")
+    for title, path in [
+        ("Overall Power", overall_rpt),
+        ("Top 10 Cells by Total Power", cells_rpt),
+        ("Top 10 Nets by Switching Power", nets_rpt),
+    ]:
+        print(f"\n  [{tag}] --- {title} ---")
+        if os.path.isfile(path):
+            with open(path) as fh:
+                for line in fh:
+                    print(f"    {line.rstrip()}")
+        else:
+            print(f"    (report not generated — see pt_shell.log)")
+
+
+def run_power_analysis(proto: str, pdk: str, timer_path: str,
+                       postsyn_work_dir: str) -> bool:
+    """Run PrimePower (PTPX) power analysis on the post-synthesis simulation.
+
+    Flow:
+      1. Convert VPD → SAIF with vcd2saif (scope = tb_timer_{proto}/u_dut)
+      2. Write a PTPX Tcl script that reads the netlist, SAIF, and liberty DB
+      3. Run pt_shell -f run_power.tcl
+      4. Print overall power, top-10 cells, top-10 nets from generated reports
+
+    Outputs land in <postsyn_work_dir>/power/:
+      power.saif            — switching-activity from simulation
+      run_power.tcl         — generated PTPX script
+      pt_shell.log          — raw pt_shell transcript
+      power_overall.rpt     — report_power -nosplit
+      power_top_cells.rpt   — top 10 instances by total power
+      power_top_nets.rpt    — top 10 nets by switching power
+    """
+    power_dir = os.path.join(postsyn_work_dir, "power")
+    os.makedirs(power_dir, exist_ok=True)
+
+    tag     = f"power/{proto}/{pdk}"
+    results = os.path.join(power_dir, "results.log")
+
+    # ── Pre-flight ────────────────────────────────────────────────────────
+    vpd_file = os.path.join(postsyn_work_dir, "vcdplus.vpd")
+    if not os.path.isfile(vpd_file):
+        msg = f"ERROR: {vpd_file} not found — run --postsyn first."
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    netlist_dir = os.path.join(
+        timer_path, "synthesis", "designcompiler", "netlists", pdk
+    )
+    netlist = os.path.join(netlist_dir, f"timer_{proto}.v")
+    if not os.path.isfile(netlist):
+        msg = f"ERROR: netlist not found at {netlist}"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    cfg      = POSTSYN_PDK_CONFIGS[pdk]
+    db_libs  = cfg.get("db_libs", [])
+    missing  = [f for f in db_libs if not os.path.isfile(f)]
+    if missing:
+        msg = "ERROR: liberty DB files not found:\n" + "\n".join(missing)
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # ── Generate SAIF from VPD ────────────────────────────────────────────
+    tb_top    = f"tb_timer_{proto}"
+    design    = f"timer_{proto}"
+    scope     = f"{tb_top}/u_dut"
+    saif_file = os.path.join(power_dir, "power.saif")
+
+    print(f"  [{tag}] Converting VPD → SAIF (scope={scope}) ...")
+    try:
+        cp = subprocess.run(
+            ["vcd2saif", "-input", vpd_file, "-output", saif_file,
+             "-scope", scope],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120,
+        )
+        if cp.returncode != 0:
+            msg = f"ERROR: vcd2saif failed:\n{cp.stdout}{cp.stderr}"
+            print(f"  [{tag}] {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+    except FileNotFoundError:
+        msg = "ERROR: vcd2saif not found — is Synopsys VCS MX in PATH?"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # ── Write PTPX Tcl script ─────────────────────────────────────────────
+    overall_rpt = os.path.join(power_dir, "power_overall.rpt")
+    cells_rpt   = os.path.join(power_dir, "power_top_cells.rpt")
+    nets_rpt    = os.path.join(power_dir, "power_top_nets.rpt")
+    tcl_script  = os.path.join(power_dir, "run_power.tcl")
+
+    db_str = " ".join(db_libs)
+    tcl_lines = [
+        "# PTPX power analysis — auto-generated by sim_timer.py",
+        "set_app_var power_enable_analysis true",
+        "set_app_var power_analysis_mode averaged",
+        "",
+        f"set target_library [list {db_str}]",
+        "set link_library [concat {*} $target_library]",
+        "",
+        f"read_verilog {netlist}",
+        f"current_design {design}",
+        "link_design",
+        "",
+        f"read_saif {saif_file} -scope {scope} -strip_path {scope}",
+        "",
+        "update_power",
+        "",
+        f"redirect {overall_rpt} {{ report_power -nosplit }}",
+        "",
+        "# Top 10 cells by total power",
+        "set cells [sort_collection -descending [get_cells -hierarchical *] total_power]",
+        "set ncells [sizeof_collection $cells]",
+        "if {$ncells > 10} { set ncells 10 }",
+        f"set fh [open {cells_rpt} w]",
+        'puts $fh [format "%-55s %12s %12s %12s %12s" \\',
+        '    Cell Internal(mW) Switching(mW) Leakage(nW) Total(mW)]',
+        "puts $fh [string repeat - 107]",
+        "for {set i 0} {$i < $ncells} {incr i} {",
+        "    set c  [index_collection $cells $i]",
+        "    set nm [get_object_name $c]",
+        "    set ip [get_attribute $c internal_power]",
+        "    set sp [get_attribute $c switching_power]",
+        "    set lp [get_attribute $c leakage_power]",
+        "    set tp [get_attribute $c total_power]",
+        '    puts $fh [format "%-55s %12.4f %12.4f %12.4f %12.4f" $nm $ip $sp $lp $tp]',
+        "}",
+        "close $fh",
+        "",
+        "# Top 10 nets by switching power",
+        "set nets [sort_collection -descending [get_nets -hierarchical *] net_switching_power]",
+        "set nnets [sizeof_collection $nets]",
+        "if {$nnets > 10} { set nnets 10 }",
+        f"set fh [open {nets_rpt} w]",
+        'puts $fh [format "%-65s %15s" Net Switching(mW)]',
+        "puts $fh [string repeat - 82]",
+        "for {set i 0} {$i < $nnets} {incr i} {",
+        "    set net [index_collection $nets $i]",
+        "    set nm  [get_object_name $net]",
+        "    set sp  [get_attribute $net net_switching_power]",
+        '    puts $fh [format "%-65s %15.4f" $nm $sp]',
+        "}",
+        "close $fh",
+        "",
+        "exit",
+    ]
+    with open(tcl_script, "w") as fh:
+        fh.write("\n".join(tcl_lines) + "\n")
+
+    # ── Run pt_shell ──────────────────────────────────────────────────────
+    pt_log = os.path.join(power_dir, "pt_shell.log")
+    print(f"  [{tag}] Running PrimePower (pt_shell) ...")
+    try:
+        cp = subprocess.run(
+            ["pt_shell", "-f", tcl_script],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=300, cwd=power_dir,
+        )
+        full_log = cp.stdout + cp.stderr
+    except FileNotFoundError:
+        msg = "ERROR: pt_shell not found — is Synopsys PrimeTime in PATH?"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    with open(pt_log, "w") as fh:
+        fh.write(full_log)
+
+    if cp.returncode != 0:
+        print(f"  [{tag}] pt_shell FAILED (see {pt_log})")
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    _print_power_report(tag, overall_rpt, cells_rpt, nets_rpt)
+    _write_result(results, "PASS", full_log)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1340,15 @@ def main() -> None:
         choices=SUPPORTED_PDKS + ["all"],
         default="all",
         help="PDK for post-synthesis simulation: saed90, saed32, saed14, or all "
-             "(default: %(default)s). Ignored unless --postsyn is given.",
+             "(default: %(default)s). Ignored unless --postsyn or --power is given.",
+    )
+    parser.add_argument(
+        "--power",
+        action="store_true",
+        default=False,
+        help="Run PrimePower (PTPX) power analysis after post-synthesis simulation. "
+             "Implies --postsyn. Reports overall power, top 10 worst cells, top 10 "
+             "worst nets. ecs-vdi only; requires pt_shell and SAED liberty DB files.",
     )
     args = parser.parse_args()
 
@@ -1190,11 +1405,11 @@ def main() -> None:
                 if not ok:
                     all_pass = False
 
-    # ── Post-synthesis simulation ─────────────────────────────────────────
-    if args.postsyn:
+    # ── Post-synthesis simulation (and optional power analysis) ───────────
+    if args.postsyn or args.power:
         if not ON_ECS_VDI:
-            print("WARNING: --postsyn is only supported on ecs-vdi.ecs.csun.edu "
-                  "(requires VCS and SAED PDK libraries). Skipping.")
+            print("WARNING: --postsyn/--power is only supported on ecs-vdi.ecs.csun.edu "
+                  "(requires VCS, SAED PDK libraries, and pt_shell). Skipping.")
         else:
             pdks = SUPPORTED_PDKS if args.pdk == "all" else [args.pdk]
             for pdk in pdks:
@@ -1205,6 +1420,14 @@ def main() -> None:
                     results_summary.append((label, "PASS" if ok else "FAIL"))
                     if not ok:
                         all_pass = False
+
+                    if args.power:
+                        pow_ok = run_power_analysis(proto, pdk, timer_path, work_dir)
+                        results_summary.append(
+                            (f"power/{proto}/{pdk}", "PASS" if pow_ok else "FAIL")
+                        )
+                        if not pow_ok:
+                            all_pass = False
 
     # Print summary
     GREEN = "\033[32m"

@@ -10,7 +10,7 @@ STATUS: PASS — synthesis completed successfully.
 ------------------------------------------------------------------------
 Synthesis Results
 ------------------------------------------------------------------------
-  Total cells  : 647
+  Total cells  : 648
   Flip-flops   : 191
 
 Per-variant area and timing reports:

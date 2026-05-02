@@ -288,6 +288,97 @@ deliverables exist before starting work.
 | 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8) |
 | 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, and Quartus |
 | 11 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag |
+| 12 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |
+
+---
+
+## Power Analysis (Step 12 — ecs-vdi only)
+
+Power analysis runs **after synthesis (Step 10)** and uses the gate-level netlist and SDF
+produced by Synopsys Design Compiler. It is an optional but important step for ASIC
+tape-out readiness and design optimization.
+
+### When to run
+
+Run power analysis when:
+- Synthesis (Step 10) has completed and DC netlists exist under
+  `synthesis/designcompiler/netlists/<pdk>/`
+- The design targets an ASIC PDK (SAED90, SAED32, or SAED14)
+- Power consumption is a design concern or a specification requirement
+- Identifying power hotspots to guide RTL optimization
+
+Do **not** run power analysis:
+- Before synthesis is complete (no netlist exists)
+- For FPGA targets (Vivado/Quartus) — power estimation is handled by those tools natively
+- On a host other than ecs-vdi (requires `pt_shell` and the SAED PDK liberty `.db` files)
+
+### How to run
+
+```bash
+source setup.sh
+cd verification/tools
+
+# All PDKs, all protocols
+python sim_IP_NAME.py --power
+
+# Specific PDK and protocol
+python sim_IP_NAME.py --power --pdk saed90 --proto apb
+python sim_IP_NAME.py --power --pdk saed32 --proto all
+```
+
+`--power` automatically implies `--postsyn` — the gate-level simulation runs first to
+capture switching activity, then PrimePower analyses power from the resulting waveform.
+
+### What it produces
+
+The flow for each `(proto, pdk)` pair:
+
+1. **Gate-level simulation** — VCS compiles and runs the SV testbench with the DC netlist
+   and SDF back-annotation, producing `vcdplus.vpd`
+2. **SAIF generation** — `vcd2saif` converts the VPD to a switching-activity file scoped
+   to the DUT instance (`tb_IP_NAME_{proto}/u_dut`)
+3. **PTPX analysis** — `pt_shell` reads the liberty DB, netlist, and SAIF, runs
+   `update_power`, and generates three reports
+
+Output files land in `verification/work/postsyn/<pdk>/<proto>/power/`:
+
+| File | Contents |
+|---|---|
+| `power.saif` | Switching activity extracted from simulation |
+| `run_power.tcl` | Auto-generated PTPX script (inspect for debug) |
+| `pt_shell.log` | Full pt_shell transcript |
+| `power_overall.rpt` | Total power broken down by power group |
+| `power_top_cells.rpt` | Top 10 instances ranked by total power |
+| `power_top_nets.rpt` | Top 10 nets ranked by switching power |
+
+The console summary prints overall power, top-10 worst cells, and top-10 worst nets
+immediately after the analysis completes.
+
+### Interpreting results
+
+- **Overall power**: the Total row of `power_overall.rpt` gives internal + switching +
+  leakage power in mW. Compare against the power budget in the specification.
+- **Top 10 worst cells** (`power_top_cells.rpt`): instances consuming the most power.
+  High internal power → combinational depth or glitching. High switching power → high
+  toggle rate or large fanout.
+- **Top 10 worst nets** (`power_top_nets.rpt`): nets with the highest switching power,
+  driven by toggle rate × capacitance. Long wires or high-fanout clock-enable nets
+  often appear here.
+
+### Prerequisites and troubleshooting
+
+| Problem | Likely cause | Fix |
+|---|---|---|
+| `pt_shell not found` | PrimeTime not in PATH | `source <synopsys_install>/pt/bin/pt_setup.sh` |
+| `liberty DB not found` | Wrong `db_libs` path in `POSTSYN_PDK_CONFIGS` | Update path in `sim_IP_NAME.py` |
+| `netlist not found` | Synthesis not run | Run Step 10 first (`synthesis/run_vendor_synth.py --dc`) |
+| `vcd2saif not found` | VCS not in PATH | `source setup.sh` or re-source the VCS environment |
+| `link_design failed` | Liberty/netlist mismatch | Verify PDK DB matches the cells in the netlist |
+
+### Agent file
+
+Full detail on the PTPX flow, liberty paths, and Tcl commands is in
+[.agents/power.md](.agents/power.md).
 
 ---
 
@@ -302,7 +393,9 @@ deliverables exist before starting work.
 | formal (5) | regression (7) | `verification/formal/results.log` |
 | uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
 | lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
+| synthesis (10) | power (12) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf}` |
 | All (2–9) | cleanup (11) | Full passing regression |
+| power (12) | cleanup (11) | `verification/work/postsyn/<pdk>/<proto>/power/power_*.rpt` |
 
 ---
 
