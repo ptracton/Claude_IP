@@ -12,7 +12,11 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
 - `cmake` 3.20+ is on `$PATH`.
 - Cross-compilers are on `$PATH` (added by `setup.sh` at the **end** of the file):
   - ARM Cortex-M33: `arm-none-eabi-gcc`
-  - RISC-V 32-bit:  `riscv-none-elf-gcc` (xPack, at `/opt/xpack-riscv-none-elf-gcc-*/bin`)
+    (standard hosts: system-installed via apt/brew; `*.csun.edu`: xPack at
+    `/tmp/pet43490/CrossCompilers/arm-gnu-toolchain-*-x86_64-arm-none-eabi/bin`)
+  - RISC-V 32-bit:  `riscv-none-elf-gcc`
+    (xPack; standard hosts: `/opt/xpack-riscv-none-elf-gcc-*/bin`; `*.csun.edu`:
+    `/tmp/pet43490/CrossCompilers/xpack-riscv-none-elf-gcc-*/bin`)
 
 ## Cross-Compilation Requirement (mandatory)
 

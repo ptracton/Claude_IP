@@ -37,15 +37,6 @@ export TIMER_SYNTHESIS_PATH="${CLAUDE_TIMER_PATH}/synthesis"
 export TIMER_DOC_PATH="${CLAUDE_TIMER_PATH}/doc"
 
 # ---------------------------------------------------------------------------
-# External tool paths (set as variables only — PATH updated at the END of
-# this file, after all sourced scripts, so nothing can overwrite our entries)
-# ---------------------------------------------------------------------------
-export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
-export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
-export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
-export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
-
-# ---------------------------------------------------------------------------
 # Host detection
 # ---------------------------------------------------------------------------
 _HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
@@ -53,6 +44,26 @@ if [[ "${_HOSTNAME}" == *.csun.edu ]]; then
     _ON_CSUN=1
 else
     _ON_CSUN=0
+fi
+
+# ---------------------------------------------------------------------------
+# External tool paths (set as variables only — PATH updated at the END of
+# this file, after all sourced scripts, so nothing can overwrite our entries)
+# ---------------------------------------------------------------------------
+export OSS_CAD_SUITE_PATH="/opt/oss-cad-suite"
+export QUARTUS_PATH="/opt/intelFPGA_lite/23.1std/quartus/bin"
+export MODELSIM_PATH="/opt/intelFPGA_pro/21.1/modelsim_ase/bin"
+
+# Cross-compiler toolchains (arm-none-eabi-gcc, riscv-none-elf-gcc).
+# On csun.edu both live under /tmp/pet43490/CrossCompilers instead of the
+# standard-host locations (xpack at /opt; ARM toolchain expected
+# system-installed via apt/brew and already on PATH there).
+if [ "${_ON_CSUN}" -eq 1 ]; then
+    export CROSS_COMPILERS_PATH="/tmp/pet43490/CrossCompilers"
+    export XPACK_RISCV_PATH="${CROSS_COMPILERS_PATH}/xpack-riscv-none-elf-gcc-15.2.0-1"
+    export ARM_TOOLCHAIN_PATH="${CROSS_COMPILERS_PATH}/arm-gnu-toolchain-15.3.rel1-x86_64-arm-none-eabi"
+else
+    export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
 fi
 
 # ---------------------------------------------------------------------------
@@ -84,12 +95,14 @@ fi
 
 # ---------------------------------------------------------------------------
 # PATH — updated last so these entries are never overwritten by sourced scripts
-# On csun.edu: no PATH changes needed — VCS and Xcelium are already on the
-#             system PATH; OSS CAD Suite, Quartus, ModelSim, and XPACK are
-#             not installed on that host.
+# On csun.edu: VCS and Xcelium are already on the system PATH; OSS CAD Suite,
+#             Quartus, and ModelSim are not installed on that host, but the
+#             cross-compiler toolchains are (from CROSS_COMPILERS_PATH above).
 # ---------------------------------------------------------------------------
 if [ "${_ON_CSUN}" -eq 0 ]; then
     export PATH="${XPACK_RISCV_PATH}/bin:${OSS_CAD_SUITE_PATH}/bin:${QUARTUS_PATH}:${MODELSIM_PATH}:${PATH}"
+else
+    export PATH="${XPACK_RISCV_PATH}/bin:${ARM_TOOLCHAIN_PATH}/bin:${PATH}"
 fi
 
 unset _HOSTNAME _ON_CSUN

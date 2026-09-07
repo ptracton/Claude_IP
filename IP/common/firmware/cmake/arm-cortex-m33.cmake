@@ -6,6 +6,9 @@
 # Requires: arm-none-eabi-gcc (e.g. GNU Arm Embedded Toolchain or arm-gnu-toolchain)
 # Install:  sudo apt install gcc-arm-none-eabi   (Debian/Ubuntu)
 #           brew install --cask gcc-arm-embedded  (macOS)
+# On *.csun.edu hosts, setup.sh instead puts
+# /tmp/pet43490/CrossCompilers/arm-gnu-toolchain-15.3.rel1-x86_64-arm-none-eabi/bin
+# on PATH — source it before running cmake.
 
 set(CMAKE_SYSTEM_NAME      Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)

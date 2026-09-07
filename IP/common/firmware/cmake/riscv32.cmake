@@ -4,7 +4,9 @@
 # Reference via ${IP_COMMON_PATH}/firmware/cmake/riscv32.cmake
 #
 # Requires: xPack RISC-V Embedded GCC (riscv-none-elf-gcc)
-# Location: /opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin
+# Location: /opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin (standard hosts) or
+#           /tmp/pet43490/CrossCompilers/xpack-riscv-none-elf-gcc-15.2.0-1/bin
+#           (*.csun.edu hosts)
 # Added to PATH by setup.sh — source it before running cmake.
 #
 # Architecture: rv32imac_zicsr  (integer + multiply + atomics + compressed + CSR)
