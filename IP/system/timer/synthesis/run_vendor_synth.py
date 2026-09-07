@@ -50,7 +50,27 @@ from typing import Optional
 
 # Host detection
 import socket
-ON_CSUN = socket.getfqdn().endswith(".csun.edu")
+
+
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
+
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
+    """
+    try:
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
+
+
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 
 SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
 SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
@@ -546,7 +566,7 @@ def main() -> None:
 
     synth_dir = get_synth_dir()
     print(f"Timer IP — Vendor Synthesis")
-    print(f"  Host      : {socket.getfqdn()}{' (csun.edu)' if ON_CSUN else ' (standard host)'}")
+    print(f"  Host      : {_hostname_fqdn()}{' (csun.edu)' if ON_CSUN else ' (standard host)'}")
     print(f"  Synth dir : {synth_dir}")
     print()
 

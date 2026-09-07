@@ -37,7 +37,25 @@ from pathlib import Path
 # Host detection
 # ---------------------------------------------------------------------------
 
-ON_CSUN = socket.getfqdn().endswith(".csun.edu")
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
+
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
+    """
+    try:
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
+
+
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 
 PROTOS = ["ahb", "axi", "wb"]
 

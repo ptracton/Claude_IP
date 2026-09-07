@@ -22,9 +22,29 @@ from typing import List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 import socket
+
+
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
+
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
+    """
+    try:
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
+
+
 # Any *.csun.edu host has the Synopsys toolchain (VCS, Xcelium, Design
 # Compiler, PrimePower) but not Vivado/Quartus/Yosys/Icarus/GHDL/ModelSim.
-ON_CSUN = socket.getfqdn().endswith(".csun.edu")
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 
 
 # ---------------------------------------------------------------------------

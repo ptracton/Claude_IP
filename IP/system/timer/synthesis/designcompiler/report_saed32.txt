@@ -2,7 +2,7 @@
 Design Compiler Synthesis Report — timer IP
 Target PDK    : SAED32 (32nm)
 Tool version  : Design Compiler (dc_shell)
-Run date      : 2026-04-25
+Run date      : 2026-09-07
 ========================================================================
 
 STATUS: PASS — synthesis completed successfully.
@@ -10,7 +10,7 @@ STATUS: PASS — synthesis completed successfully.
 ------------------------------------------------------------------------
 Synthesis Results
 ------------------------------------------------------------------------
-  Total cells  : 716
+  Total cells  : 717
   Flip-flops   : 191
 
 Per-variant area and timing reports:
