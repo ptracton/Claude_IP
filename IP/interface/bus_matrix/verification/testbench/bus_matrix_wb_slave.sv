@@ -37,17 +37,18 @@ module bus_matrix_wb_slave #(
 
   integer i;
 
-  initial begin
-    for (i = 0; i < MEM_DEPTH; i = i + 1) begin
-      mem[i] = {DATA_W{1'b0}};
-    end
-  end
-
+  // mem[] is zeroed synchronously on reset (rather than in a separate
+  // `initial` block) because a variable driven by always_ff must not be
+  // written by any other process — VCS enforces this (Error-ICPD) even
+  // though some other simulators tolerate it.
   always_ff @(posedge clk) begin : p_slave
     if (!rst_n) begin
       stb_prev_q <= 1'b0;
       ack_q      <= 1'b0;
       rdata_q    <= {DATA_W{1'b0}};
+      for (i = 0; i < MEM_DEPTH; i = i + 1) begin
+        mem[i] <= {DATA_W{1'b0}};
+      end
     end else begin
       stb_prev_q <= CYC & STB & ~stb_prev_q;
 

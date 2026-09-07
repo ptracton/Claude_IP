@@ -45,23 +45,25 @@ module bus_matrix_ahb_slave #(
 
   integer i;
 
-  // Initialize memory to zero at start of simulation
-  initial begin
-    for (i = 0; i < MEM_DEPTH; i = i + 1) begin
-      mem[i] = {DATA_W{1'b0}};
-    end
-  end
-
   // -------------------------------------------------------------------------
   // Write: single-cycle — capture address and data on same active cycle.
   // The bus_matrix slave-side adapter drives HWDATA (= mst_wdata = M_HWDATA)
   // combinatorially in the same cycle it asserts HSEL, so the write data is
   // valid when HSEL & HTRANS==NONSEQ & HREADY.
+  //
+  // mem[] is zeroed synchronously on reset (rather than in a separate
+  // `initial` block) because a variable driven by always_ff must not be
+  // written by any other process — VCS enforces this (Error-ICPD) even
+  // though some other simulators tolerate it.
   // -------------------------------------------------------------------------
   logic [$clog2(MEM_DEPTH)-1:0] wr_idx;
 
   always_ff @(posedge clk) begin : p_write
-    if (rst_n && HSEL && ((HTRANS == AHB_NONSEQ) || (HTRANS == AHB_SEQ))
+    if (!rst_n) begin
+      for (i = 0; i < MEM_DEPTH; i = i + 1) begin
+        mem[i] <= {DATA_W{1'b0}};
+      end
+    end else if (HSEL && ((HTRANS == AHB_NONSEQ) || (HTRANS == AHB_SEQ))
                && HWRITE && HREADY) begin
       wr_idx = HADDR[$clog2(MEM_DEPTH)+1:2];
       if (HWSTRB[0]) mem[wr_idx][7:0]   <= HWDATA[7:0];

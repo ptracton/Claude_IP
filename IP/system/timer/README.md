@@ -125,23 +125,49 @@ SC = self-clearing command bit (reads back as 0; write 1 to trigger one-cycle ac
 
 ## Simulation Results
 
-Directed simulation in SystemVerilog (Icarus Verilog) and VHDL-2008 (GHDL). All 8 combinations pass.
+Directed simulation in SystemVerilog and VHDL-2008 across four simulators. All 32
+combinations pass — Icarus Verilog and GHDL on standard hosts, Synopsys VCS MX and
+Cadence Xcelium on `*.csun.edu` hosts (Icarus/GHDL are not installed there; see
+[setup.sh](setup.sh) for host detection).
 
-| Variant   | Simulator           | Language | Tests                                   | Result |
-|-----------|---------------------|----------|-----------------------------------------|--------|
-| APB4      | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
-| AHB-Lite  | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
-| AXI4-Lite | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
-| Wishbone  | Icarus Verilog 12.0 | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
-| APB4      | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
-| AHB-Lite  | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
-| AXI4-Lite | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
-| Wishbone  | GHDL 3.0.0-dev      | VHDL     | reset, rw, timer_ops                    | PASS   |
+| Variant   | Simulator            | Language | Tests                                   | Result |
+|-----------|-----------------------|----------|-----------------------------------------|--------|
+| APB4      | Icarus Verilog 12.0   | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AHB-Lite  | Icarus Verilog 12.0   | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AXI4-Lite | Icarus Verilog 12.0   | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| Wishbone  | Icarus Verilog 12.0   | SV       | reset, rw, back2back, strobe, timer_ops | PASS   |
+| APB4      | GHDL 3.0.0-dev        | VHDL     | reset, rw, timer_ops                    | PASS   |
+| AHB-Lite  | GHDL 3.0.0-dev        | VHDL     | reset, rw, timer_ops                    | PASS   |
+| AXI4-Lite | GHDL 3.0.0-dev        | VHDL     | reset, rw, timer_ops                    | PASS   |
+| Wishbone  | GHDL 3.0.0-dev        | VHDL     | reset, rw, timer_ops                    | PASS   |
+| APB4      | Synopsys VCS Y-2026.03 | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AHB-Lite  | Synopsys VCS Y-2026.03 | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AXI4-Lite | Synopsys VCS Y-2026.03 | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| Wishbone  | Synopsys VCS Y-2026.03 | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| APB4      | Synopsys VCS Y-2026.03 | VHDL    | reset, rw, timer_ops                    | PASS   |
+| AHB-Lite  | Synopsys VCS Y-2026.03 | VHDL    | reset, rw, timer_ops                    | PASS   |
+| AXI4-Lite | Synopsys VCS Y-2026.03 | VHDL    | reset, rw, timer_ops                    | PASS   |
+| Wishbone  | Synopsys VCS Y-2026.03 | VHDL    | reset, rw, timer_ops                    | PASS   |
+| APB4      | Cadence Xcelium 25.03  | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AHB-Lite  | Cadence Xcelium 25.03  | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| AXI4-Lite | Cadence Xcelium 25.03  | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| Wishbone  | Cadence Xcelium 25.03  | SV      | reset, rw, back2back, strobe, timer_ops | PASS   |
+| APB4      | Cadence Xcelium 25.03  | VHDL    | reset, rw, timer_ops                    | PASS   |
+| AHB-Lite  | Cadence Xcelium 25.03  | VHDL    | reset, rw, timer_ops                    | PASS   |
+| AXI4-Lite | Cadence Xcelium 25.03  | VHDL    | reset, rw, timer_ops                    | PASS   |
+| Wishbone  | Cadence Xcelium 25.03  | VHDL    | reset, rw, timer_ops                    | PASS   |
 
-Results generated: 2026-03-19.
-See `verification/work/icarus/*/results.log` and `verification/work/ghdl/*/results.log` for full output.
+Icarus/GHDL results generated 2026-03-19 on a standard host. VCS/Xcelium results
+generated 2026-09-07 on a `*.csun.edu` host.
+See `verification/work/icarus/*/results.log`, `verification/work/ghdl/*/results.log`,
+`verification/work/vcs/*/results.log`, and `verification/work/xcelium/*/results.log`
+for full output. VCS dumps waveforms to `vcdplus.vpd`; Xcelium dumps to `waves.shm/`
+(both per-run-directory).
 
-Run all 8 simulations: `bash verification/tools/run_sims.sh`
+Run all 8 host-appropriate simulations (icarus+ghdl on standard hosts, vcs on
+`*.csun.edu`): `bash verification/tools/run_sims.sh`. For Xcelium, or to pick a
+specific simulator/protocol/language directly, use `sim_timer.py` — e.g.
+`python3 verification/tools/sim_timer.py --sim xcelium --proto all --lang all`.
 
 ## Interactive Simulation (GUI)
 

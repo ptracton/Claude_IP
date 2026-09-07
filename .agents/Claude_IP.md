@@ -292,7 +292,7 @@ deliverables exist before starting work.
 
 ---
 
-## Power Analysis (Step 12 — ecs-vdi only)
+## Power Analysis (Step 12 — csun.edu only)
 
 Power analysis runs **after synthesis (Step 10)** and uses the gate-level netlist and SDF
 produced by Synopsys Design Compiler. It is an optional but important step for ASIC
@@ -310,7 +310,7 @@ Run power analysis when:
 Do **not** run power analysis:
 - Before synthesis is complete (no netlist exists)
 - For FPGA targets (Vivado/Quartus) — power estimation is handled by those tools natively
-- On a host other than ecs-vdi (requires `pt_shell` and the SAED PDK liberty `.db` files)
+- On a host other than csun.edu (requires `pt_shell` and the SAED PDK liberty `.db` files)
 
 ### How to run
 

@@ -3,16 +3,64 @@
 #
 # Usage:  source IP/system/timer/setup.sh && bash run_sims.sh
 #
-# Runs Icarus Verilog for all 4 SV testbenches and GHDL for all 4 VHDL
-# testbenches.  Results are written to:
+# On standard hosts: runs Icarus Verilog for all 4 SV testbenches and GHDL
+# for all 4 VHDL testbenches directly.  Results are written to:
 #   verification/work/icarus/<proto>_sv/results.log
 #   verification/work/ghdl/<proto>_vhdl/results.log
+#
+# On *.csun.edu: Icarus and GHDL are not installed there, so this delegates
+# to sim_timer.py --sim vcs (the only supported flow on that host).  Results
+# are written to:
+#   verification/work/vcs/<proto>_sv/results.log
+#   verification/work/vcs/<proto>_vhdl/results.log
 
 set -e
 
 if [ -z "${CLAUDE_TIMER_PATH}" ]; then
   echo "ERROR: CLAUDE_TIMER_PATH is not set. Run: source setup.sh"
   exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# On *.csun.edu, delegate entirely to sim_timer.py's VCS flow — Icarus and
+# GHDL are not installed on that host.
+# ---------------------------------------------------------------------------
+_HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
+if [[ "${_HOSTNAME}" == *.csun.edu ]]; then
+  WORK="${CLAUDE_TIMER_PATH}/verification/work"
+  TOOLS="${CLAUDE_TIMER_PATH}/verification/tools"
+
+  echo "Detected *.csun.edu host — Icarus/GHDL are not available here."
+  echo "Running VCS for all protocols instead."
+  echo ""
+
+  ALL_PASS=1
+  python3 "${TOOLS}/sim_timer.py" --sim vcs --proto all --lang sv   || ALL_PASS=0
+  python3 "${TOOLS}/sim_timer.py" --sim vcs --proto all --lang vhdl || ALL_PASS=0
+
+  echo ""
+  echo "========================================"
+  echo "Simulation Summary"
+  echo "========================================"
+  for proto in ahb apb axi4l wb; do
+    result="${WORK}/vcs/${proto}_sv/results.log"
+    status=$(head -1 "${result}" 2>/dev/null || echo "MISSING")
+    printf "  vcs/%-11s %s\n" "${proto}_sv" "${status}"
+  done
+  for proto in ahb apb axi4l wb; do
+    result="${WORK}/vcs/${proto}_vhdl/results.log"
+    status=$(head -1 "${result}" 2>/dev/null || echo "MISSING")
+    printf "  vcs/%-11s %s\n" "${proto}_vhdl" "${status}"
+  done
+  echo "========================================"
+
+  if [ ${ALL_PASS} -eq 1 ]; then
+    echo "All simulations PASSED."
+    exit 0
+  else
+    echo "One or more simulations FAILED."
+    exit 1
+  fi
 fi
 
 IVERILOG="/opt/oss-cad-suite/bin/iverilog"

@@ -22,7 +22,9 @@ from typing import List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+# Any *.csun.edu host has the Synopsys toolchain (VCS, Xcelium, Design
+# Compiler, PrimePower) but not Vivado/Quartus/Yosys/Icarus/GHDL/ModelSim.
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 
 # ---------------------------------------------------------------------------

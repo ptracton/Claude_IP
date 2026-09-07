@@ -13,9 +13,9 @@ Step 3 complete (`design/rtl/verilog/` and `design/rtl/vhdl/` populated and pars
 - `verification/tools/sim_IP_NAME.py` skeleton exists from Step 1.
 - `IP_COMMON_PATH` is set (sourced from `setup.sh`).
 
-## Machine-Specific Environment: ecs-vdi.ecs.csun.edu
+## Machine-Specific Environment: *.csun.edu
 
-When the agent is running on the host `ecs-vdi.ecs.csun.edu`, the following tools are
+When the agent is running on the host `*.csun.edu`, the following tools are
 **not available** and must not be invoked:
 
 - Icarus Verilog (`iverilog` / `vvp`)
@@ -41,10 +41,10 @@ cross-validates the design against two independent simulator front-ends.
 
 ```python
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 ```
 
-When `ON_ECS_VDI` is `True`:
+When `ON_CSUN` is `True`:
 - Default `--sim` to `vcs,xcelium` (not `icarus,ghdl`).
 - Skip any Vivado and ModelSim output generation.
 - Do not generate or reference `.do` files or Tcl project scripts (those require tools that
@@ -240,7 +240,7 @@ all four testbenches through the appropriate BFM interface:
 
 - Accepts `--proto {ahb,apb,axi4l,wb,all}` and `--lang {sv,vhdl,all}`.
 - Accepts `--sim {icarus,ghdl,modelsim,vcs,xcelium,all}`.
-- Detects `ON_ECS_VDI` at startup (see **Machine-Specific Environment** above); when true,
+- Detects `ON_CSUN` at startup (see **Machine-Specific Environment** above); when true,
   rejects `icarus`, `ghdl`, `modelsim`, and `vivado` with a clear error message.
 - Builds the correct file list for the selected simulator, DUT top-level, and language.
 - No compile-time defines for protocol — the testbench file selects the DUT.
@@ -280,7 +280,7 @@ except subprocess.TimeoutExpired:
     proc.kill(); proc.wait()
 ```
 
-**Synopsys VCS MX (SV and VHDL — ecs-vdi only)**
+**Synopsys VCS MX (SV and VHDL — csun.edu only)**
 
 VCS MX does NOT use the same flow for SV and VHDL. `subprocess.run()` is safe for all
 steps — VCS does not hang on stdin **except for the VHDL simulate step** (see below).
@@ -357,7 +357,7 @@ def run_vcs_vhdl(proto, vhd_files, work_dir, log_path):
 ```
 
 Key VCS MX flags summary:
-- `-full64` — 64-bit mode (required on ecs-vdi).
+- `-full64` — 64-bit mode (required on csun.edu).
 - `-sverilog` — enable SystemVerilog parsing (SV only).
 - `-timescale=1ns/1ps` — default timescale for files that lack `` `timescale ``; VCS
   requires all modules in a compile unit to agree on timescale when any one specifies it.
@@ -369,7 +369,7 @@ Key VCS MX flags summary:
 - `stdin=subprocess.DEVNULL` on `./simv` — without this, VHDL simulation hangs waiting
   for the UCLI interactive prompt.
 
-**Cadence Xcelium (SV and VHDL — ecs-vdi only)**
+**Cadence Xcelium (SV and VHDL — csun.edu only)**
 
 Xcelium also uses different flows for SV and VHDL. For SV, `xrun` (single step) works.
 For VHDL, `xrun` does **not** expose the VHDL-2008 flag needed by the design, so the
@@ -477,7 +477,7 @@ display_log = "\n".join(
 ```
 
 Key Xcelium flags summary:
-- `-64` — 64-bit mode (required on ecs-vdi).
+- `-64` — 64-bit mode (required on csun.edu).
 - `-access +rwc` — full read/write/connect access (avoid access errors on shared variables).
 - `-timescale 1ns/1ps` — default timescale for SV files lacking `` `timescale `` (xrun only).
 - `-log <path>` — xrun/xmsim write their log file here; read it for PASS/FAIL detection.
@@ -722,7 +722,7 @@ Always add an **Interactive Simulation (GUI)** section to the IP `README.md` doc
 
 ### 6. Run and verify
 
-**Standard environment** (any host other than `ecs-vdi.ecs.csun.edu`):
+**Standard environment** (any host other than `*.csun.edu`):
 
 Run Icarus Verilog (SV) and GHDL (VHDL) for all four protocols. All eight combinations
 must produce `PASS` before marking this step complete:
@@ -738,7 +738,7 @@ verification/work/ghdl/axi4l_vhdl/results.log  → PASS
 verification/work/ghdl/wb_vhdl/results.log     → PASS
 ```
 
-**ecs-vdi.ecs.csun.edu environment**:
+**`*.csun.edu` environment**:
 
 Run both Synopsys VCS MX and Cadence Xcelium for all four protocols and both languages.
 All sixteen combinations must produce `PASS` before marking this step complete:
@@ -762,9 +762,9 @@ verification/work/xcelium/axi4l_vhdl/results.log → PASS
 verification/work/xcelium/wb_vhdl/results.log    → PASS
 ```
 
-On ecs-vdi, do **not** invoke `sim_IP_NAME.py --sim icarus`, `--sim ghdl`, or
+On csun.edu, do **not** invoke `sim_IP_NAME.py --sim icarus`, `--sim ghdl`, or
 `--sim modelsim` — those simulators are not installed and the script must reject them
-with a descriptive error message when `ON_ECS_VDI` is `True`.
+with a descriptive error message when `ON_CSUN` is `True`.
 
 ### 7. Update `README.md`
 
@@ -802,7 +802,7 @@ Include the simulator versions and the date the results were generated.
 | `verification/tasks/tasks_<proto>.sv` | Reusable SV BFM task library (if not in common) |
 | `verification/tests/test_*.sv` | Directed SV test files |
 | `verification/tools/sim_IP_NAME.py` | Completed simulation runner |
-| `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination (icarus/ghdl on standard hosts; vcs/xcelium on ecs-vdi) |
+| `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination (icarus/ghdl on standard hosts; vcs/xcelium on csun.edu) |
 | `verification/modelsim/tb_IP_NAME_<proto>.do` | ModelSim GUI compile+sim script (4 files) |
 | `verification/modelsim/tb_IP_NAME_<proto>_wave.do` | ModelSim waveform config (4 files) |
 | `verification/vivado/create_project_<proto>.tcl` | Vivado project creation script (4 files) |
@@ -812,11 +812,11 @@ Include the simulator versions and the date the results were generated.
 
 - **Standard hosts**: all eight `results.log` files (4 protocols × 2 languages, icarus + ghdl)
   contain `PASS`.
-- **ecs-vdi.ecs.csun.edu**: all sixteen `results.log` files (4 protocols × 2 languages × 2
+- **`*.csun.edu`**: all sixteen `results.log` files (4 protocols × 2 languages × 2
   simulators: vcs + xcelium) contain `PASS`.
 - `sim_IP_NAME.py --proto all --lang all` exits non-zero when a deliberate assertion
   failure is injected into any testbench.
-- On ecs-vdi, `sim_IP_NAME.py --sim icarus` (or `--sim ghdl` or `--sim modelsim`) prints a
+- On csun.edu, `sim_IP_NAME.py --sim icarus` (or `--sim ghdl` or `--sim modelsim`) prints a
   clear error and exits non-zero without attempting to invoke the unavailable tool.
 - No testbench or task code resides in `design/rtl/`.
 - No compile-time DUT-selection defines in any testbench — DUT is named explicitly.

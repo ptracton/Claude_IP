@@ -35,7 +35,7 @@ python sim_timer.py --power --proto apb   # APB only
 | `power_top_cells.rpt` | Top 10 instances sorted by total power |
 | `power_top_nets.rpt` | Top 10 nets sorted by switching power |
 
-## Liberty DB file paths on ecs-vdi (verified)
+## Liberty DB file paths on csun.edu (verified)
 
 - **SAED90**: `.../Digital_Standard_cell_Library/synopsys/models/saed90nm_typ.db`
 - **SAED32**: `.../lib/stdcell_rvt/db_nldm/saed32rvt_tt1p05v25c.db`

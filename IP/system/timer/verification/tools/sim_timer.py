@@ -4,7 +4,7 @@
 Supports Icarus Verilog (SV), GHDL (VHDL), ModelSim/Questa, Vivado xsim,
 Synopsys VCS MX (SV+VHDL), and Cadence Xcelium (SV+VHDL).
 
-On ecs-vdi.ecs.csun.edu only VCS and Xcelium are available; Icarus, GHDL,
+On *.csun.edu only VCS and Xcelium are available; Icarus, GHDL,
 ModelSim, and xsim are rejected with a clear error on that host.
 
 Results are written to:
@@ -16,7 +16,7 @@ Usage examples:
     python3 sim_timer.py --sim vcs      --proto all --lang all
     python3 sim_timer.py --sim xcelium  --proto all --lang all
     python3 sim_timer.py --proto all --lang all   (runs icarus+ghdl on standard hosts;
-                                                   vcs+xcelium on ecs-vdi)
+                                                   vcs+xcelium on csun.edu)
 """
 
 import argparse
@@ -28,10 +28,10 @@ import sys
 # ---------------------------------------------------------------------------
 # Host detection
 # ---------------------------------------------------------------------------
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
-# Simulators that are not available on ecs-vdi
-_ECS_VDI_BLOCKED = {"icarus", "ghdl", "modelsim", "xsim"}
+# Simulators that are not available on csun.edu
+_CSUN_BLOCKED = {"icarus", "ghdl", "modelsim", "xsim"}
 
 # ---------------------------------------------------------------------------
 # Environment guard
@@ -706,7 +706,7 @@ def run_xsim(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# VCS MX runner (ecs-vdi only)
+# VCS MX runner (csun.edu only)
 # ---------------------------------------------------------------------------
 
 def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
@@ -828,7 +828,7 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Post-synthesis VCS runner (ecs-vdi only — requires DC netlists + SAED libs)
+# Post-synthesis VCS runner (csun.edu only — requires DC netlists + SAED libs)
 # ---------------------------------------------------------------------------
 
 def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> bool:
@@ -954,7 +954,7 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
 
 
 # ---------------------------------------------------------------------------
-# PrimePower (PTPX) power analysis (ecs-vdi only — requires pt_shell + SAED DB)
+# PrimePower (PTPX) power analysis (csun.edu only — requires pt_shell + SAED DB)
 # ---------------------------------------------------------------------------
 
 def _print_power_report(tag: str, overall_rpt: str, cells_rpt: str, nets_rpt: str) -> None:
@@ -1146,7 +1146,7 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
 
 
 # ---------------------------------------------------------------------------
-# Xcelium runner (ecs-vdi only)
+# Xcelium runner (csun.edu only)
 # ---------------------------------------------------------------------------
 
 def run_xcelium(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
@@ -1255,7 +1255,13 @@ def run_xcelium(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
             return False
 
         # Step 3: xmsim — simulate
-        sim_cmd = ["xmsim", "-64", "-log", log_path, tb_top]
+        # VHDL has no PLI hook like SV's $shm_open/$shm_probe, so the SHM
+        # waveform database is opened via an inline xmsim command script
+        # instead (dumped to waves.shm/ in the sim work directory).
+        shm_cmd = ("@database -open waves -shm -default; "
+                   "probe -database waves -create / -all -depth all; "
+                   "run; exit")
+        sim_cmd = ["xmsim", "-64", "-log", log_path, "-input", shm_cmd, tb_top]
         print(f"  [xcelium/{proto}_{lang}] Simulating (xmsim) ...")
         try:
             out, rc = _run(sim_cmd, "xmsim", timeout=120)
@@ -1307,9 +1313,9 @@ def main() -> None:
         "--sim",
         choices=["icarus", "ghdl", "modelsim", "xsim", "vcs", "xcelium", "all"],
         default=None,
-        help="Simulator to use. On ecs-vdi.ecs.csun.edu only vcs and xcelium are "
+        help="Simulator to use. On *.csun.edu only vcs and xcelium are "
              "available. 'all' selects icarus+ghdl on standard hosts and "
-             "vcs+xcelium on ecs-vdi. (default: icarus on standard hosts, vcs on ecs-vdi)",
+             "vcs+xcelium on csun.edu. (default: icarus on standard hosts, vcs on csun.edu)",
     )
     parser.add_argument(
         "--proto",
@@ -1333,7 +1339,7 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Run post-synthesis simulation using DC gate-level netlists and SDF "
-             "back-annotation (ecs-vdi only, VCS only). Use --pdk to select the PDK.",
+             "back-annotation (csun.edu only, VCS only). Use --pdk to select the PDK.",
     )
     parser.add_argument(
         "--pdk",
@@ -1348,17 +1354,17 @@ def main() -> None:
         default=False,
         help="Run PrimePower (PTPX) power analysis after post-synthesis simulation. "
              "Implies --postsyn. Reports overall power, top 10 worst cells, top 10 "
-             "worst nets. ecs-vdi only; requires pt_shell and SAED liberty DB files.",
+             "worst nets. csun.edu only; requires pt_shell and SAED liberty DB files.",
     )
     args = parser.parse_args()
 
-    # Apply ecs-vdi restrictions before expanding 'all'
+    # Apply csun.edu restrictions before expanding 'all'
     sim_arg = args.sim
     if sim_arg is None:
-        sim_arg = "vcs" if ON_ECS_VDI else "icarus"
+        sim_arg = "vcs" if ON_CSUN else "icarus"
 
-    if ON_ECS_VDI and sim_arg in _ECS_VDI_BLOCKED:
-        print(f"ERROR: --sim {sim_arg} is not available on ecs-vdi.ecs.csun.edu.")
+    if ON_CSUN and sim_arg in _CSUN_BLOCKED:
+        print(f"ERROR: --sim {sim_arg} is not available on *.csun.edu.")
         print("       Use --sim vcs or --sim xcelium on this host.")
         sys.exit(1)
 
@@ -1366,7 +1372,7 @@ def main() -> None:
     protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
     langs  = SUPPORTED_LANGS  if args.lang  == "all" else [args.lang]
     if sim_arg == "all":
-        sims = ["vcs", "xcelium"] if ON_ECS_VDI else ["icarus", "ghdl", "modelsim", "xsim"]
+        sims = ["vcs", "xcelium"] if ON_CSUN else ["icarus", "ghdl", "modelsim", "xsim"]
     else:
         sims = [sim_arg]
 
@@ -1407,8 +1413,8 @@ def main() -> None:
 
     # ── Post-synthesis simulation (and optional power analysis) ───────────
     if args.postsyn or args.power:
-        if not ON_ECS_VDI:
-            print("WARNING: --postsyn/--power is only supported on ecs-vdi.ecs.csun.edu "
+        if not ON_CSUN:
+            print("WARNING: --postsyn/--power is only supported on *.csun.edu "
                   "(requires VCS, SAED PDK libraries, and pt_shell). Skipping.")
         else:
             pdks = SUPPORTED_PDKS if args.pdk == "all" else [args.pdk]

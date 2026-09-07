@@ -86,22 +86,42 @@ The IP contains no register file. Its interfaces consist entirely of flattened a
 
 ## Simulation Results
 
-| Simulator | Language | Protocol  | Result |
-|-----------|----------|-----------|--------|
-| Icarus    | SV       | AHB-Lite  | PASS   |
-| Icarus    | SV       | AXI4-Lite | PASS   |
-| Icarus    | SV       | Wishbone  | PASS   |
-| GHDL      | VHDL     | AHB-Lite  | PASS   |
-| GHDL      | VHDL     | AXI4-Lite | PASS   |
-| GHDL      | VHDL     | Wishbone  | PASS   |
-| ModelSim  | SV       | AHB-Lite  | PASS   |
-| ModelSim  | SV       | AXI4-Lite | PASS   |
-| ModelSim  | SV       | Wishbone  | PASS   |
-| xsim      | SV       | AHB-Lite  | PASS   |
-| xsim      | SV       | AXI4-Lite | PASS   |
-| xsim      | SV       | Wishbone  | PASS   |
+Icarus, GHDL, ModelSim, and xsim run on standard hosts; Synopsys VCS MX and
+Cadence Xcelium run on `*.csun.edu` hosts, where the other four are not
+installed (see [setup.sh](setup.sh) for host detection).
 
-Generated 2026-04-05 by `sim_bus_matrix.py` and `run_regression.py`.
+| Simulator          | Language | Protocol  | Result |
+|--------------------|----------|-----------|--------|
+| Icarus             | SV       | AHB-Lite  | PASS   |
+| Icarus             | SV       | AXI4-Lite | PASS   |
+| Icarus             | SV       | Wishbone  | PASS   |
+| GHDL               | VHDL     | AHB-Lite  | PASS   |
+| GHDL               | VHDL     | AXI4-Lite | PASS   |
+| GHDL               | VHDL     | Wishbone  | PASS   |
+| ModelSim           | SV       | AHB-Lite  | PASS   |
+| ModelSim           | SV       | AXI4-Lite | PASS   |
+| ModelSim           | SV       | Wishbone  | PASS   |
+| xsim               | SV       | AHB-Lite  | PASS   |
+| xsim               | SV       | AXI4-Lite | PASS   |
+| xsim               | SV       | Wishbone  | PASS   |
+| Synopsys VCS Y-2026.03  | SV       | AHB-Lite  | PASS   |
+| Synopsys VCS Y-2026.03  | SV       | AXI4-Lite | PASS   |
+| Synopsys VCS Y-2026.03  | SV       | Wishbone  | PASS   |
+| Synopsys VCS Y-2026.03  | VHDL     | AHB-Lite  | PASS   |
+| Synopsys VCS Y-2026.03  | VHDL     | AXI4-Lite | PASS   |
+| Synopsys VCS Y-2026.03  | VHDL     | Wishbone  | PASS   |
+| Cadence Xcelium 25.03   | SV       | AHB-Lite  | PASS   |
+| Cadence Xcelium 25.03   | SV       | AXI4-Lite | PASS   |
+| Cadence Xcelium 25.03   | SV       | Wishbone  | PASS   |
+| Cadence Xcelium 25.03   | VHDL     | AHB-Lite  | PASS   |
+| Cadence Xcelium 25.03   | VHDL     | AXI4-Lite | PASS   |
+| Cadence Xcelium 25.03   | VHDL     | Wishbone  | PASS   |
+
+Icarus/GHDL/ModelSim/xsim results generated 2026-04-05 on a standard host by
+`sim_bus_matrix.py` and `run_regression.py`. VCS/Xcelium results generated
+2026-09-07 on a `*.csun.edu` host by the same scripts. VCS dumps waveforms to
+`vcdplus.vpd`; Xcelium dumps to `waves.shm/` (both per-run-directory under
+`verification/work/<sim>/<proto>_<lang>/`).
 
 ## Formal Verification Results
 

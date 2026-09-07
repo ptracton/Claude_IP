@@ -155,6 +155,25 @@ module tb_bus_matrix_wb;
   `include "test_bus_matrix_ops.sv"
 
   // -------------------------------------------------------------------------
+  // Waveform dump
+  // -------------------------------------------------------------------------
+  // $vcdpluson is a VCS-only PLI task; Xcelium's xrun aborts if it is
+  // referenced without being registered, so it must be excluded from any
+  // non-VCS compile.  VCS predefines the `VCS macro automatically.
+`ifdef VCS
+  initial $vcdpluson(0, tb_bus_matrix_wb);
+`endif
+
+  // Xcelium: $shm_open/$shm_probe write a SimVision waveform database to
+  // waves.shm/ in the sim work directory.  INCA is predefined by xrun.
+`ifdef INCA
+  initial begin
+    $shm_open("waves.shm");
+    $shm_probe(tb_bus_matrix_wb, "AS");
+  end
+`endif
+
+  // -------------------------------------------------------------------------
   // Stimulus
   // -------------------------------------------------------------------------
   initial begin

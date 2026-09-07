@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Host detection
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 
 def get_timer_path() -> str:
@@ -98,7 +98,7 @@ def collect_results(timer_path: str) -> list:
     entries = []
 
     # Determine which simulators to collect based on host
-    if ON_ECS_VDI:
+    if ON_CSUN:
         expected_sims = {"vcs", "xcelium"}
     else:
         expected_sims = {"icarus", "ghdl", "modelsim", "xsim"}
@@ -133,7 +133,7 @@ def collect_results(timer_path: str) -> list:
             entries.append((f"formal/{proto_dir.name}", status))
 
     # UVM results: work/xsim/uvm/results.log — single entry per test run (only on standard hosts)
-    if not ON_ECS_VDI:
+    if not ON_CSUN:
         uvm_work = work / "xsim" / "uvm"
         if uvm_work.exists():
             rlog = uvm_work / "results.log"
@@ -163,8 +163,8 @@ def main():
     # 1. Simulation
     # ------------------------------------------------------------------ #
     if not args.skip_sim:
-        if ON_ECS_VDI:
-            # On ecs-vdi, only VCS and Xcelium are available
+        if ON_CSUN:
+            # On csun.edu, only VCS and Xcelium are available
             run_step(
                 "VCS SV simulation (all protocols)",
                 [sys.executable,
@@ -207,7 +207,7 @@ def main():
     # ------------------------------------------------------------------ #
     # 1b. ModelSim directed simulation (SV + VHDL) - only on standard hosts
     # ------------------------------------------------------------------ #
-    if not args.skip_modelsim and not ON_ECS_VDI:
+    if not args.skip_modelsim and not ON_CSUN:
         run_step(
             "ModelSim SV simulation (all protocols)",
             [sys.executable,
@@ -224,7 +224,7 @@ def main():
     # ------------------------------------------------------------------ #
     # 1c. Vivado xsim directed simulation (SV + VHDL) - only on standard hosts
     # ------------------------------------------------------------------ #
-    if not args.skip_xsim and not ON_ECS_VDI:
+    if not args.skip_xsim and not ON_CSUN:
         run_step(
             "Vivado xsim SV simulation (all protocols)",
             [sys.executable,
@@ -241,7 +241,7 @@ def main():
     # ------------------------------------------------------------------ #
     # 1d. UVM simulation (Vivado xsim) - only on standard hosts
     # ------------------------------------------------------------------ #
-    if not args.skip_uvm and not ON_ECS_VDI:
+    if not args.skip_uvm and not ON_CSUN:
         run_step(
             "UVM simulation — timer_base_test (Vivado xsim)",
             [sys.executable,

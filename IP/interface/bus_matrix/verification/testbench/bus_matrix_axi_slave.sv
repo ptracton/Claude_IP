@@ -58,16 +58,15 @@ module bus_matrix_axi_slave #(
 
   integer i;
 
-  initial begin
-    for (i = 0; i < MEM_DEPTH; i = i + 1) begin
-      mem[i] = {DATA_W{1'b0}};
-    end
-  end
-
   logic [$clog2(MEM_DEPTH)-1:0] wr_idx;
   logic [$clog2(MEM_DEPTH)-1:0] rd_idx;
 
   // Write path
+  //
+  // mem[] is zeroed synchronously on reset (rather than in a separate
+  // `initial` block) because a variable driven by always_ff must not be
+  // written by any other process — VCS enforces this (Error-ICPD) even
+  // though some other simulators tolerate it.
   always_ff @(posedge clk) begin : p_write
     if (!rst_n) begin
       aw_captured_q <= 1'b0;
@@ -76,6 +75,9 @@ module bus_matrix_axi_slave #(
       w_data_q      <= {DATA_W{1'b0}};
       w_strb_q      <= {(DATA_W/8){1'b0}};
       bvalid_q      <= 1'b0;
+      for (i = 0; i < MEM_DEPTH; i = i + 1) begin
+        mem[i] <= {DATA_W{1'b0}};
+      end
     end else begin
       if (AWVALID && AWREADY) begin
         aw_captured_q <= 1'b1;

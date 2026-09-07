@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """run_regression.py — Full bus_matrix verification regression suite.
 
-Runs directed sims (Icarus, GHDL, xsim, ModelSim), formal, UVM, and lint
-in order, collects results, writes verification/work/regression_results.log.
+Runs directed sims (Icarus, GHDL, xsim, ModelSim, VCS, Xcelium), formal,
+UVM, and lint in order, collects results, writes
+verification/work/regression_results.log.  VCS and Xcelium steps run only
+when those tools are found on PATH (i.e. on *.csun.edu hosts); Icarus,
+GHDL, xsim, and ModelSim are skipped there the same way.
 
 Usage:
     source IP/interface/bus_matrix/setup.sh
@@ -242,6 +245,60 @@ def main():
         # Register as SKIP so they appear in the table
         for proto in protos:
             entries.append((f"sim/xsim/{proto}_vhdl", "SKIP"))
+
+    # -----------------------------------------------------------------------
+    # 5b. VCS MX directed tests (SV + VHDL — csun.edu only)
+    # -----------------------------------------------------------------------
+    if not args.skip_sim:
+        print("\n=== VCS MX Directed Tests ===")
+        if tool_installed("vcs"):
+            for lang in ("sv", "vhdl"):
+                rc, out = run_script(
+                    [sys.executable, sim_script, "--sim", "vcs", "--proto", "all", "--lang", lang],
+                    timeout=600,
+                )
+                for proto in protos:
+                    run_dir = os.path.join(work_dir, "vcs", f"{proto}_{lang}")
+                    sim_log = os.path.join(run_dir, "sim.log")
+                    per_test = parse_per_test_results(sim_log, proto)
+                    if per_test:
+                        for test_name, status in per_test:
+                            entries.append((f"sim/vcs/{proto}_{lang}/{test_name}", status))
+                    else:
+                        result_log = os.path.join(run_dir, "results.log")
+                        status = read_result_log(result_log)
+                        entries.append((f"sim/vcs/{proto}_{lang}", status))
+        else:
+            for lang in ("sv", "vhdl"):
+                for proto in protos:
+                    entries.append((f"sim/vcs/{proto}_{lang}", "SKIP"))
+
+    # -----------------------------------------------------------------------
+    # 5c. Xcelium directed tests (SV + VHDL — csun.edu only)
+    # -----------------------------------------------------------------------
+    if not args.skip_sim:
+        print("\n=== Xcelium Directed Tests ===")
+        if tool_installed("xrun"):
+            for lang in ("sv", "vhdl"):
+                rc, out = run_script(
+                    [sys.executable, sim_script, "--sim", "xcelium", "--proto", "all", "--lang", lang],
+                    timeout=600,
+                )
+                for proto in protos:
+                    run_dir = os.path.join(work_dir, "xcelium", f"{proto}_{lang}")
+                    sim_log = os.path.join(run_dir, "sim.log")
+                    per_test = parse_per_test_results(sim_log, proto)
+                    if per_test:
+                        for test_name, status in per_test:
+                            entries.append((f"sim/xcelium/{proto}_{lang}/{test_name}", status))
+                    else:
+                        result_log = os.path.join(run_dir, "results.log")
+                        status = read_result_log(result_log)
+                        entries.append((f"sim/xcelium/{proto}_{lang}", status))
+        else:
+            for lang in ("sv", "vhdl"):
+                for proto in protos:
+                    entries.append((f"sim/xcelium/{proto}_{lang}", "SKIP"))
 
     # -----------------------------------------------------------------------
     # 6. UVM tests (separate script, NOT a flag on sim)

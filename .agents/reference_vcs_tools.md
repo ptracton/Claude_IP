@@ -1,6 +1,6 @@
 ---
 name: VCS waveform viewer command
-description: How to launch the VCS/DVE waveform GUI on ecs-vdi
+description: How to launch the VCS/DVE waveform GUI on csun.edu
 type: reference
 ---
 

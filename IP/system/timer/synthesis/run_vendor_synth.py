@@ -3,22 +3,22 @@
 
 Automatically detects the host environment and runs appropriate tools:
   - On standard hosts: Vivado, Quartus, and Yosys
-  - On ecs-vdi.ecs.csun.edu: Design Compiler with both 90nm and 32nm PDKs
+  - On *.csun.edu: Design Compiler with both 90nm and 32nm PDKs
 
 Usage:
     python3 synthesis/run_vendor_synth.py            # run appropriate tools for host
     python3 synthesis/run_vendor_synth.py --vivado   # Vivado only (standard hosts)
     python3 synthesis/run_vendor_synth.py --quartus  # Quartus only (standard hosts)
-    python3 synthesis/run_vendor_synth.py --dc       # Design Compiler all PDKs (ecs-vdi)
-    python3 synthesis/run_vendor_synth.py --dc90     # Design Compiler 90nm only (ecs-vdi)
-    python3 synthesis/run_vendor_synth.py --dc32     # Design Compiler 32nm only (ecs-vdi)
-    python3 synthesis/run_vendor_synth.py --dc14     # Design Compiler 14nm only (ecs-vdi)
+    python3 synthesis/run_vendor_synth.py --dc       # Design Compiler all PDKs (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc90     # Design Compiler 90nm only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc32     # Design Compiler 32nm only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc14     # Design Compiler 14nm only (csun.edu)
     python3 synthesis/run_vendor_synth.py --clean    # clean all tool outputs
 
 Requirements:
     - CLAUDE_TIMER_PATH set (source timer/setup.sh)
     - On standard hosts: vivado, quartus_sh on PATH
-    - On ecs-vdi: dc_shell on PATH
+    - On csun.edu: dc_shell on PATH
         90nm PDK at /opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm
         32nm PDK at /opt/ECE_Lib/SAED32_EDK
         14nm PDK at /opt/ECE_Lib/SAED14nm_EDK_03_2025
@@ -27,9 +27,9 @@ Outputs:
     synthesis/vivado/report.txt                      — Vivado summary (standard hosts only)
     synthesis/quartus/report.txt                     — Quartus summary (standard hosts only)
     synthesis/yosys/work/synthesis_report.log        — Yosys summary (standard hosts only)
-    synthesis/designcompiler/dc_saed90_run.log       — DC 90nm full log (ecs-vdi only)
-    synthesis/designcompiler/dc_saed32_run.log       — DC 32nm full log (ecs-vdi only)
-    synthesis/designcompiler/dc_saed14_run.log       — DC 14nm full log (ecs-vdi only)
+    synthesis/designcompiler/dc_saed90_run.log       — DC 90nm full log (csun.edu only)
+    synthesis/designcompiler/dc_saed32_run.log       — DC 32nm full log (csun.edu only)
+    synthesis/designcompiler/dc_saed14_run.log       — DC 14nm full log (csun.edu only)
     synthesis/designcompiler/reports/saed90/         — DC 90nm per-variant reports
     synthesis/designcompiler/reports/saed32/         — DC 32nm per-variant reports
     synthesis/designcompiler/reports/saed14/         — DC 14nm per-variant reports
@@ -50,7 +50,7 @@ from typing import Optional
 
 # Host detection
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
 SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
@@ -537,26 +537,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run synthesis for timer IP (host-aware)")
     parser.add_argument("--vivado",  action="store_true", help="Vivado only (standard hosts)")
     parser.add_argument("--quartus", action="store_true", help="Quartus only (standard hosts)")
-    parser.add_argument("--dc",      action="store_true", help="Design Compiler all PDKs (ecs-vdi)")
-    parser.add_argument("--dc90",    action="store_true", help="Design Compiler 90nm only (ecs-vdi)")
-    parser.add_argument("--dc32",    action="store_true", help="Design Compiler 32nm only (ecs-vdi)")
-    parser.add_argument("--dc14",    action="store_true", help="Design Compiler 14nm only (ecs-vdi)")
+    parser.add_argument("--dc",      action="store_true", help="Design Compiler all PDKs (csun.edu)")
+    parser.add_argument("--dc90",    action="store_true", help="Design Compiler 90nm only (csun.edu)")
+    parser.add_argument("--dc32",    action="store_true", help="Design Compiler 32nm only (csun.edu)")
+    parser.add_argument("--dc14",    action="store_true", help="Design Compiler 14nm only (csun.edu)")
     parser.add_argument("--clean",   action="store_true", help="Remove outputs instead of running synthesis")
     args = parser.parse_args()
 
     synth_dir = get_synth_dir()
     print(f"Timer IP — Vendor Synthesis")
-    print(f"  Host      : {'ecs-vdi.ecs.csun.edu' if ON_ECS_VDI else 'standard host'}")
+    print(f"  Host      : {socket.getfqdn()}{' (csun.edu)' if ON_CSUN else ' (standard host)'}")
     print(f"  Synth dir : {synth_dir}")
     print()
 
     dc_flags_requested = args.dc or args.dc90 or args.dc32 or args.dc14
 
-    if ON_ECS_VDI:
+    if ON_CSUN:
         if args.vivado or args.quartus:
-            print("ERROR: Vivado and Quartus not available on ecs-vdi.")
+            print("ERROR: Vivado and Quartus not available on csun.edu.")
             sys.exit(1)
-        # Default on ecs-vdi: run all three PDKs
+        # Default on csun.edu: run all three PDKs
         run_vivado_flag  = False
         run_quartus_flag = False
         run_dc90 = not dc_flags_requested or args.dc or args.dc90
@@ -564,7 +564,7 @@ def main() -> None:
         run_dc14 = not dc_flags_requested or args.dc or args.dc14
     else:
         if dc_flags_requested:
-            print("ERROR: Design Compiler only available on ecs-vdi.")
+            print("ERROR: Design Compiler only available on csun.edu.")
             sys.exit(1)
         run_all          = not args.vivado and not args.quartus
         run_vivado_flag  = run_all or args.vivado

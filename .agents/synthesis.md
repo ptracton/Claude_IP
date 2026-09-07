@@ -9,22 +9,22 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
 - `verification/lint/lint_results.log` contains `PASS`.
 - `design/rtl/verilog/` and `design/rtl/vhdl/` are parse-clean.
 
-**Standard hosts** (not ecs-vdi):
+**Standard hosts** (not csun.edu):
 - `synthesis/yosys/`, `synthesis/vivado/`, `synthesis/quartus/` directories exist.
 - Yosys 0.36+ is on `$PATH` (from `setup.sh` via OSS CAD Suite).
 - `vivado` is on `$PATH` (from `setup.sh` via Vivado 2023.2 `settings64.sh`).
 - `quartus_sh` is on `$PATH` (from `setup.sh` — `/opt/intelFPGA_lite/23.1std/quartus/bin`).
 
-**On ecs-vdi.ecs.csun.edu** (Vivado, Quartus, and Yosys are NOT available):
+**On *.csun.edu** (Vivado, Quartus, and Yosys are NOT available):
 - `synthesis/designcompiler/` directory exists.
 - `dc_shell` is on `$PATH` (Synopsys Design Compiler).
 - 90nm PDK at `/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm`.
 - 32nm PDK at `/opt/ECE_Lib/SAED32_EDK`.
 - 14nm PDK at `/opt/ECE_Lib/SAED14nm_EDK_03_2025`.
 
-## Machine-Specific Environment: ecs-vdi.ecs.csun.edu
+## Machine-Specific Environment: *.csun.edu
 
-When running on `ecs-vdi.ecs.csun.edu`, the following tools are **not available**:
+When running on `*.csun.edu`, the following tools are **not available**:
 - Vivado / Xilinx tools
 - Quartus / Intel/Altera tools
 - Yosys
@@ -36,17 +36,17 @@ On this host the **only** supported synthesis tool is:
 
 ```python
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 ```
 
-When `ON_ECS_VDI` is `True`:
+When `ON_CSUN` is `True`:
 - Skip Vivado, Quartus, and Yosys synthesis.
 - Run Design Compiler for **both** 90nm (SAED90) and 32nm (SAED32) PDKs.
 - All Python code must work without activating a virtualenv — use only system Python packages.
 
 ## Responsibilities
 
-### Design Compiler (ecs-vdi only, `synthesis/designcompiler/`)
+### Design Compiler (csun.edu only, `synthesis/designcompiler/`)
 
 #### `synthesis/designcompiler/synth.tcl`
 
@@ -101,8 +101,8 @@ PDK_CONFIGS = {
 - Writes `designcompiler/report_<pdk_target>.txt`.
 - References `reports/<pdk_target>/` and `netlists/<pdk_target>/`.
 
-CLI flags on ecs-vdi:
-- `--dc` — run all three PDKs (default when no flags given on ecs-vdi).
+CLI flags on csun.edu:
+- `--dc` — run all three PDKs (default when no flags given on csun.edu).
 - `--dc90` — 90nm only.
 - `--dc32` — 32nm only.
 - `--dc14` — 14nm only.
@@ -177,9 +177,9 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 
 ### `synthesis/run_vendor_synth.py` — Common
 
-- Accepts `--vivado`, `--quartus` (standard hosts); `--dc`, `--dc90`, `--dc32` (ecs-vdi).
+- Accepts `--vivado`, `--quartus` (standard hosts); `--dc`, `--dc90`, `--dc32` (csun.edu).
 - Default on standard hosts: run Vivado + Quartus.
-- Default on ecs-vdi: run DC with both PDKs (`--dc` behavior).
+- Default on csun.edu: run DC with both PDKs (`--dc` behavior).
 - Locates tools with `shutil.which`.
 - Invokes each TCL script via `subprocess.run` with `stdout=PIPE, stderr=STDOUT`.
 - Exits 0 only when all requested tools pass.
@@ -211,7 +211,7 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 | `synthesis/clean.sh` | Removes all DC-generated outputs |
 | `synthesis/known_issues.md` | Documented warnings (may be empty) |
 
-**On ecs-vdi.ecs.csun.edu:**
+**On *.csun.edu:**
 
 | Artifact | Description |
 |----------|-------------|
@@ -228,7 +228,7 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 | `synthesis/designcompiler/netlists/saed90/` | Netlists + SDF — 90nm |
 | `synthesis/designcompiler/netlists/saed32/` | Netlists + SDF — 32nm |
 | `synthesis/designcompiler/netlists/saed14/` | Netlists + SDF — 14nm |
-| `synthesis/run_vendor_synth.py` | Python runner (host-aware; DC on ecs-vdi) |
+| `synthesis/run_vendor_synth.py` | Python runner (host-aware; DC on csun.edu) |
 | `synthesis/clean.sh` | Removes all DC-generated outputs |
 | `synthesis/known_issues.md` | Documented warnings (may be empty) |
 
@@ -240,7 +240,7 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 - Quartus exits 0; `*.map.rpt` is written.
 - `synthesis/run_vendor_synth.py` exits 0 with all available tools passing.
 
-**On ecs-vdi.ecs.csun.edu:**
+**On *.csun.edu:**
 - DC exits 0 for all SV and VHDL variants under SAED90, SAED32, and SAED14.
 - `netlists/saed90/`, `netlists/saed32/`, and `netlists/saed14/` all populated with `.v` and `.sdf` files.
 - `synthesis/run_vendor_synth.py` exits 0 for all three PDK runs.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """run_vendor_synth.py — Run synthesis for bus_matrix IP.
 
-Standard hosts (not ecs-vdi): Vivado + Quartus + Yosys.
-ecs-vdi.ecs.csun.edu: Design Compiler with SAED90/SAED32/SAED14 PDKs.
+Standard hosts (not csun.edu): Vivado + Quartus + Yosys.
+*.csun.edu: Design Compiler with SAED90/SAED32/SAED14 PDKs.
 
 Usage:
     source IP/interface/bus_matrix/setup.sh
@@ -14,7 +14,7 @@ Usage:
     python3 synthesis/run_vendor_synth.py --quartus
     python3 synthesis/run_vendor_synth.py --clean
 
-    # ecs-vdi
+    # csun.edu
     python3 synthesis/run_vendor_synth.py              # all three PDKs
     python3 synthesis/run_vendor_synth.py --dc         # all three PDKs
     python3 synthesis/run_vendor_synth.py --dc90
@@ -37,12 +37,12 @@ from pathlib import Path
 # Host detection
 # ---------------------------------------------------------------------------
 
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 PROTOS = ["ahb", "axi", "wb"]
 
 # ---------------------------------------------------------------------------
-# PDK configuration (ecs-vdi only)
+# PDK configuration (csun.edu only)
 # ---------------------------------------------------------------------------
 
 SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
@@ -102,7 +102,7 @@ def run_cmd(cmd, cwd=None, logfile=None, timeout=600):
 
 
 # ---------------------------------------------------------------------------
-# Design Compiler (ecs-vdi only)
+# Design Compiler (csun.edu only)
 # ---------------------------------------------------------------------------
 
 def run_design_compiler(synth_dir, pdk_target):
@@ -404,7 +404,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Run vendor synthesis for bus_matrix")
 
-    if ON_ECS_VDI:
+    if ON_CSUN:
         parser.add_argument("--dc",   action="store_true", help="Run DC with all PDKs (default)")
         parser.add_argument("--dc90", action="store_true", help="Run DC with SAED90 only")
         parser.add_argument("--dc32", action="store_true", help="Run DC with SAED32 only")
@@ -423,7 +423,7 @@ def main():
 
     overall = True
 
-    if ON_ECS_VDI:
+    if ON_CSUN:
         run_dc90 = args.dc or args.dc90 or not (args.dc90 or args.dc32 or args.dc14)
         run_dc32 = args.dc or args.dc32 or not (args.dc90 or args.dc32 or args.dc14)
         run_dc14 = args.dc or args.dc14 or not (args.dc90 or args.dc32 or args.dc14)

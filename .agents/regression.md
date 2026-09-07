@@ -7,7 +7,7 @@ Steps 4, 5, and 6 complete (all directed tests, formal verification, and UVM tes
 ## Prerequisites
 
 - On standard hosts: `verification/work/icarus/<proto>_sv/results.log` and `verification/work/ghdl/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
-- On ecs-vdi.ecs.csun.edu: `verification/work/vcs/<proto>_sv/results.log` and `verification/work/xcelium/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
+- On `*.csun.edu`: `verification/work/vcs/<proto>_sv/results.log` and `verification/work/xcelium/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
 - `verification/work/formal/<proto>/results.log` contains `PASS` for all protocols.
 - On standard hosts: `verification/work/xsim/uvm/results.log` contains `PASS` (UVM, Step 6).
 - `verification/lint/lint_results.log` contains `PASS` (coordinate with lint sub-agent, Step 8).
@@ -15,9 +15,9 @@ Steps 4, 5, and 6 complete (all directed tests, formal verification, and UVM tes
 - `verification/tools/run_regression.py` skeleton exists from Step 1.
 - `CLAUDE_<IP_NAME>_PATH` is set (sourced from `setup.sh`).
 
-## Machine-Specific Environment: ecs-vdi.ecs.csun.edu
+## Machine-Specific Environment: *.csun.edu
 
-When the agent is running on the host `ecs-vdi.ecs.csun.edu`, the following tools are
+When the agent is running on the host `*.csun.edu`, the following tools are
 **not available** and must not be invoked:
 
 - Icarus Verilog (`iverilog` / `vvp`)
@@ -45,10 +45,10 @@ Formal verification (SymbiYosys) and linting are available on this host.
 
 ```python
 import socket
-ON_ECS_VDI = socket.getfqdn() == "ecs-vdi.ecs.csun.edu"
+ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 ```
 
-When `ON_ECS_VDI` is `True`:
+When `ON_CSUN` is `True`:
 - Skip Icarus, GHDL, ModelSim, and xsim simulations.
 - Skip UVM (since it requires xsim).
 - Run only VCS and Xcelium simulations, formal verification, and linting.
@@ -66,7 +66,7 @@ When `ON_ECS_VDI` is `True`:
 - Accepts flags: `--skip-sim`, `--skip-uvm`, `--skip-formal`, `--skip-lint`,
   `--skip-modelsim`, `--skip-xsim`.
 - Runs steps in order based on host availability:
-  - On standard hosts (not ecs-vdi):
+  - On standard hosts (not csun.edu):
     1. `sim_<IP_NAME>.py --sim icarus --proto all --lang sv`
     2. `sim_<IP_NAME>.py --sim ghdl --proto all --lang vhdl`
     3. `sim_<IP_NAME>.py --sim modelsim --proto all --lang sv`   ← skip if `--skip-modelsim`
@@ -74,7 +74,7 @@ When `ON_ECS_VDI` is `True`:
     5. `sim_<IP_NAME>.py --sim xsim --proto all --lang sv`       ← skip if `--skip-xsim`
     6. `sim_<IP_NAME>.py --sim xsim --proto all --lang vhdl`     ← skip if `--skip-xsim`
     7. `uvm_<IP_NAME>.py --test <IP_NAME>_base_test`  ← **separate script, NOT a flag on sim**; skip if `--skip-uvm`
-  - On ecs-vdi.ecs.csun.edu:
+  - On `*.csun.edu`:
     1. `sim_<IP_NAME>.py --sim vcs --proto all --lang sv`
     2. `sim_<IP_NAME>.py --sim vcs --proto all --lang vhdl`
     3. `sim_<IP_NAME>.py --sim xcelium --proto all --lang sv`
@@ -151,7 +151,7 @@ On standard hosts:
 REGRESSION PASSED
 ```
 
-On ecs-vdi.ecs.csun.edu (VCS and Xcelium only, no UVM):
+On `*.csun.edu` (VCS and Xcelium only, no UVM):
 
 ```
 ============================================================
