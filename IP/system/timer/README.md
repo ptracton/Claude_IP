@@ -314,13 +314,30 @@ See `verification/work/xsim/uvm/results.log` for full simulator output.
 
 ## Lint Results
 
+**Standard hosts:**
+
 | Language | Tool       | Version                     | Warnings | Waivers | Result |
 |----------|------------|-----------------------------|----------|---------|--------|
 | SV       | Verilator  | 5.043 devel rev v5.042-171  | 0        | 0       | PASS   |
 | VHDL     | GHDL       | 6.0.0-dev (4.1.0.r1095)    | 0        | 0       | PASS   |
 
-Results generated: 2026-03-18. See `verification/lint/lint_results.log` for full output.
-No waivers required — all RTL sources are clean.
+Results generated: 2026-03-18. No waivers required — all RTL sources are clean.
+
+**On csun.edu** (Verilator/GHDL not installed there — see `.agents/reference_spyglass_lint.md`):
+
+| Language | Tool     | Version       | Findings | Waivers | Result  |
+|----------|----------|---------------|----------|---------|---------|
+| SV       | SpyGlass | Y-2026.03-SP1 | 0        | 2       | PASS    |
+| VHDL     | —        | —             | —        | —       | SKIPPED |
+
+Results generated: 2026-09-20. VHDL lint is unavailable on csun.edu — GHDL
+isn't installed there, and SpyGlass has no supported way to lint this
+repo's VHDL-2008 RTL. SV waivers: `timer_core.sv` (`STARC05-2.11.3.1`,
+accepted style deviation) and the shared `claude_apb_if.sv` (`W240`, unused
+pass-through clock/reset ports — same rationale as its existing Verilator
+waiver). See `verification/lint/waivers.md` for full justifications.
+
+See `verification/lint/lint_results.log` for full output (either host).
 
 ## Firmware
 

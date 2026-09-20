@@ -36,6 +36,17 @@ bash "${CLAUDE_TIMER_PATH}/verification/formal/run_formal.sh" --clean
 # Lint logs (keep config and waivers)
 rm -f "${CLAUDE_TIMER_PATH}/verification/lint/lint_results.log"
 
+# SpyGlass lint intermediates (csun.edu only — keep the .prj files, remove the scratch workdir)
+rm -rf "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/vcst_rtdb" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/vcst_rtdb.bak" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/"*.prj.tcl* \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/vcst_command.log" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/vcst_session.log"* \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/.vcstPref" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/spyglass.out" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/report_hdl.txt" \
+       "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/VCSOptFile.txt"
+
 # Python cache directories
 find "${CLAUDE_TIMER_PATH}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "${CLAUDE_TIMER_PATH}" -name "*.pyc" -o -name "*.pyo" | xargs rm -f 2>/dev/null || true

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """lint_timer.py — Lint runner for the timer IP block.
 
-Runs Verilator (SystemVerilog) and/or GHDL (VHDL-2008) lint checks on all
-RTL source files under design/rtl/.
+Automatically detects the host environment and runs appropriate tools:
+  - On standard hosts: Verilator (SystemVerilog) and GHDL (VHDL-2008)
+  - On *.csun.edu: Synopsys SpyGlass (SystemVerilog only — see below)
 
 Results are written to:
     ${CLAUDE_TIMER_PATH}/verification/lint/lint_results.log
@@ -16,14 +17,49 @@ Usage:
 
 Prerequisites:
     source IP/system/timer/setup.sh   (sets CLAUDE_TIMER_PATH)
+
+On *.csun.edu, Verilator and GHDL are not installed, so this script does not
+attempt to run them there. SpyGlass (spyglass_vc) lints the four SV variants
+instead. VHDL lint has no equivalent on csun.edu: this repo's VHDL RTL uses
+VHDL-2008 constructs, and the installed SpyGlass has no supported way to
+select VHDL-2008 semantics (confirmed by hands-on testing — see
+.agents/reference_spyglass_lint.md). Requesting --lang vhdl or --lang all on
+csun.edu logs VHDL as SKIPPED rather than failing or silently faking a pass.
 """
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
 from typing import List, Tuple
+
+# ---------------------------------------------------------------------------
+# Host detection
+# ---------------------------------------------------------------------------
+import socket
+
+
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
+
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
+    """
+    try:
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
+
+
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 
 # ---------------------------------------------------------------------------
 # Locate and import ip_tool_base from ${IP_COMMON_PATH}/verification/tools/
@@ -135,6 +171,14 @@ VHDL_FILES = [
     "common:claude_wb_if.vhd",
     "design/rtl/vhdl/timer_wb.vhd",
 ]
+
+# SpyGlass (csun.edu only) — SV top-level variants, one static .prj file each
+# under verification/lint/spyglass/. VHDL has no SpyGlass equivalent here
+# (see module docstring); GHDL is the VHDL tool and it isn't installed on
+# csun.edu, so VHDL lint is simply unavailable there.
+SPYGLASS_BIN  = "spyglass_vc"
+SPYGLASS_GOAL = "lint/lint_rtl"
+SPYGLASS_SV_TOPS = ["timer_apb", "timer_ahb", "timer_axi4l", "timer_wb"]
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +308,103 @@ def run_vhdl_lint(timer_path: str) -> Tuple[bool, List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# SV lint via SpyGlass (csun.edu only)
+# ---------------------------------------------------------------------------
+
+# Rows in moresimple.rpt that are translator/tool-environment noise, not RTL
+# findings — present on every run regardless of design content, so they're
+# excluded from pass/fail the same way run_sv_lint() ignores Verilator's
+# informational version-banner output.
+#   - COM_OPT009 / COM_OPT010: we intentionally don't set search_path or
+#     link_library (RTL-only lint, no gate libraries, full paths given
+#     directly in read_file); the tool warns about this every run.
+#   - PrjToTclSummary "Skipped option": the classic-SpyGlass-compat project
+#     translator always reports skipping 'template_info', 'overloadrules',
+#     and 'template' — none of which this project ever sets.
+_SPYGLASS_BENIGN_RULES = {"COM_OPT009", "COM_OPT010"}
+
+_SPYGLASS_ROW_RE = re.compile(
+    r'^\[\d+\]\s+(\S+)\s+\S+\s+(fatal|error|warning|info)\s+\S+\s+\S+\s+\S+\s+(.*)$',
+    re.IGNORECASE,
+)
+
+
+def _spyglass_moresimple_path(spyglass_dir: str, top: str) -> str:
+    return os.path.join(
+        spyglass_dir, "vcst_rtdb", "spyglass", top, top, "lint", "lint_rtl",
+        "spyglass_reports", "moresimple.rpt",
+    )
+
+
+def _parse_spyglass_moresimple(moresimple_path: str) -> Tuple[List[str], List[str]]:
+    """Split moresimple.rpt rows into (real_findings, benign_noise) as formatted lines."""
+    real: List[str] = []
+    benign: List[str] = []
+    with open(moresimple_path) as fh:
+        for line in fh:
+            m = _SPYGLASS_ROW_RE.match(line.rstrip("\n"))
+            if not m:
+                continue
+            rule, severity, message = m.group(1), m.group(2).lower(), m.group(3).strip()
+            formatted = f"{severity:<8} {rule:<24} {message}"
+            if rule in _SPYGLASS_BENIGN_RULES:
+                benign.append(formatted)
+            elif rule == "PrjToTclSummary" and "Skipped option" in message:
+                benign.append(formatted)
+            else:
+                real.append(formatted)
+    return real, benign
+
+
+def run_spyglass_lint(timer_path: str) -> Tuple[bool, List[str]]:
+    """Run SpyGlass lint/lint_rtl on all four SV top-level variants (csun.edu only).
+
+    Each variant has a static .prj file under verification/lint/spyglass/
+    with relative read_file paths, so spyglass_vc must be invoked with that
+    directory as cwd.
+
+    Returns:
+        (passed, detail_lines)
+    """
+    passed = True
+    details: List[str] = []
+    spyglass_dir = os.path.join(timer_path, "verification", "lint", "spyglass")
+
+    details.append(f"[SV] SpyGlass binary: {SPYGLASS_BIN}")
+    details.append(f"[SV] SpyGlass goal: {SPYGLASS_GOAL}")
+
+    for top in SPYGLASS_SV_TOPS:
+        prj = f"{top}.prj"
+        cmd = [SPYGLASS_BIN, "-project", prj, "-goal", SPYGLASS_GOAL, "-batch", "-app", "lint"]
+
+        details.append(f"[SV] Linting {top} (SpyGlass) ...")
+        rc, stdout, stderr = run_command(cmd, cwd=spyglass_dir)
+        output = (stdout + stderr).strip()
+
+        moresimple = _spyglass_moresimple_path(spyglass_dir, top)
+        if not os.path.isfile(moresimple):
+            passed = False
+            details.append(f"[SV] FAIL — {top}: no SpyGlass report produced (rc={rc})")
+            for line in output.splitlines()[-30:]:
+                details.append(f"       {line}")
+            continue
+
+        real, benign = _parse_spyglass_moresimple(moresimple)
+        details.append(f"[SV] {top}: {len(real)} real finding(s), {len(benign)} benign (filtered)")
+
+        if real:
+            passed = False
+            details.append(f"[SV] FAIL — {top}")
+            for line in real:
+                details.append(f"       {line}")
+            details.append(f"       Full report: {moresimple}")
+        else:
+            details.append(f"[SV] PASS — {top}")
+
+    return passed, details
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -294,6 +435,7 @@ def main() -> None:
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"lint_timer.py — timer IP lint runner")
+    print(f"  Host              = {_hostname_fqdn()}{' (csun.edu)' if ON_CSUN else ' (standard host)'}")
     print(f"  CLAUDE_TIMER_PATH = {timer_path}")
     print(f"  IP_COMMON_PATH    = {common_path}")
     print(f"  --lang            = {args.lang}")
@@ -301,10 +443,14 @@ def main() -> None:
     print()
 
     all_passed = True
-    all_details: List[str] = [f"lint_timer.py run: {timestamp}", f"--lang={args.lang}"]
+    all_details: List[str] = [f"lint_timer.py run: {timestamp}", f"--lang={args.lang}",
+                               f"host={_hostname_fqdn()}", f"on_csun={ON_CSUN}"]
 
     if args.lang in ("sv", "all"):
-        sv_passed, sv_details = run_sv_lint(timer_path, common_path)
+        if ON_CSUN:
+            sv_passed, sv_details = run_spyglass_lint(timer_path)
+        else:
+            sv_passed, sv_details = run_sv_lint(timer_path, common_path)
         all_details.extend(sv_details)
         if not sv_passed:
             all_passed = False
@@ -316,16 +462,30 @@ def main() -> None:
         print()
 
     if args.lang in ("vhdl", "all"):
-        vhdl_passed, vhdl_details = run_vhdl_lint(timer_path)
-        all_details.extend(vhdl_details)
-        if not vhdl_passed:
-            all_passed = False
-            print("[VHDL] FAIL — see details below")
+        if ON_CSUN:
+            skip_details = [
+                "[VHDL] SKIPPED — no VHDL lint available on csun.edu.",
+                "[VHDL] GHDL is not installed on csun.edu, and the installed",
+                "[VHDL] SpyGlass has no supported way to select VHDL-2008",
+                "[VHDL] semantics (this repo's VHDL RTL uses VHDL-2008",
+                "[VHDL] constructs). See .agents/reference_spyglass_lint.md.",
+            ]
+            all_details.extend(skip_details)
+            print("[VHDL] SKIPPED (not available on csun.edu)")
+            for line in skip_details:
+                print(f"  {line}")
+            print()
         else:
-            print("[VHDL] PASS")
-        for line in vhdl_details:
-            print(f"  {line}")
-        print()
+            vhdl_passed, vhdl_details = run_vhdl_lint(timer_path)
+            all_details.extend(vhdl_details)
+            if not vhdl_passed:
+                all_passed = False
+                print("[VHDL] FAIL — see details below")
+            else:
+                print("[VHDL] PASS")
+            for line in vhdl_details:
+                print(f"  {line}")
+            print()
 
     # Write results log
     write_results_log(results_log, all_passed, all_details)

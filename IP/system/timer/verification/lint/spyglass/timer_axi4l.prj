@@ -1,0 +1,17 @@
+#SpyGlass project file — timer_axi4l SystemVerilog lint (csun.edu only)
+#
+# Run via: spyglass_vc -project timer_axi4l.prj -goal lint/lint_rtl -batch -app lint
+# (invoked by lint_timer.py; cwd must be this directory so the relative
+# read_file paths below resolve correctly)
+
+set_option projectwdir .
+set_option enableSV yes
+set_option top timer_axi4l
+
+read_file -type verilog { \
+  ../../../../../common/design/rtl/verilog/claude_axi4l_if.sv \
+  ../../../design/rtl/verilog/timer_reg_pkg.sv \
+  ../../../design/rtl/verilog/timer_regfile.sv \
+  ../../../design/rtl/verilog/timer_core.sv \
+  ../../../design/rtl/verilog/timer_axi4l.sv \
+}

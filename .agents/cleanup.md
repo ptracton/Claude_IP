@@ -23,6 +23,10 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
        `dc_saed14_run.log`, `dc_sky130_run.log`, etc.). **Never** delete
        `IP/common/synthesis/designcompiler/sky130_lib/` — it is the shared,
        cross-IP compiled sky130 `.db` cache, not a per-IP artifact.
+     - On csun.edu, also remove SpyGlass lint scratch output:
+       `verification/lint/spyglass/vcst_rtdb`, `vcst_rtdb.bak`, `*.prj.tcl*`,
+       `vcst_command.log`, `vcst_session.log*`, `.vcstPref`, `spyglass.out`,
+       `report_hdl.txt`, `VCSOptFile.txt` — but keep the static `.prj` files.
    - Vivado journal and log files (`.jou`, `.log`, `.pb`).
    - Quartus `db/` and `incremental_db/` directories.
 2. Update `.gitignore` (at the `IP_NAME/` root) to exclude:
@@ -31,6 +35,7 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
    - Simulator working directories.
    - `firmware/build/`, `firmware/obj/`, `firmware/lib/`.
    - `synthesis/*/` intermediate files.
+   - `verification/lint/spyglass/` scratch output (see above; not the `.prj` files).
    - Source files and final report files must **never** be excluded.
 3. Verify `cleanup.sh` removes all build artifacts without touching:
    - Any source file under `design/`, `verification/testbench/`, `verification/tests/`,

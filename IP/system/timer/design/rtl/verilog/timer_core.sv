@@ -93,6 +93,13 @@ module timer_core #(
   // tick for one cycle.  When ctrl_prescale == 0 tick fires every cycle.
   // RESTART resets the prescaler to ctrl_prescale (same as disable state).
   // -------------------------------------------------------------------------
+  // SpyGlass STARC05-2.11.3.1 flags the next-value logic below as combinational
+  // FSM logic living in the same always block as the state register, since it's
+  // computed inline via if/else rather than in a separate always_comb block (the
+  // two-process pattern documented in VerilogCodingStyle.md). Accepted as a style
+  // deviation for now — this is a plain synchronous counter (always_ff-only, no
+  // blocking assignments, no combinational logic), not a functional issue.
+  //spyglass disable_block STARC05-2.11.3.1
   always_ff @(posedge clk) begin : p_prescaler
     if (!rst_n) begin
       prescale_cnt_q <= 8'h00;
@@ -110,6 +117,7 @@ module timer_core #(
       end
     end
   end
+  //spyglass enable_block STARC05-2.11.3.1
 
   // tick fires when the prescaler wraps to zero (output phase)
   assign tick = ctrl_en & (prescale_cnt_q == 8'h00);

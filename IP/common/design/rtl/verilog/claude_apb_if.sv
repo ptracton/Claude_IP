@@ -37,8 +37,10 @@ module claude_apb_if #(
   // and therefore has no registered state. The regfile above instantiates
   // the clocked path. Waive the Verilator UNUSEDSIGNAL warning accordingly.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                  PCLK,          // APB clock (routed to regfile/core above)
   input  logic                  PRESETn,        // APB reset  (routed to regfile/core above)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
 
   input  logic                  PSEL,           // slave select
