@@ -4,6 +4,9 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Design Compiler outputs
+# Note: sky130_lib/ is deliberately NOT removed here — it's the shared
+# cross-IP .db cache under IP/common/synthesis/designcompiler/, not a
+# per-IP artifact. Clean it directly if you really need to force a rebuild.
 DC_DIR="$SCRIPT_DIR/designcompiler"
 rm -rf \
     "$DC_DIR"/cksum_dir \
@@ -22,6 +25,7 @@ rm -rf \
     "$DC_DIR"/dc_saed90_run.log \
     "$DC_DIR"/dc_saed32_run.log \
     "$DC_DIR"/dc_saed14_run.log \
+    "$DC_DIR"/dc_sky130_run.log \
     "$DC_DIR"/default.svf \
     "$DC_DIR"/report.txt
 

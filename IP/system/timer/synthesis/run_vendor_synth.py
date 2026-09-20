@@ -3,25 +3,29 @@
 
 Automatically detects the host environment and runs appropriate tools:
   - On standard hosts: Vivado, Quartus, and Yosys
-  - On *.csun.edu: Design Compiler with both 90nm and 32nm PDKs
+  - On *.csun.edu: Design Compiler with the SAED90/32/14 and SKY130 PDKs
 
 Usage:
-    python3 synthesis/run_vendor_synth.py            # run appropriate tools for host
-    python3 synthesis/run_vendor_synth.py --vivado   # Vivado only (standard hosts)
-    python3 synthesis/run_vendor_synth.py --quartus  # Quartus only (standard hosts)
-    python3 synthesis/run_vendor_synth.py --dc       # Design Compiler all PDKs (csun.edu)
-    python3 synthesis/run_vendor_synth.py --dc90     # Design Compiler 90nm only (csun.edu)
-    python3 synthesis/run_vendor_synth.py --dc32     # Design Compiler 32nm only (csun.edu)
-    python3 synthesis/run_vendor_synth.py --dc14     # Design Compiler 14nm only (csun.edu)
-    python3 synthesis/run_vendor_synth.py --clean    # clean all tool outputs
+    python3 synthesis/run_vendor_synth.py              # run appropriate tools for host
+    python3 synthesis/run_vendor_synth.py --vivado     # Vivado only (standard hosts)
+    python3 synthesis/run_vendor_synth.py --quartus    # Quartus only (standard hosts)
+    python3 synthesis/run_vendor_synth.py --dc         # Design Compiler all PDKs (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc90       # Design Compiler 90nm only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc32       # Design Compiler 32nm only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dc14       # Design Compiler 14nm only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --dcsky130   # Design Compiler SKY130 only (csun.edu)
+    python3 synthesis/run_vendor_synth.py --clean      # clean all tool outputs
 
 Requirements:
     - CLAUDE_TIMER_PATH set (source timer/setup.sh)
     - On standard hosts: vivado, quartus_sh on PATH
-    - On csun.edu: dc_shell on PATH
+    - On csun.edu: dc_shell on PATH (lc_shell also required for sky130 —
+      compiles its ASCII .lib to .db on first use; result is cached)
         90nm PDK at /opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm
         32nm PDK at /opt/ECE_Lib/SAED32_EDK
         14nm PDK at /opt/ECE_Lib/SAED14nm_EDK_03_2025
+        SKY130 PDK at /tmp/pet43490/PDK/volare/sky130/versions/<version>/sky130A
+            (SkyWater open-source PDK, installed per-user via volare)
 
 Outputs:
     synthesis/vivado/report.txt                      — Vivado summary (standard hosts only)
@@ -30,12 +34,15 @@ Outputs:
     synthesis/designcompiler/dc_saed90_run.log       — DC 90nm full log (csun.edu only)
     synthesis/designcompiler/dc_saed32_run.log       — DC 32nm full log (csun.edu only)
     synthesis/designcompiler/dc_saed14_run.log       — DC 14nm full log (csun.edu only)
+    synthesis/designcompiler/dc_sky130_run.log       — DC SKY130 full log (csun.edu only)
     synthesis/designcompiler/reports/saed90/         — DC 90nm per-variant reports
     synthesis/designcompiler/reports/saed32/         — DC 32nm per-variant reports
     synthesis/designcompiler/reports/saed14/         — DC 14nm per-variant reports
+    synthesis/designcompiler/reports/sky130/         — DC SKY130 per-variant reports
     synthesis/designcompiler/netlists/saed90/        — DC 90nm netlists + SDF
     synthesis/designcompiler/netlists/saed32/        — DC 32nm netlists + SDF
     synthesis/designcompiler/netlists/saed14/        — DC 14nm netlists + SDF
+    synthesis/designcompiler/netlists/sky130/        — DC SKY130 netlists + SDF
 """
 
 import argparse
@@ -76,6 +83,20 @@ SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
 SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
 SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
 
+# ---------------------------------------------------------------------------
+# sky130 PDK tooling lives in IP/common/synthesis/designcompiler — shared
+# across every IP module so the sky130 .lib -> .db compile (via lc_shell)
+# happens once and every IP's synthesis run reuses the same cached .db files,
+# instead of each IP/*/synthesis/ recompiling its own copy.
+# ---------------------------------------------------------------------------
+_IP_COMMON_PATH = os.environ.get("IP_COMMON_PATH") or str(
+    Path(__file__).resolve().parent.parent.parent.parent / "common"
+)
+sys.path.insert(0, str(Path(_IP_COMMON_PATH) / "synthesis" / "designcompiler"))
+import build_sky130_libs  # noqa: E402
+
+SKY130_PDK = build_sky130_libs.SKY130_PDK
+
 PDK_CONFIGS = {
     "saed90": {
         "label":   "SAED90 (90nm)",
@@ -91,6 +112,11 @@ PDK_CONFIGS = {
         "label":   "SAED14 (14nm)",
         "env_var": "SAED14_EDK",
         "path":    SAED14_EDK,
+    },
+    "sky130": {
+        "label":   "SKY130 (130nm, SkyWater open-source PDK)",
+        "env_var": "SKY130_PDK",
+        "path":    SKY130_PDK,
     },
 }
 
@@ -120,6 +146,8 @@ QUARTUS_CLEAN = [
 ]
 
 # DC clean is handled by clean.sh; mirror the key paths here for --clean
+# Note: sky130_lib/ is NOT listed here — it's the shared cross-IP .db cache
+# under IP/common/synthesis/designcompiler/, not a per-IP artifact.
 DESIGNCOMPILER_CLEAN_DIRS = [
     "designcompiler/cksum_dir",
     "designcompiler/reports",
@@ -132,6 +160,7 @@ DESIGNCOMPILER_CLEAN = [
     "designcompiler/dc_saed90_run.log",
     "designcompiler/dc_saed32_run.log",
     "designcompiler/dc_saed14_run.log",
+    "designcompiler/dc_sky130_run.log",
     "designcompiler/command.log",
     "designcompiler/default.svf",
     "designcompiler/report.txt",
@@ -436,8 +465,14 @@ def write_quartus_report(synth_dir: Path, util: dict, map_rpt: Optional[Path]) -
 # Design Compiler
 # ---------------------------------------------------------------------------
 
+# sky130 ships only ASCII .lib (no pre-compiled .db, unlike the SAED PDKs).
+# dc_shell on this host can't read ASCII .lib directly as target_library
+# ("File is not a DB file", DB-1), so it needs compiling once via Library
+# Compiler (lc_shell). That compile — and its resulting .db cache — is
+# shared across all IP modules; see IP/common/synthesis/designcompiler/
+# build_sky130_libs.py.
 def run_design_compiler(synth_dir: Path, pdk_target: str) -> bool:
-    """Run Design Compiler synthesis for the given PDK target (saed90 or saed32)."""
+    """Run Design Compiler synthesis for the given PDK target (saed90, saed32, saed14, sky130)."""
     cfg = PDK_CONFIGS[pdk_target]
 
     dc_shell = find_tool("dc_shell")
@@ -464,6 +499,12 @@ def run_design_compiler(synth_dir: Path, pdk_target: str) -> bool:
         "PDK_TARGET":       pdk_target,
         cfg["env_var"]:     cfg["path"],
     }
+
+    if pdk_target == "sky130":
+        db_paths = build_sky130_libs.ensure_sky130_dbs(cfg["path"])
+        if not db_paths:
+            return False
+        extra_env["SKY130_STDLIB_DB"] = db_paths[build_sky130_libs.SKY130_SYNTH_CORNER]
 
     try:
         result = subprocess.run(
@@ -561,6 +602,7 @@ def main() -> None:
     parser.add_argument("--dc90",    action="store_true", help="Design Compiler 90nm only (csun.edu)")
     parser.add_argument("--dc32",    action="store_true", help="Design Compiler 32nm only (csun.edu)")
     parser.add_argument("--dc14",    action="store_true", help="Design Compiler 14nm only (csun.edu)")
+    parser.add_argument("--dcsky130", action="store_true", help="Design Compiler SKY130 only (csun.edu)")
     parser.add_argument("--clean",   action="store_true", help="Remove outputs instead of running synthesis")
     args = parser.parse_args()
 
@@ -570,18 +612,19 @@ def main() -> None:
     print(f"  Synth dir : {synth_dir}")
     print()
 
-    dc_flags_requested = args.dc or args.dc90 or args.dc32 or args.dc14
+    dc_flags_requested = args.dc or args.dc90 or args.dc32 or args.dc14 or args.dcsky130
 
     if ON_CSUN:
         if args.vivado or args.quartus:
             print("ERROR: Vivado and Quartus not available on csun.edu.")
             sys.exit(1)
-        # Default on csun.edu: run all three PDKs
+        # Default on csun.edu: run all four PDKs
         run_vivado_flag  = False
         run_quartus_flag = False
         run_dc90 = not dc_flags_requested or args.dc or args.dc90
         run_dc32 = not dc_flags_requested or args.dc or args.dc32
         run_dc14 = not dc_flags_requested or args.dc or args.dc14
+        run_dcsky130 = not dc_flags_requested or args.dc or args.dcsky130
     else:
         if dc_flags_requested:
             print("ERROR: Design Compiler only available on csun.edu.")
@@ -592,6 +635,7 @@ def main() -> None:
         run_dc90 = False
         run_dc32 = False
         run_dc14 = False
+        run_dcsky130 = False
 
     # --- Clean mode ---
     if args.clean:
@@ -599,7 +643,7 @@ def main() -> None:
             clean_vivado(synth_dir)
         if run_quartus_flag:
             clean_quartus(synth_dir)
-        if run_dc90 or run_dc32:
+        if run_dc90 or run_dc32 or run_dc14 or run_dcsky130:
             clean_design_compiler(synth_dir)
         sys.exit(0)
 
@@ -633,6 +677,16 @@ def main() -> None:
         if ok:
             util = parse_dc_area(synth_dir / "designcompiler" / "dc_saed14_run.log")
             write_dc_report(synth_dir, "saed14", util)
+            print(f"  Cells={util['cells']}  FFs={util['ffs']}")
+        print()
+
+    if run_dcsky130:
+        print(f"=== Design Compiler — SKY130 (130nm) ===")
+        ok = run_design_compiler(synth_dir, "sky130")
+        results["dc_sky130"] = ok
+        if ok:
+            util = parse_dc_area(synth_dir / "designcompiler" / "dc_sky130_run.log")
+            write_dc_report(synth_dir, "sky130", util)
             print(f"  Cells={util['cells']}  FFs={util['ffs']}")
         print()
 

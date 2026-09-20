@@ -431,6 +431,11 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | CMake | 3.20+ | Firmware build system |
 | Python | 3.10+ | Tool scripts |
 | Python venv | `<repo_root>/virtualenv/CLAUDE_IP/bin/activate` | Isolated Python environment |
+| Design Compiler (`dc_shell`) | csun.edu only, on `$PATH` | ASIC synthesis (target: SAED90, SAED32, SAED14, SKY130) |
+| Library Compiler (`lc_shell`) | csun.edu only, on `$PATH` | Compiles sky130's ASCII `.lib` to `.db` (sky130 ships no pre-compiled `.db`, unlike SAED) |
+| SAED90/32/14 PDKs | `/opt/ECE_Lib/...` (csun.edu, shared install) | ASIC standard cell libraries |
+| SKY130 PDK | `/tmp/pet43490/PDK/volare/sky130/...` (csun.edu, per-user install) | Open-source ASIC standard cell library |
+| volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 
 ---
 

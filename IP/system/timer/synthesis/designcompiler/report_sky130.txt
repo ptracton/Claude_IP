@@ -1,6 +1,6 @@
 ========================================================================
 Design Compiler Synthesis Report — timer IP
-Target PDK    : SAED32 (32nm)
+Target PDK    : SKY130 (130nm, SkyWater open-source PDK)
 Tool version  : Design Compiler (dc_shell)
 Run date      : 2026-09-20
 ========================================================================
@@ -10,15 +10,15 @@ STATUS: PASS — synthesis completed successfully.
 ------------------------------------------------------------------------
 Synthesis Results
 ------------------------------------------------------------------------
-  Total cells  : 717
+  Total cells  : 840
   Flip-flops   : 191
 
 Per-variant area and timing reports:
-  synthesis/designcompiler/reports/saed32/
+  synthesis/designcompiler/reports/sky130/
 
 Netlists and SDF:
-  synthesis/designcompiler/netlists/saed32/
+  synthesis/designcompiler/netlists/sky130/
 
 Full log:
-  synthesis/designcompiler/dc_saed32_run.log
+  synthesis/designcompiler/dc_sky130_run.log
 ========================================================================

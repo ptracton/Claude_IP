@@ -21,6 +21,11 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
 - 90nm PDK at `/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm`.
 - 32nm PDK at `/opt/ECE_Lib/SAED32_EDK`.
 - 14nm PDK at `/opt/ECE_Lib/SAED14nm_EDK_03_2025`.
+- SKY130 PDK at `/tmp/pet43490/PDK/volare/sky130/versions/<hash>/sky130A`
+  (SkyWater open-source PDK, per-user volare install — not under `/opt/ECE_Lib`).
+  `lc_shell` must also be on `$PATH`: sky130 ships only ASCII `.lib`, and it
+  needs compiling to `.db` before `dc_shell` can use it as a
+  `target_library` (see the sky130 subsection below).
 
 ## Machine-Specific Environment: *.csun.edu
 
@@ -31,6 +36,8 @@ When running on `*.csun.edu`, the following tools are **not available**:
 
 On this host the **only** supported synthesis tool is:
 - Synopsys Design Compiler (`dc_shell` on `$PATH`)
+- Plus Library Compiler (`lc_shell` on `$PATH`) — needed only for the sky130
+  PDK, to pre-compile its ASCII `.lib` to `.db` (see sky130 subsection below)
 
 `run_vendor_synth.py` must detect this environment at startup:
 
@@ -41,8 +48,10 @@ ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 When `ON_CSUN` is `True`:
 - Skip Vivado, Quartus, and Yosys synthesis.
-- Run Design Compiler for **both** 90nm (SAED90) and 32nm (SAED32) PDKs.
+- Run Design Compiler for SAED90, SAED32, SAED14, **and** SKY130.
 - All Python code must work without activating a virtualenv — use only system Python packages.
+  (The one exception is `volare`, now in `virtualenv/requirements.txt` for managing/fetching
+  sky130 PDK versions by hand when needed — it is not imported by `run_vendor_synth.py` itself.)
 
 ## Responsibilities
 
@@ -50,13 +59,14 @@ When `ON_CSUN` is `True`:
 
 #### `synthesis/designcompiler/synth.tcl`
 
-The script supports both PDKs via the `PDK_TARGET` environment variable (default: `saed90`):
+The script supports all four PDKs via the `PDK_TARGET` environment variable (default: `saed90`):
 
 | `PDK_TARGET` | Env var required | Library path |
 |---|---|---|
 | `saed90` | `SAED90_PDK` | `$SAED90_PDK/Digital_Standard_cell_Library/synopsys/models/saed90nm_max.db` |
 | `saed32` | `SAED32_EDK` | `$SAED32_EDK/lib/stdcell_rvt/db_nldm/saed32rvt_ss0p95v125c.db` (RVT SS 0.95V 125°C) |
 | `saed14` | `SAED14_EDK` | `$SAED14_EDK/SAED14nm_EDK_STD_RVT/liberty/nldm/base/saed14rvt_base_ss0p72v125c.db` (RVT SS 0.72V 125°C) |
+| `sky130` | `SKY130_PDK` **and** `SKY130_STDLIB_DB` | `$SKY130_STDLIB_DB` — a pre-compiled `.db`, **not** derived from `SKY130_PDK` directly inside `synth.tcl` (see sky130 subsection below) |
 
 Key requirements:
 - Enable SystemVerilog and VHDL-2008: `set_app_var verilog_mode 2012` and `set_app_var hdlin_vhdl_std 2008`.
@@ -85,35 +95,99 @@ Constants:
 ```python
 SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
 SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
+SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
 
 PDK_CONFIGS = {
     "saed90": {"label": "SAED90 (90nm)", "env_var": "SAED90_PDK", "path": SAED90_PDK},
     "saed32": {"label": "SAED32 (32nm)", "env_var": "SAED32_EDK", "path": SAED32_EDK},
+    "saed14": {"label": "SAED14 (14nm)", "env_var": "SAED14_EDK", "path": SAED14_EDK},
+    "sky130": {"label": "SKY130 (130nm, SkyWater open-source PDK)",
+               "env_var": "SKY130_PDK", "path": build_sky130_libs.SKY130_PDK},
 }
 ```
 
 `run_design_compiler(synth_dir, pdk_target)`:
 - Sets `PDK_TARGET=<pdk_target>` and the appropriate PDK path env var.
+- For `pdk_target == "sky130"` **only**: also calls
+  `build_sky130_libs.ensure_sky130_dbs(cfg["path"])` (imported from
+  `IP/common/synthesis/designcompiler/`, see sky130 subsection below) and
+  sets `SKY130_STDLIB_DB` to the typical-corner `.db` path it returns.
 - Writes log to `designcompiler/dc_<pdk_target>_run.log`.
-- Timeout: 1200 s (two back-to-back PDK runs).
+- Timeout: 1200 s per PDK run.
 
 `write_dc_report(synth_dir, pdk_target, util)`:
 - Writes `designcompiler/report_<pdk_target>.txt`.
 - References `reports/<pdk_target>/` and `netlists/<pdk_target>/`.
 
 CLI flags on csun.edu:
-- `--dc` — run all three PDKs (default when no flags given on csun.edu).
+- `--dc` — run all four PDKs (default when no flags given on csun.edu).
 - `--dc90` — 90nm only.
 - `--dc32` — 32nm only.
 - `--dc14` — 14nm only.
+- `--dcsky130` — sky130 only.
+
+### sky130 (SkyWater 130nm open-source PDK, csun.edu only)
+
+Unlike the SAED PDKs, sky130 ships only ASCII `.lib` — no pre-compiled `.db`.
+This Design Compiler build **cannot** read ASCII `.lib` directly as a
+`target_library`/`link_library`: it fails with `Error: ... is not a DB file.
+(DB-1)`, but critically **exits 0 anyway** and silently continues with
+black-box/unmapped cells — a "PASS" result under this failure mode is bogus
+(garbage cell counts, non-functional netlist). Always check the run log for
+`black-box`, `unmapped components`, or `DB-1` after any sky130 run, not just
+the exit code.
+
+Also note: `dc_shell`'s own `read_lib` command fails on this host with
+`Error: The read_lib command failed to run. Check the installation of
+Library Compiler. (LCSH-3)` — compiling must go through the separate
+`lc_shell` binary (Library Compiler), not `dc_shell`.
+
+**This is solved once, centrally, for every IP** in
+`IP/common/synthesis/designcompiler/build_sky130_libs.py` — not
+re-implemented per IP:
+- Compiles all three `sky130_fd_sc_hd` corners to `.db` via `lc_shell`
+  (`read_lib "<ascii .lib>"` then `write_lib <libname> -output "<db path>"`
+  in one batch script): `ss_100C_1v60` (worst-case), `tt_025C_1v80`
+  (typical — `SKY130_SYNTH_CORNER`, used for synthesis), `ff_n40C_1v95`
+  (best-case).
+- Caches the compiled `.db` files in
+  `IP/common/synthesis/designcompiler/sky130_lib/` (mtime-checked against
+  the source `.lib`, so repeat runs across any IP skip recompiling).
+- Exposes `ensure_sky130_dbs(pdk_path) -> {corner: db_path}`,
+  `SKY130_PDK`, `SKY130_CORNERS`, and `SKY130_SYNTH_CORNER`.
+
+Any IP's `run_vendor_synth.py` must import it rather than duplicate it:
+```python
+_IP_COMMON_PATH = os.environ.get("IP_COMMON_PATH") or str(
+    Path(__file__).resolve().parent.parent.parent.parent / "common"
+)
+sys.path.insert(0, str(Path(_IP_COMMON_PATH) / "synthesis" / "designcompiler"))
+import build_sky130_libs
+```
+(`IP_COMMON_PATH` is exported by `setup.sh`; the fallback derives the same
+path relative to the script when it isn't set.)
+
+`synthesis/designcompiler/synth.tcl`'s `sky130` branch reads `SKY130_STDLIB_DB`
+directly as `STDLIB` — it does **not** build the library path itself from
+`SKY130_PDK`, unlike the SAED branches.
+
+`volare` (now in `virtualenv/requirements.txt`) is available for
+fetching/managing future sky130 PDK versions by hand, but is not imported by
+any script — the PDK install this repo points at
+(`build_sky130_libs.SKY130_PDK`) was placed manually per-user on csun.edu,
+not through volare's own bookkeeping (`volare ls --pdk-root <path>` returns
+`[]` for it).
 
 #### `synthesis/clean.sh`
 
 A standalone bash script that removes all DC-generated files:
 - Directories: `cksum_dir/`, `reports/`, `netlists/`, `ARCH/`, `ENTI/`, `PACK/` (DC VHDL library dirs).
-- Files: `*.v`, `*.sdf`, `*.pvk`, `*.pvl`, `*.syn`, `*.mr`, `dc_saed90_run.log`, `dc_saed32_run.log`, `command.log`, `default.svf`, `report.txt`.
+- Files: `*.v`, `*.sdf`, `*.pvk`, `*.pvl`, `*.syn`, `*.mr`, `dc_saed90_run.log`, `dc_saed32_run.log`, `dc_saed14_run.log`, `dc_sky130_run.log`, `command.log`, `default.svf`, `report.txt`.
 - Yosys: `yosys/work/`.
 - Python: `__pycache__/`.
+- **Never** removes `IP/common/synthesis/designcompiler/sky130_lib/` — that
+  cache is shared across every IP, not a per-IP artifact; cleaning one IP's
+  synthesis outputs must not force every other IP to recompile it.
 
 Must be called from the top-level `cleanup.sh` in addition to `run_vendor_synth.py --clean`.
 
@@ -177,9 +251,9 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 
 ### `synthesis/run_vendor_synth.py` — Common
 
-- Accepts `--vivado`, `--quartus` (standard hosts); `--dc`, `--dc90`, `--dc32` (csun.edu).
+- Accepts `--vivado`, `--quartus` (standard hosts); `--dc`, `--dc90`, `--dc32`, `--dc14`, `--dcsky130` (csun.edu).
 - Default on standard hosts: run Vivado + Quartus.
-- Default on csun.edu: run DC with both PDKs (`--dc` behavior).
+- Default on csun.edu: run DC with all four PDKs (`--dc` behavior).
 - Locates tools with `shutil.which`.
 - Invokes each TCL script via `subprocess.run` with `stdout=PIPE, stderr=STDOUT`.
 - Exits 0 only when all requested tools pass.
@@ -215,22 +289,28 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 
 | Artifact | Description |
 |----------|-------------|
-| `synthesis/designcompiler/synth.tcl` | DC script (SAED90 + SAED32, SV + VHDL) |
+| `synthesis/designcompiler/synth.tcl` | DC script (SAED90 + SAED32 + SAED14 + SKY130, SV + VHDL) |
 | `synthesis/designcompiler/dc_saed90_run.log` | Raw DC output — 90nm run |
 | `synthesis/designcompiler/dc_saed32_run.log` | Raw DC output — 32nm run |
 | `synthesis/designcompiler/dc_saed14_run.log` | Raw DC output — 14nm run |
+| `synthesis/designcompiler/dc_sky130_run.log` | Raw DC output — sky130 run |
 | `synthesis/designcompiler/report_saed90.txt` | Human-readable DC summary — 90nm |
 | `synthesis/designcompiler/report_saed32.txt` | Human-readable DC summary — 32nm |
 | `synthesis/designcompiler/report_saed14.txt` | Human-readable DC summary — 14nm |
+| `synthesis/designcompiler/report_sky130.txt` | Human-readable DC summary — sky130 |
 | `synthesis/designcompiler/reports/saed90/` | Per-variant area + timing reports — 90nm |
 | `synthesis/designcompiler/reports/saed32/` | Per-variant area + timing reports — 32nm |
 | `synthesis/designcompiler/reports/saed14/` | Per-variant area + timing reports — 14nm |
+| `synthesis/designcompiler/reports/sky130/` | Per-variant area + timing reports — sky130 |
 | `synthesis/designcompiler/netlists/saed90/` | Netlists + SDF — 90nm |
 | `synthesis/designcompiler/netlists/saed32/` | Netlists + SDF — 32nm |
 | `synthesis/designcompiler/netlists/saed14/` | Netlists + SDF — 14nm |
+| `synthesis/designcompiler/netlists/sky130/` | Netlists + SDF — sky130 |
 | `synthesis/run_vendor_synth.py` | Python runner (host-aware; DC on csun.edu) |
 | `synthesis/clean.sh` | Removes all DC-generated outputs |
 | `synthesis/known_issues.md` | Documented warnings (may be empty) |
+| `IP/common/synthesis/designcompiler/build_sky130_libs.py` | Shared sky130 `.lib`→`.db` compiler (all IPs) |
+| `IP/common/synthesis/designcompiler/sky130_lib/` | Shared compiled sky130 `.db` cache (all IPs) |
 
 ## Quality Gate
 
@@ -241,9 +321,12 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 - `synthesis/run_vendor_synth.py` exits 0 with all available tools passing.
 
 **On *.csun.edu:**
-- DC exits 0 for all SV and VHDL variants under SAED90, SAED32, and SAED14.
-- `netlists/saed90/`, `netlists/saed32/`, and `netlists/saed14/` all populated with `.v` and `.sdf` files.
-- `synthesis/run_vendor_synth.py` exits 0 for all three PDK runs.
+- DC exits 0 for all SV and VHDL variants under SAED90, SAED32, SAED14, and SKY130.
+- `netlists/saed90/`, `netlists/saed32/`, `netlists/saed14/`, and `netlists/sky130/` all
+  populated with `.v` and `.sdf` files.
+- sky130 run log contains no `black-box`, `unmapped components`, or `DB-1` — exit code
+  alone does not prove the sky130 run actually mapped to real cells (see sky130 subsection).
+- `synthesis/run_vendor_synth.py` exits 0 for all four PDK runs.
 
 **All hosts:**
 - `synthesis/known_issues.md` exists (even if empty) and all unresolved warnings are documented.
@@ -256,6 +339,8 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 | DC | `read_file {claude_apb_if.sv ...}` | `analyze -format sverilog {claude_apb_if.sv ...}` — only `analyze` honors `search_path` |
 | DC | `read_file {timer_ahb.vhd}` | `analyze -format vhdl {timer_ahb.vhd}` |
 | DC | `set_app_var search_path "path1 path2"` | `set_app_var search_path [list path1 path2]` |
+| DC | `target_library`/`link_library` pointed at sky130's ASCII `.lib` | Errors `File is not a DB file (DB-1)` but **exits 0** with black-box cells; pre-compile to `.db` via `lc_shell` first (`build_sky130_libs.py`) |
+| DC | `read_lib` inside `dc_shell` to compile sky130's `.lib` | Fails `Check the installation of Library Compiler (LCSH-3)` on this host; use the separate `lc_shell` binary instead |
 | Vivado | `set_property target_language SystemVerilog` | `set_property target_language Verilog` |
 | Vivado | `read_xdc - << { ... }` (stdin, fails in batch) | Write XDC to a temp file, then `read_xdc <file>` |
 | Vivado | `get_runs synth_1` in in-memory project | Omit — returns empty; pass `-mode out_of_context` directly to `synth_design` |

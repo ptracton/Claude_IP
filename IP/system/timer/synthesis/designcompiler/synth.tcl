@@ -2,12 +2,15 @@
 # synth.tcl — Design Compiler synthesis script for timer IP
 # Usage: dc_shell -f synth.tcl
 #
-# Supports SAED90 (90nm), SAED32 (32nm), and SAED14 (14nm) PDKs.
+# Supports SAED90 (90nm), SAED32 (32nm), SAED14 (14nm), and SKY130 (130nm,
+# SkyWater open-source PDK) targets.
 # Select via PDK_TARGET environment variable (default: saed90).
 #
-#   PDK_TARGET=saed90  requires SAED90_PDK  pointing to the SAED90 installation
-#   PDK_TARGET=saed32  requires SAED32_EDK  pointing to /opt/ECE_Lib/SAED32_EDK
-#   PDK_TARGET=saed14  requires SAED14_EDK  pointing to /opt/ECE_Lib/SAED14nm_EDK_03_2025
+#   PDK_TARGET=saed90   requires SAED90_PDK  pointing to the SAED90 installation
+#   PDK_TARGET=saed32   requires SAED32_EDK  pointing to /opt/ECE_Lib/SAED32_EDK
+#   PDK_TARGET=saed14   requires SAED14_EDK  pointing to /opt/ECE_Lib/SAED14nm_EDK_03_2025
+#   PDK_TARGET=sky130   requires SKY130_PDK  pointing to the sky130A variant root
+#                        (e.g. .../volare/sky130/versions/<hash>/sky130A)
 
 # =========================================================================
 # PDK selection
@@ -42,8 +45,27 @@ if { $PDK_TARGET eq "saed90" } {
     set PDK_PATH $env(SAED14_EDK)
     # RVT base worst-case corner (SS, 0.72 V, 125 °C)
     set STDLIB "$PDK_PATH/SAED14nm_EDK_STD_RVT/liberty/nldm/base/saed14rvt_base_ss0p72v125c.db"
+} elseif { $PDK_TARGET eq "sky130" } {
+    if { ! [info exists env(SKY130_PDK)] } {
+        puts "ERROR: SKY130_PDK environment variable not set"
+        exit 1
+    }
+    if { ! [info exists env(SKY130_STDLIB_DB)] } {
+        puts "ERROR: SKY130_STDLIB_DB environment variable not set"
+        puts "       (run via run_vendor_synth.py, which compiles sky130's ASCII"
+        puts "       .lib to .db with lc_shell before invoking dc_shell)"
+        exit 1
+    }
+    set PDK_PATH $env(SKY130_PDK)
+    # High-density std cell library, typical corner (TT, 1.80 V, 25 °C),
+    # pre-compiled from the open PDK's ASCII .lib to .db via lc_shell — dc_shell
+    # on this host cannot read ASCII .lib directly as a target_library (DB-1).
+    # The SS (worst-case) and FF (best-case) corners are compiled to .db
+    # alongside it (see run_vendor_synth.py) for future multi-corner analysis,
+    # but are not used for synthesis itself.
+    set STDLIB $env(SKY130_STDLIB_DB)
 } else {
-    puts "ERROR: Unknown PDK_TARGET '$PDK_TARGET' — must be saed90, saed32, or saed14"
+    puts "ERROR: Unknown PDK_TARGET '$PDK_TARGET' — must be saed90, saed32, saed14, or sky130"
     exit 1
 }
 
