@@ -44,3 +44,52 @@ authoritative pre-fit figure.
 | `execute_flow -analysis_and_synthesis` not valid | Not a valid `execute_flow` option in Quartus Prime Lite | Changed to `execute_module -tool map` |
 | `execute_module` not found | Belongs to `::quartus::flow`, not `::quartus::misc` | Changed `package require` to `::quartus::flow` |
 | `report_utilization` / `report_timing_summary` not found | These are Vivado Tcl commands; Quartus Tcl has no equivalents | Removed; Python runner parses auto-generated `*.map.rpt` instead |
+
+## Design Compiler / PrimeTime STA (csun.edu)
+
+### Bug found and fixed: SystemVerilog variants synthesized with no clock constraint
+
+`designcompiler/synth.tcl`'s SV loop passed the literal string `clk` as every
+variant's clock port to `create_clock`, but no SV top-level module actually
+has a port named `clk` — each protocol names it differently (`PCLK`, `HCLK`,
+`ACLK`, `CLK_I`, exactly like the `vhdl_clocks` array already used for the
+VHDL loop below it). `create_clock -period 10 clk` silently failed
+(`Warning: Can't find object 'clk' in design '<variant>' (UID-95)`), so
+every SV variant, under every PDK (SAED90/32/14 and SKY130), compiled and
+reported timing with **no clock defined at all** — `report_timing` showed
+`Path Group: (none)` / `(Path is unconstrained)` for every path, and
+`compile` had no timing objective to optimize against.
+
+This was only caught when adding `write_sdc` (for PrimeTime STA, see below)
+and noticing the emitted `.sdc` had no `create_clock` line. Fixed by adding
+an `sv_clocks` array mirroring `vhdl_clocks` and using it in place of the
+hardcoded `clk`. Re-running `--dcsky130` after the fix changed the SV cell
+count (840 → 879 cells) and produced real `Path Group: PCLK/HCLK/ACLK/CLK_I`
+timing paths with actual slack values — confirming the fix took effect and
+that all prior SV `report_area`/`report_timing` output (any PDK, from
+before this fix) reflected an unconstrained compile, not a real timing
+result. VHDL variants were unaffected — `vhdl_clocks` was always correct.
+
+### Finding: timer fails timing at the SKY130 worst-case (ss_100C_1v60) corner
+
+PrimeTime STA (`synthesis/run_primetime_sta.py` + `synthesis/primetime/`,
+see `.agents/reference_primetime_sta.md`) — a script separate from DC
+synthesis, run afterward — runs the SKY130 gate-level netlists (synthesized
+to the `tt_025C_1v80` typical corner) through all three SKY130 PVT corners.
+At the worst-case `ss_100C_1v60` corner, the design **does not** meet the
+100 MHz (10 ns) target: worst-case WNS = -2.850 ns, TNS = -121.360 ns
+across the 8 variants. `tt_025C_1v80` (WNS = +3.250 ns) and `ff_n40C_1v95`
+(WNS = +5.660 ns) both meet timing. This is expected for a design
+synthesized to the typical corner without multi-corner optimization — it
+is a genuine timing result, not a tool or script issue, and is not the
+SDF/`set_ideal_network` reset-net issue documented for gate-level
+simulation elsewhere. Re-synthesizing with `ss_100C_1v60` as the DC target
+(or with multi-corner DC optimization) would be the next step if
+worst-case timing closure is required; out of scope for this pass, which
+focuses on getting the multi-corner STA capability in place.
+
+The same STA script also checks SAED90/32/14 against the single corner
+each was synthesized to — all three meet 100 MHz (WNS = +0.000 ns saed90,
++7.260 ns saed32, +3.820 ns saed14). SAED90's +0.000 ns is genuinely tight
+(exact 0.00 ns critical-path slack on `timer_axi4l` and `timer_wb`), not a
+display rounding artifact.

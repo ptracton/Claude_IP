@@ -437,6 +437,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | SKY130 PDK | `/tmp/pet43490/PDK/volare/sky130/...` (csun.edu, per-user install) | Open-source ASIC standard cell library |
 | volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 | SpyGlass (`spyglass_vc`) | csun.edu only, on `$PATH` | SV lint (replaces Verilator there); no working VHDL-2008 path — VHDL lint is unavailable on csun.edu |
+| PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |
 
 ---
 

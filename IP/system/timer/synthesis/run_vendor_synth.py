@@ -5,6 +5,10 @@ Automatically detects the host environment and runs appropriate tools:
   - On standard hosts: Vivado, Quartus, and Yosys
   - On *.csun.edu: Design Compiler with the SAED90/32/14 and SKY130 PDKs
 
+STA (PrimeTime, csun.edu only) is a separate step — see
+synthesis/run_primetime_sta.py — run after synthesizing whichever PDK(s)
+you want STA on.
+
 Usage:
     python3 synthesis/run_vendor_synth.py              # run appropriate tools for host
     python3 synthesis/run_vendor_synth.py --vivado     # Vivado only (standard hosts)
@@ -39,10 +43,10 @@ Outputs:
     synthesis/designcompiler/reports/saed32/         — DC 32nm per-variant reports
     synthesis/designcompiler/reports/saed14/         — DC 14nm per-variant reports
     synthesis/designcompiler/reports/sky130/         — DC SKY130 per-variant reports
-    synthesis/designcompiler/netlists/saed90/        — DC 90nm netlists + SDF
-    synthesis/designcompiler/netlists/saed32/        — DC 32nm netlists + SDF
-    synthesis/designcompiler/netlists/saed14/        — DC 14nm netlists + SDF
-    synthesis/designcompiler/netlists/sky130/        — DC SKY130 netlists + SDF
+    synthesis/designcompiler/netlists/saed90/        — DC 90nm netlists + SDF + SDC
+    synthesis/designcompiler/netlists/saed32/        — DC 32nm netlists + SDF + SDC
+    synthesis/designcompiler/netlists/saed14/        — DC 14nm netlists + SDF + SDC
+    synthesis/designcompiler/netlists/sky130/        — DC SKY130 netlists + SDF + SDC
 """
 
 import argparse

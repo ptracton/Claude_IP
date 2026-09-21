@@ -1,0 +1,23 @@
+========================================================================
+PrimeTime STA Report — timer IP
+Target        : SKY130 (130nm, SkyWater open-source PDK) — ff_n40C_1v95 (best-case)
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-09-20
+========================================================================
+
+STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
+        Timing is MET at this target — see Timing Summary below.
+
+------------------------------------------------------------------------
+Timing Summary (across all variants, 100 MHz / 10 ns target)
+------------------------------------------------------------------------
+  Worst-case WNS : 5.660 ns
+  Total TNS      : 0.000 ns
+  Timing         : MET
+
+Per-variant reports:
+  synthesis/primetime/reports/ff_n40C_1v95/
+
+Full log:
+  synthesis/primetime/pt_ff_n40C_1v95_run.log
+========================================================================

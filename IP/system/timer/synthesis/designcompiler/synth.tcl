@@ -142,6 +142,12 @@ proc synth_variant { variant clk_port reset_port rpt_dir net_dir suffix } {
     # all data/control port delays unaffected.
     set_ideal_network [get_ports $reset_port]
 
+    # Written before compile so it reflects the constraints as specified
+    # (create_clock/set_clock_transition/set_clock_latency), for PrimeTime
+    # STA to re-apply against this same netlist (see synthesis/primetime/).
+    write_sdc "${net_dir}/${variant}${suffix}.sdc"
+    puts "Wrote SDC: ${net_dir}/${variant}${suffix}.sdc"
+
     compile -map_effort low
 
     puts "\n--- Report Area ---"
@@ -165,6 +171,13 @@ proc synth_variant { variant clk_port reset_port rpt_dir net_dir suffix } {
 # SystemVerilog variants (clock port is always 'clk')
 # =========================================================================
 
+array set sv_clocks {
+    timer_apb   PCLK
+    timer_ahb   HCLK
+    timer_axi4l ACLK
+    timer_wb    CLK_I
+}
+
 array set sv_resets {
     timer_apb   PRESETn
     timer_ahb   HRESETn
@@ -174,7 +187,7 @@ array set sv_resets {
 
 foreach variant {timer_apb timer_ahb timer_axi4l timer_wb} {
     analyze -format sverilog "${variant}.sv"
-    synth_variant $variant clk $sv_resets($variant) $RPT_DIR $NET_DIR ""
+    synth_variant $variant $sv_clocks($variant) $sv_resets($variant) $RPT_DIR $NET_DIR ""
 }
 
 # =========================================================================

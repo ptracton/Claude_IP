@@ -26,6 +26,10 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
   `lc_shell` must also be on `$PATH`: sky130 ships only ASCII `.lib`, and it
   needs compiling to `.db` before `dc_shell` can use it as a
   `target_library` (see the sky130 subsection below).
+- `pt_shell` is on `$PATH` (Synopsys PrimeTime) — needed only for STA, run
+  via the separate `synthesis/run_primetime_sta.py` (see the PrimeTime STA
+  subsection below); requires the matching DC PDK to have been synthesized
+  at least once first.
 
 ## Machine-Specific Environment: *.csun.edu
 
@@ -38,6 +42,10 @@ On this host the **only** supported synthesis tool is:
 - Synopsys Design Compiler (`dc_shell` on `$PATH`)
 - Plus Library Compiler (`lc_shell` on `$PATH`) — needed only for the sky130
   PDK, to pre-compile its ASCII `.lib` to `.db` (see sky130 subsection below)
+- Plus PrimeTime (`pt_shell` on `$PATH`) — STA via `run_primetime_sta.py`,
+  a separate script from `run_vendor_synth.py`: SAED90/32/14 (single
+  corner each) and SKY130 (all three PVT corners) — see the PrimeTime STA
+  subsection below
 
 `run_vendor_synth.py` must detect this environment at startup:
 
@@ -48,7 +56,13 @@ ON_CSUN = socket.getfqdn().endswith(".csun.edu")
 
 When `ON_CSUN` is `True`:
 - Skip Vivado, Quartus, and Yosys synthesis.
-- Run Design Compiler for SAED90, SAED32, SAED14, **and** SKY130.
+- Run Design Compiler for SAED90, SAED32, SAED14, **and** SKY130 (`run_vendor_synth.py`).
+- Separately, run PrimeTime STA (`run_primetime_sta.py`) on whichever PDK(s)
+  were just synthesized — SAED90/32/14 each get one STA run against the
+  same single corner they were synthesized to; SKY130 gets three STA runs,
+  one per PVT corner (`ss_100C_1v60`, `tt_025C_1v80`, `ff_n40C_1v95`),
+  rechecking the one (typical-corner) netlist set against all three — see
+  the PrimeTime STA subsection below.
 - All Python code must work without activating a virtualenv — use only system Python packages.
   (The one exception is `volare`, now in `virtualenv/requirements.txt` for managing/fetching
   sky130 PDK versions by hand when needed — it is not imported by `run_vendor_synth.py` itself.)
@@ -73,9 +87,13 @@ Key requirements:
 - Use `analyze -format sverilog` and `analyze -format vhdl` (not `read_file` — only `analyze` honors `search_path`).
 - Add both SV and VHDL source tree roots to `search_path`.
 - Analyze shared interface files first: `claude_apb_if.sv`, `claude_ahb_if.sv`, `claude_axi4l_if.sv`, `claude_wb_if.sv` (and their `.vhd` counterparts).
-- Synthesize four SV variants and four VHDL variants (clock port names differ per protocol):
+- Synthesize four SV variants and four VHDL variants. **The clock port name
+  differs per protocol and must be looked up per variant for both SV and
+  VHDL** — it is not a shared `clk` name (see the "SV variants synthesized
+  with no clock constraint" pitfall below for what happens if you hardcode
+  one):
 
-  | Variant | VHDL clock port |
+  | Variant | Clock port (same name in both the SV and VHDL top-level) |
   |---|---|
   | `timer_apb` | `PCLK` |
   | `timer_ahb` | `HCLK` |
@@ -85,6 +103,10 @@ Key requirements:
 - Use a `synth_variant` proc to avoid duplicating the elaborate/compile/report/write loop.
 - Reports go to `reports/$PDK_TARGET/<variant>[_vhdl]_{area,timing}.rpt` via `redirect -append`.
 - Netlists go to `netlists/$PDK_TARGET/<variant>[_vhdl].{v,sdf}`.
+- SDC goes to `netlists/$PDK_TARGET/<variant>[_vhdl].sdc` via `write_sdc`,
+  called **after** `create_clock`/`set_clock_transition`/`set_clock_latency`
+  but before `compile` — PrimeTime STA (see below) reads this file back
+  against the same netlist.
 - Create output directories with `file mkdir` before the synthesis loop.
 - Timing constraint: 100 MHz (`create_clock -period 10 <clk_port>`).
 - Compile: `compile -map_effort low`.
@@ -119,8 +141,9 @@ PDK_CONFIGS = {
 - Writes `designcompiler/report_<pdk_target>.txt`.
 - References `reports/<pdk_target>/` and `netlists/<pdk_target>/`.
 
-CLI flags on csun.edu:
-- `--dc` — run all four PDKs (default when no flags given on csun.edu).
+CLI flags on csun.edu (`run_vendor_synth.py` — DC synthesis only; STA is a
+separate script, `run_primetime_sta.py`, see below):
+- `--dc` — run all four PDKs (default when no flags given).
 - `--dc90` — 90nm only.
 - `--dc32` — 32nm only.
 - `--dc14` — 14nm only.
@@ -180,16 +203,110 @@ not through volare's own bookkeeping (`volare ls --pdk-root <path>` returns
 
 #### `synthesis/clean.sh`
 
-A standalone bash script that removes all DC-generated files:
+A standalone bash script that removes all DC- and PrimeTime-generated files:
 - Directories: `cksum_dir/`, `reports/`, `netlists/`, `ARCH/`, `ENTI/`, `PACK/` (DC VHDL library dirs).
 - Files: `*.v`, `*.sdf`, `*.pvk`, `*.pvl`, `*.syn`, `*.mr`, `dc_saed90_run.log`, `dc_saed32_run.log`, `dc_saed14_run.log`, `dc_sky130_run.log`, `command.log`, `default.svf`, `report.txt`.
+- PrimeTime: `primetime/reports/`, `primetime/.rce/`, `primetime/pt_*_run.log`,
+  `primetime/pt_shell_command.log` (see PrimeTime STA subsection below for
+  what is deliberately **not** removed).
 - Yosys: `yosys/work/`.
 - Python: `__pycache__/`.
 - **Never** removes `IP/common/synthesis/designcompiler/sky130_lib/` — that
   cache is shared across every IP, not a per-IP artifact; cleaning one IP's
   synthesis outputs must not force every other IP to recompile it.
 
-Must be called from the top-level `cleanup.sh` in addition to `run_vendor_synth.py --clean`.
+Must be called from the top-level `cleanup.sh`, in addition to
+`run_vendor_synth.py --clean` **and** `run_primetime_sta.py --clean` (see
+below — two separate scripts, two separate `--clean` calls).
+
+### PrimeTime STA (csun.edu only, `synthesis/run_primetime_sta.py` + `synthesis/primetime/`)
+
+A **separate script from `run_vendor_synth.py`** — DC synthesis and
+PrimeTime STA are two distinct steps you run one after the other, not one
+combined tool. STA runs against whichever PDK(s) `run_vendor_synth.py`
+already synthesized (it reads their netlists + `.sdc`, does not
+re-synthesize). It covers all four PDKs, not just SKY130:
+- SAED90, SAED32, SAED14 — one STA run each, against the same single
+  `.db` corner each EDK was already synthesized to (see the `synth.tcl` PDK
+  table above — `saed90nm_max`, `saed32rvt_ss0p95v125c`,
+  `saed14rvt_base_ss0p72v125c`). This is a real timing recheck of the
+  gate-level netlist, not a repeat of DC's own compile-time estimate.
+- SKY130 — three STA runs, one per PVT corner (`ss_100C_1v60`,
+  `tt_025C_1v80`, `ff_n40C_1v95`, already compiled to `.db` by
+  `build_sky130_libs.py` — see sky130 subsection above), all three
+  rechecking the **one** netlist set DC produced (synthesized only to the
+  typical corner). This is the one PDK here with real multi-corner
+  coverage to check against — the SAED EDKs each ship a single `.db`, so
+  there's no second/third corner for them, just the one STA-vs-synthesis
+  cross-check.
+
+CLI flags on `run_primetime_sta.py` (no flags at all = everything: all
+three SAED targets + all three SKY130 corners):
+- `--saed90` / `--saed32` / `--saed14` — one SAED target only.
+- `--sky130` — SKY130, all three corners.
+- `--ss` / `--tt` / `--ff` — one SKY130 corner only.
+- `--clean` — remove STA outputs. **Host-agnostic and a no-op-safe on
+  non-csun.edu hosts** (unlike running STA itself) so the top-level
+  `cleanup.sh` can call it unconditionally, the same way
+  `run_vendor_synth.py --clean` already is.
+
+#### `synthesis/primetime/sta.tcl`
+
+One shared script for every target (SAED or SKY130 corner) — driven
+entirely by env vars set by `run_primetime_sta.py` (`PT_TARGET`, `PT_DB`,
+`PT_NET_DIR`, `PT_RPT_DIR`), not command-line args, matching `synth.tcl`'s
+own env-var convention. Per variant/suffix (`""` for SV, `"_vhdl"` for
+VHDL):
+```
+read_verilog <netlist>.v
+current_design <variant>
+link
+read_sdc <netlist>.sdc
+update_timing
+report_timing -max_paths 10 -delay_type max   -> reports/<target>/<variant>[_vhdl]_timing.rpt
+report_qor                                     -> reports/<target>/<variant>[_vhdl]_qor.rpt
+report_constraint -all_violators               -> reports/<target>/<variant>[_vhdl]_constraint.rpt
+remove_design -all
+```
+`<target>` is `saed90`/`saed32`/`saed14` or an SKY130 corner name; `PT_NET_DIR`
+points at `designcompiler/netlists/sky130/` for all three SKY130 corners and
+`designcompiler/netlists/<target>/` for a SAED target (see
+`netlist_pdk_for()` in `run_primetime_sta.py`). Exits 1 (rather than
+erroring out) if a variant's netlist/SDC is missing. A one-time, harmless
+startup message — `Error: Library Compiler executable path is not set.
+(PT-063)` — appears in every `pt_shell` log; it does not affect the exit
+code or the generated reports (this repo's flow never calls into LC from
+PrimeTime) and should not be treated as a real failure.
+
+#### `synthesis/run_primetime_sta.py`
+
+```python
+PT_BIN = "pt_shell"
+SAED_TARGETS = {"saed90": {...}, "saed32": {...}, "saed14": {...}}  # label/desc/db per target
+SKY130_CORNER_DESC = {"ss_100C_1v60": "worst-case", "tt_025C_1v80": "typical", "ff_n40C_1v95": "best-case"}
+```
+
+`run_sta(synth_dir, target)`:
+- Resolves the netlist directory via `netlist_pdk_for(target)` — `"sky130"`
+  for any SKY130 corner, `target` itself for a SAED target — and checks
+  `designcompiler/netlists/<pdk>/*.v` exist first; if not, errors out
+  pointing at the matching `run_vendor_synth.py` DC flag rather than trying
+  to synthesize on the fly.
+- Resolves the `.db` via `resolve_db(target)`: `build_sky130_libs.ensure_sky130_dbs()`
+  for SKY130 (same shared cache as DC synthesis), or the hardcoded SAED
+  `.db` path (same one `synth.tcl` used) for a SAED target — no separate
+  PrimeTime-only compile step either way.
+- Writes log to `primetime/pt_<target>_run.log`. Timeout: 1200 s per target.
+
+Pass/fail (`ok` return value) reflects whether `pt_shell` **ran**
+successfully (exit 0) — not whether timing was met. Timing MET/VIOLATED is
+a separate field, parsed from `report_qor`'s `Critical Path Slack` /
+`Total Negative Slack` lines (worst-case WNS across all 8 variants' `*_qor.rpt`
+files, TNS summed across them) via `parse_pt_qor`, and written into
+`write_pt_report`'s `report_sta_<target>.txt` alongside a `STATUS: PASS`
+line that only ever means "STA completed" — exactly the same PASS/timing
+split already used by `write_vivado_report`. A `VIOLATED` target is a real
+synthesis/STA finding to record in `known_issues.md`, not a script bug.
 
 ### Yosys (`synthesis/yosys/`)
 
@@ -302,15 +419,20 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 | `synthesis/designcompiler/reports/saed32/` | Per-variant area + timing reports — 32nm |
 | `synthesis/designcompiler/reports/saed14/` | Per-variant area + timing reports — 14nm |
 | `synthesis/designcompiler/reports/sky130/` | Per-variant area + timing reports — sky130 |
-| `synthesis/designcompiler/netlists/saed90/` | Netlists + SDF — 90nm |
-| `synthesis/designcompiler/netlists/saed32/` | Netlists + SDF — 32nm |
-| `synthesis/designcompiler/netlists/saed14/` | Netlists + SDF — 14nm |
-| `synthesis/designcompiler/netlists/sky130/` | Netlists + SDF — sky130 |
+| `synthesis/designcompiler/netlists/saed90/` | Netlists + SDF + SDC — 90nm |
+| `synthesis/designcompiler/netlists/saed32/` | Netlists + SDF + SDC — 32nm |
+| `synthesis/designcompiler/netlists/saed14/` | Netlists + SDF + SDC — 14nm |
+| `synthesis/designcompiler/netlists/sky130/` | Netlists + SDF + SDC — sky130 |
 | `synthesis/run_vendor_synth.py` | Python runner (host-aware; DC on csun.edu) |
-| `synthesis/clean.sh` | Removes all DC-generated outputs |
+| `synthesis/clean.sh` | Removes all DC- and PrimeTime-generated outputs |
 | `synthesis/known_issues.md` | Documented warnings (may be empty) |
 | `IP/common/synthesis/designcompiler/build_sky130_libs.py` | Shared sky130 `.lib`→`.db` compiler (all IPs) |
 | `IP/common/synthesis/designcompiler/sky130_lib/` | Shared compiled sky130 `.db` cache (all IPs) |
+| `synthesis/run_primetime_sta.py` | Python STA runner — separate from `run_vendor_synth.py` (SAED90/32/14 + SKY130) |
+| `synthesis/primetime/sta.tcl` | PrimeTime STA script (one shared script, all targets, SV + VHDL) |
+| `synthesis/primetime/pt_<target>_run.log` | Raw PrimeTime output, per target |
+| `synthesis/primetime/report_sta_<target>.txt` | Human-readable STA summary, per target |
+| `synthesis/primetime/reports/<target>/` | Per-variant timing/QoR/constraint reports, per target |
 
 ## Quality Gate
 
@@ -326,7 +448,14 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
   populated with `.v` and `.sdf` files.
 - sky130 run log contains no `black-box`, `unmapped components`, or `DB-1` — exit code
   alone does not prove the sky130 run actually mapped to real cells (see sky130 subsection).
+- Every generated `.sdc` contains a real `create_clock` line for its variant's actual
+  clock port — an empty/missing `create_clock` means the wrong clock port name was
+  used and the run silently compiled unconstrained (see Known Tcl Pitfalls below).
 - `synthesis/run_vendor_synth.py` exits 0 for all four PDK runs.
+- `synthesis/run_primetime_sta.py` (no flags — all six targets) exits 0 —
+  this means STA **ran** successfully on every target, not that timing was
+  met at every one; a `VIOLATED` target is a legitimate result to record in
+  `known_issues.md`, not a gate failure.
 
 **All hosts:**
 - `synthesis/known_issues.md` exists (even if empty) and all unresolved warnings are documented.
@@ -341,6 +470,8 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 | DC | `set_app_var search_path "path1 path2"` | `set_app_var search_path [list path1 path2]` |
 | DC | `target_library`/`link_library` pointed at sky130's ASCII `.lib` | Errors `File is not a DB file (DB-1)` but **exits 0** with black-box cells; pre-compile to `.db` via `lc_shell` first (`build_sky130_libs.py`) |
 | DC | `read_lib` inside `dc_shell` to compile sky130's `.lib` | Fails `Check the installation of Library Compiler (LCSH-3)` on this host; use the separate `lc_shell` binary instead |
+| DC | `create_clock -period 10 clk` for every SV variant (hardcoded port name) | SV top-level clock ports are protocol-specific (`PCLK`/`HCLK`/`ACLK`/`CLK_I`), same as VHDL — hardcoding `clk` warns `Can't find object 'clk' (UID-95)` and **exits 0**, silently compiling with no clock at all (`report_timing` shows `Path Group: (none)`, unconstrained); look up the port per variant, e.g. an `sv_clocks` array mirroring `vhdl_clocks` |
+| PrimeTime | Treating `pt_shell`'s `Error: Library Compiler executable path is not set. (PT-063)` as a run failure | Harmless startup message on this host, unrelated to STA; check the exit code and `report_qor`/`report_timing` content instead |
 | Vivado | `set_property target_language SystemVerilog` | `set_property target_language Verilog` |
 | Vivado | `read_xdc - << { ... }` (stdin, fails in batch) | Write XDC to a temp file, then `read_xdc <file>` |
 | Vivado | `get_runs synth_1` in in-memory project | Omit — returns empty; pass `-mode out_of_context` directly to `synth_design` |

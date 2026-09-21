@@ -30,6 +30,9 @@ python3 "${CLAUDE_TIMER_PATH}/synthesis/run_vendor_synth.py" --clean
 # Design Compiler outputs (netlists, reports, VHDL library dirs, DC intermediates)
 bash "${CLAUDE_TIMER_PATH}/synthesis/clean.sh"
 
+# PrimeTime STA outputs (csun.edu only; --clean is host-agnostic and a no-op elsewhere)
+python3 "${CLAUDE_TIMER_PATH}/synthesis/run_primetime_sta.py" --clean
+
 # Formal verification results (keep scripts and properties)
 bash "${CLAUDE_TIMER_PATH}/verification/formal/run_formal.sh" --clean
 

@@ -1,0 +1,23 @@
+========================================================================
+PrimeTime STA Report — timer IP
+Target        : SAED14 (14nm) — SS 0.72V 125°C (worst-case) — single corner shipped by this EDK
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-09-20
+========================================================================
+
+STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
+        Timing is MET at this target — see Timing Summary below.
+
+------------------------------------------------------------------------
+Timing Summary (across all variants, 100 MHz / 10 ns target)
+------------------------------------------------------------------------
+  Worst-case WNS : 3.820 ns
+  Total TNS      : 0.000 ns
+  Timing         : MET
+
+Per-variant reports:
+  synthesis/primetime/reports/saed14/
+
+Full log:
+  synthesis/primetime/pt_saed14_run.log
+========================================================================

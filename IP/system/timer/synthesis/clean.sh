@@ -29,6 +29,12 @@ rm -rf \
     "$DC_DIR"/default.svf \
     "$DC_DIR"/report.txt
 
+# PrimeTime STA outputs (csun.edu only; see run_primetime_sta.py)
+# Note: report_sta_<target>.txt is NOT removed — it's the committed final
+# per-target summary, like report_sky130.txt above.
+rm -rf "$SCRIPT_DIR/primetime/reports" "$SCRIPT_DIR/primetime/.rce"
+rm -f "$SCRIPT_DIR"/primetime/pt_*_run.log "$SCRIPT_DIR/primetime/pt_shell_command.log"
+
 # Yosys outputs
 rm -rf "$SCRIPT_DIR/yosys/work"
 

@@ -410,6 +410,10 @@ Technology-independent synthesis using Yosys 0.60 targeting generic gate primiti
 FPGA synthesis scripts for Vivado and Quartus are provided in `synthesis/` but require
 the respective vendor tools (not run as part of the open-source flow).
 
+On `*.csun.edu` (Vivado/Quartus/Yosys not installed there), synthesis and STA
+run through Synopsys Design Compiler and PrimeTime instead — see the two
+csun.edu subsections below.
+
 ### Yosys (technology-independent)
 
 | Variant   | Top module   | Total cells | Flip-flops | Result |
@@ -452,4 +456,57 @@ See `synthesis/quartus/work/timer_apb.map.rpt`.
 
 Run: `python3 synthesis/run_vendor_synth.py --quartus`
 
-Run: `python3 synthesis/run_vendor_synth.py --quartus`
+### Design Compiler (csun.edu only)
+
+Synopsys Design Compiler across four PDKs — SAED90/32/14 (single, worst-case
+corner each) and SKY130 (SkyWater open-source PDK, three PVT corners
+compiled, synthesized to the typical corner). Clock: 100 MHz. All 4 SV + 4
+VHDL variants synthesized per PDK.
+
+| PDK | Corner (synthesis target) | Total cells | Flip-flops | Result |
+|-----|---------------------------|-------------|------------|--------|
+| SAED90 (90nm)  | `saed90nm_max`            | 821 | 191 | PASS |
+| SAED32 (32nm)  | SS 0.95V 125°C            | 714 | 191 | PASS |
+| SAED14 (14nm)  | SS 0.72V 125°C            | 871 | 208 | PASS |
+| SKY130 (130nm) | `tt_025C_1v80` (typical)  | 879 | 191 | PASS |
+
+Results generated: 2026-09-20. Tool: Design Compiler (`dc_shell`) Y-2026.03-SP1.
+See `synthesis/designcompiler/report_<pdk>.txt` and
+`synthesis/designcompiler/reports/<pdk>/` for per-variant area/timing detail.
+
+Run: `python3 synthesis/run_vendor_synth.py --dc` (all four PDKs; `--dc90`/`--dc32`/`--dc14`/`--dcsky130` for one).
+
+### PrimeTime STA (csun.edu only)
+
+Static timing analysis, run via a **separate script** from Design Compiler
+(`synthesis/run_primetime_sta.py` — run after synthesizing the PDK(s) above).
+It covers all four PDKs:
+- SAED90/32/14 — one STA run each, against the same single `.db` each EDK
+  was already synthesized to (a real gate-level timing recheck, not a
+  repeat of DC's own compile-time estimate).
+- SKY130 — three STA runs, rechecking the one (typical-corner) netlist set
+  above against all three PVT corners. SKY130 is the only PDK here with
+  full, equally-maintained multi-corner `.db` coverage — see
+  `.agents/reference_primetime_sta.md`.
+
+Clock: 100 MHz (10 ns), across all 8 variants (4 SV + 4 VHDL) per target.
+
+| Target | Corner / Voltage / Temp | Worst-case WNS | Total TNS | Result |
+|--------|--------------------------|-----------------|-----------|--------|
+| SAED90 (90nm)               | `saed90nm_max` (single corner)  | +0.000 ns | 0.000 ns    | MET      |
+| SAED32 (32nm)               | SS 0.95V 125°C (single corner)  | +7.260 ns | 0.000 ns    | MET      |
+| SAED14 (14nm)               | SS 0.72V 125°C (single corner)  | +3.820 ns | 0.000 ns    | MET      |
+| SKY130 `ss_100C_1v60` (worst-case) | 1.60 V, 100 °C            | -2.850 ns | -121.360 ns | VIOLATED |
+| SKY130 `tt_025C_1v80` (typical)    | 1.80 V, 25 °C             | +3.250 ns |    0.000 ns | MET      |
+| SKY130 `ff_n40C_1v95` (best-case)  | 1.95 V, -40 °C            | +5.660 ns |    0.000 ns | MET      |
+
+Results generated: 2026-09-20. Tool: PrimeTime (`pt_shell`) Y-2026.03-SP1.
+SAED90's +0.000 ns is genuinely tight, not a rounding artifact — `timer_axi4l`
+and `timer_wb` both land at exactly 0.00 ns critical-path slack against
+`saed90nm_max`. The SKY130 netlist meets 100 MHz at the typical and
+best-case corners but not at the worst-case corner — expected for a
+netlist synthesized only to the typical corner; see
+`synthesis/known_issues.md`. See `synthesis/primetime/report_sta_<target>.txt`
+and `synthesis/primetime/reports/<target>/` for per-variant detail.
+
+Run: `python3 synthesis/run_primetime_sta.py` (all six targets; `--saed90`/`--saed32`/`--saed14`/`--sky130`/`--ss`/`--tt`/`--ff` for one).

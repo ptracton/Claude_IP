@@ -38,7 +38,12 @@ compiled `.db` files (all three corners: `ss_100C_1v60` worst-case,
 `run_vendor_synth.py` imports this module via `IP_COMMON_PATH` rather than
 reimplementing it — this repo's IPs otherwise keep their `synthesis/`
 directories fully self-contained/duplicated (see `bus_matrix` vs `timer`),
-so sky130 tooling is the one deliberate exception to that pattern.
+so sky130 tooling is the one deliberate exception to that pattern. The same
+cache is reused a second time by `synthesis/run_primetime_sta.py` (PrimeTime
+STA, a separate script from `run_vendor_synth.py` — see
+[reference_primetime_sta](reference_primetime_sta.md)): STA against all
+three sky130 corners is exactly why those corners are compiled at all — DC
+synthesis itself only ever uses the typical one.
 
 **Why:** compiling all three corners costs real time (~15-30 s combined)
 that's wasted if repeated per IP or per run; centralizing it in
@@ -49,8 +54,11 @@ the cache via mtime checking.
 **How to apply:** any new IP's Step 10 synthesis work on csun.edu should
 add `sky130` as a fourth `PDK_TARGET` following the exact pattern in
 `IP/system/timer/synthesis/{run_vendor_synth.py,designcompiler/synth.tcl,clean.sh}`
-— see [synthesis.md](synthesis.md) for the concrete template. Do **not** let
-a new IP's `clean.sh` or `--clean` remove
+— see [synthesis.md](synthesis.md) for the concrete template — and, once
+that's wired up, add `run_primetime_sta.py` for STA the same way (see
+[reference_primetime_sta](reference_primetime_sta.md)). Do **not** let a
+new IP's `clean.sh`, `run_vendor_synth.py --clean`, or
+`run_primetime_sta.py --clean` remove
 `IP/common/synthesis/designcompiler/sky130_lib/`; it isn't that IP's artifact.
 
 `volare` is now in `virtualenv/requirements.txt` (added alongside its

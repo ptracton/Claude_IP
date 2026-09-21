@@ -27,6 +27,16 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
        `verification/lint/spyglass/vcst_rtdb`, `vcst_rtdb.bak`, `*.prj.tcl*`,
        `vcst_command.log`, `vcst_session.log*`, `.vcstPref`, `spyglass.out`,
        `report_hdl.txt`, `VCSOptFile.txt` — but keep the static `.prj` files.
+     - `python3 synthesis/run_primetime_sta.py --clean` — PrimeTime STA
+       outputs (a script separate from `run_vendor_synth.py`; `--clean` is
+       host-agnostic and a safe no-op off csun.edu, so call it
+       unconditionally like `run_vendor_synth.py --clean` above):
+       `synthesis/primetime/reports/`, `synthesis/primetime/.rce/`,
+       `synthesis/primetime/pt_*_run.log`,
+       `synthesis/primetime/pt_shell_command.log` — but keep
+       `synthesis/primetime/sta.tcl` and the committed
+       `report_sta_<target>.txt` summaries (same convention as
+       `report_sky130.txt`, not per-IP scratch).
    - Vivado journal and log files (`.jou`, `.log`, `.pb`).
    - Quartus `db/` and `incremental_db/` directories.
 2. Update `.gitignore` (at the `IP_NAME/` root) to exclude:
