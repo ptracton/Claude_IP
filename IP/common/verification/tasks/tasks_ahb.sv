@@ -80,10 +80,10 @@ endtask
 //
 // AHB pipeline:
 //   Edge 1: TB presents HADDR/HTRANS=NONSEQ (NBA). DUT sees old signals.
-//   Edge 2: DUT samples HTRANS=NONSEQ → dphase_valid_q<=1 (NBA). TB goes IDLE.
-//           rd_en is combinational (= dphase_valid_q), still 0 at this edge eval.
-//   Edge 3: DUT sees dphase_valid_q=1 → rd_en=1. Regfile clocks rd_data_reg (NBA).
-//   Edge 4: rd_data_reg is stable. TB captures HRDATA = rd_data_reg.
+//   Edge 2: DUT samples HTRANS=NONSEQ → rd_wait_q<=1 (NBA). TB goes IDLE.
+//           Data phase, wait cycle: HREADY=0, rd_en=1 (= rd_wait_q).
+//   Edge 3: Regfile clocks rd_data_reg (NBA). rd_wait_q<=0 → HREADY=1.
+//   Edge 4: Data phase completes (HREADY=1). TB captures HRDATA = rd_data_reg.
 // ---------------------------------------------------------------------------
 task automatic read_reg;
   input  logic [11:0] addr;

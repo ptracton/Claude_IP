@@ -1,0 +1,10 @@
+# timer_fv_waivers.txt — VC Formal result waivers for the timer IP.
+#
+# Format:  <property-name glob>  <waived result>  # justification (required)
+# Waived results: falsified, inconclusive, vacuous, uncoverable.
+# Globs are case-insensitive, so one line covers the SV and VHDL runs.
+# Every entry must also be listed in verification/formal/vcf/README.md.
+
+timer_apb.u_fv.u_bus.c_slverr                      uncoverable  # claude_apb_if ties PSLVERR=0: the timer has no error responses
+timer_ahb.u_fv.u_bus.g_s_error_two_cycle.*         vacuous      # claude_ahb_if ties HRESP=OKAY: no ERROR response to check
+timer_wb.u_fv.u_bus.c_err                          uncoverable  # claude_wb_if ties ERR_O=0: the timer has no error responses
