@@ -15,15 +15,31 @@ Step 4 complete and all directed tests passing.
 - `IP_COMMON_PATH` is set (sourced from `setup.sh`).
 - Yosys with SymbiYosys (`sby`) from OSS CAD Suite is on `$PATH` (sourced from `setup.sh`).
 
+**On *.csun.edu** (OSS CAD Suite / `sby` is NOT installed):
+- Synopsys VC Formal `vcf` is on `$PATH`
+  (`/opt/synopsys/vc_formal/Y-2026.03-SP1/bin`).
+- Use the VC Formal flow in **Section 6** instead of Sections 1b–4. It
+  verifies all four top-levels in **both SV and VHDL-2008**. The SymbiYosys
+  flow covers SV only.
+
 ## Common Components
 
 **Check `${IP_COMMON_PATH}/verification/formal/` before writing any new SVA properties.**
 
-- `${IP_COMMON_PATH}/verification/formal/reset_props.sv` — parameterized reset-state
-  property template. Bind and specialize it rather than rewriting reset assertions.
-- `${IP_COMMON_PATH}/verification/formal/bus_protocol_props.sv` — bus-protocol invariant
-  templates for AHB-Lite, APB4, AXI4-Lite, and Wishbone B4. Use these for the adapter
-  verification; only write IP-specific functional properties in `verification/formal/`.
+- `${IP_COMMON_PATH}/verification/formal/claude_<proto>_fv.sv` (`apb`, `ahb`,
+  `axi4l`, `wb`) — bus-protocol checkers for APB4, AHB-Lite, AXI4-Lite and
+  Wishbone B4. Each checker assumes the master rules, asserts the slave rules,
+  and outputs a protocol-neutral transaction stream (`obs_*`). Use these for
+  the adapter verification. Only write IP-specific functional properties in
+  `verification/formal/`.
+- `${IP_COMMON_PATH}/verification/formal/claude_reg_fv.sv` — protocol-neutral
+  register read-back / reserved-bits-zero / reset-value checker driven by
+  that `obs_*` stream. It lets one register-map checker run unchanged on
+  every bus.
+- `${IP_COMMON_PATH}/verification/formal/vcf/claude_vcf_fpv.tcl` and
+  `${IP_COMMON_PATH}/verification/tools/claude_vcf.py` — the generic VC Formal
+  run script and Python driver (Section 6).
+- Full documentation: `${IP_COMMON_PATH}/verification/formal/README.md`.
 - If new reusable property templates are developed, place them in
   `${IP_COMMON_PATH}/verification/formal/` for other IPs to benefit from.
 - All `read` paths in `.sby` files that reference common properties must use
@@ -339,6 +355,42 @@ Replace the `[TBD]` placeholder in **Formal Verification Results** with:
   register read-back, cover reachability).
 - The Yosys/SymbiYosys version used and the date results were generated.
 
+### 6. VC Formal flow (Synopsys; required on *.csun.edu)
+
+Reference implementation: `IP/system/timer/verification/formal/vcf/` and
+`--tool vcf` in `IP/system/timer/verification/tools/formal_timer.py`. Read
+`${IP_COMMON_PATH}/verification/formal/README.md` first.
+
+**RULE — Checkers are bound, never copied into the RTL, and use only the
+ports of the block they are bound to.** VC Formal binds SVA into VHDL
+entities as well as SV modules, but it cannot make hierarchical references
+into VHDL. Port-only checkers give the SV and VHDL builds identical checks.
+
+Create in `verification/formal/vcf/`:
+
+| File | Contents |
+|------|----------|
+| `IP_NAME_regmap_fv.sv` | one `claude_reg_fv` per register (RW / reserved / reset masks) + a generate loop over unmapped addresses (`ZERO_MASK('1)`); inputs are the `obs_*` stream |
+| `IP_NAME_core_fv.sv`, `IP_NAME_regfile_fv.sv` | IP-specific functional properties, ports only (Section 1 content: reset, register access, W1C, self-clear, counters, IRQs, covers) |
+| `IP_NAME_<proto>_fv.sv` ×4 | instantiates common `claude_<proto>_fv` + `IP_NAME_regmap_fv` (+ top-level port properties) |
+| `IP_NAME_<proto>_fv_bind.sv` ×4 | bind-only module `IP_NAME_<proto>_fv_bind` binding the wrapper into `IP_NAME_<proto>` and the block checkers into their sub-blocks. Shared sub-block binds go in an `.svh` include |
+| `IP_NAME_fv_waivers.txt` | `<glob> <result> # justification`, e.g. covers of error responses the common bridge ties off |
+| `README.md` | how to run, what is proven, waivers, bugs found |
+
+Extend `verification/tools/formal_IP_NAME.py` with `--tool {auto,sby,vcf}`,
+`--proto`, `--lang {sv,vhdl,all}`, `--max-time` and `--trace`. Build one
+`claude_vcf.VcfJob` per (protocol, language) and call `claude_vcf.run_job()`.
+Write per-job logs to `verification/work/vcf/<top>_<lang>/results.log` and
+the summary to `verification/formal/vcf/results.log`. Hook the flow into
+`run_regression.py` whenever `vcf` is on `PATH`.
+
+**Debugging a failure:** run with `--trace`. Each falsified assertion gets an
+FSDB in `verification/work/vcf/<job>/traces/`. Open it in Verdi, or run
+`fsdb2vcd <file>.fsdb -o cex.vcd` and read the VCD. Before changing RTL, check
+the checker. A missing master assumption lets the solver produce illegal bus
+traffic, and that is the most common cause of a false failure. If the RTL is
+wrong, fix it in both languages.
+
 ## Outputs
 
 | Artifact | Description |
@@ -352,6 +404,8 @@ Replace the `[TBD]` placeholder in **Formal Verification Results** with:
 | `verification/formal/IP_NAME_<proto>_prove.sby` | Unbounded proof config, optional |
 | `verification/tools/formal_IP_NAME.py` | Completed formal verification runner |
 | `verification/formal/results.log` | Per proto×task and overall `PASS` / `FAIL` |
+| `verification/formal/vcf/*` | VC Formal checkers, bind modules, waivers, README (Section 6) |
+| `verification/formal/vcf/results.log` | VC Formal: first line `PASS`/`FAIL`, one line per (protocol, language) job |
 
 ## Quality Gate
 
@@ -362,3 +416,7 @@ Replace the `[TBD]` placeholder in **Formal Verification Results** with:
 - All `cover` properties are reachable for every top-level.
 - No hardcoded absolute paths in any `.sby` file or in `formal_IP_NAME.py`.
 - All SVA property names follow the naming convention from `VerilogCodingStyle.md`.
+- **VC Formal (where `vcf` is available):** `formal_IP_NAME.py --tool vcf` exits 0. All
+  eight jobs (4 protocols × SV/VHDL) show every assertion proven and non-vacuous and
+  every cover covered. Every waiver is justified in `IP_NAME_fv_waivers.txt` and
+  listed in `verification/formal/vcf/README.md`. Inconclusive results are failures.

@@ -56,11 +56,17 @@ IP/common/
 │   ├── tests/            # Generic test helper packages (shared by all IPs)
 │   │   ├── ip_test_pkg.sv    # SV: check_eq, test_start, test_done
 │   │   └── ip_test_pkg.vhd  # VHDL-2008: same helpers
-│   ├── formal/           # Reusable SVA property templates
-│   │   ├── reset_props.sv
-│   │   └── bus_protocol_props.sv
+│   ├── formal/           # Reusable formal checkers (VC Formal; see formal/README.md)
+│   │   ├── claude_fv_defines.svh # assume/assert-by-role macros
+│   │   ├── claude_apb_fv.sv      # APB4 protocol checker + transaction observer
+│   │   ├── claude_ahb_fv.sv      # AHB-Lite protocol checker + transaction observer
+│   │   ├── claude_axi4l_fv.sv    # AXI4-Lite protocol checker + transaction observer
+│   │   ├── claude_wb_fv.sv       # Wishbone B4 protocol checker + transaction observer
+│   │   ├── claude_reg_fv.sv      # protocol-neutral register read-back checker
+│   │   └── vcf/claude_vcf_fpv.tcl # generic VC Formal FPV run script
 │   └── tools/            # Python base class and shared utilities for all tool scripts
-│       └── ip_tool_base.py
+│       ├── ip_tool_base.py
+│       └── claude_vcf.py     # VC Formal driver (jobs, report parsing, waivers)
 ├── firmware/
 │   ├── include/          # platform.h MMIO stub, shared C types
 │   └── cmake/            # Shared CMake toolchain files (used directly by all IPs)
@@ -211,8 +217,8 @@ IP/
 │   ├── rtl/verilog/                        # Shared SV primitives
 │   ├── rtl/vhdl/                           # Shared VHDL-2008 primitives
 │   ├── verification/tasks/                 # Protocol BFM task libraries
-│   ├── verification/formal/                # Reusable SVA property templates
-│   ├── verification/tools/                 # Python base class (ip_tool_base.py)
+│   ├── verification/formal/                # Reusable formal checkers + VC Formal run script
+│   ├── verification/tools/                 # Python base class (ip_tool_base.py), claude_vcf.py
 │   ├── firmware/include/                   # platform.h and shared C types
 │   ├── firmware/cmake/                     # Shared CMake modules
 │   └── doc/                                # Shared documentation templates
@@ -242,9 +248,13 @@ IP/
 ├── synthesis/
 │   ├── quartus/                            # Quartus Prime synthesis scripts and reports
 │   ├── vivado/                             # Vivado synthesis scripts and reports
-│   └── yosys/                              # Yosys synthesis scripts and reports
+│   ├── yosys/                              # Yosys synthesis scripts and reports
+│   ├── designcompiler/                     # Design Compiler scripts, reports, netlists (csun.edu only)
+│   ├── primetime/                          # PrimeTime STA script and reports (csun.edu only)
+│   └── known_issues.md                     # Documented synthesis warnings/findings (any host)
 └── verification/
-    ├── formal/                             # Yosys formal verification scripts and results
+    ├── formal/                             # SymbiYosys formal scripts and results
+    │   └── vcf/                            # VC Formal checkers, bind modules, waivers, results
     ├── lint/                               # Lint results and waiver files
     ├── modelsim/                           # ModelSim GUI .do scripts (compile+sim and wave)
     │   ├── tb_IP_NAME_<proto>.do           # Compile + vsim + run (one per bus protocol)
@@ -255,7 +265,7 @@ IP/
     │   └── testbench.sv                    # Top-level simulation testbench
     ├── tests/                              # Individual directed and UVM test cases
     ├── tools/
-    │   ├── formal_IP_NAME.py               # Formal verification runner (Yosys)
+    │   ├── formal_IP_NAME.py               # Formal verification runner (SymbiYosys / VC Formal)
     │   ├── lint_IP_NAME.py                 # Lint runner
     │   ├── run_regression.py               # Regression runner and reporter
     │   ├── sim_IP_NAME.py                  # Simulation runner (Icarus/GHDL/ModelSim)
@@ -281,7 +291,7 @@ deliverables exist before starting work.
 | 2  | [.agents/rdl.md](.agents/rdl.md) | SystemRDL register definitions and code generation |
 | 3  | [.agents/rtl.md](.agents/rtl.md) | RTL design and bus-interface adapters |
 | 4  | [.agents/directed_tests.md](.agents/directed_tests.md) | Directed simulation tests |
-| 5  | [.agents/formal.md](.agents/formal.md) | Formal verification via Yosys |
+| 5  | [.agents/formal.md](.agents/formal.md) | Formal verification via SymbiYosys and Synopsys VC Formal |
 | 6  | [.agents/uvm.md](.agents/uvm.md) | UVM verification environment |
 | 7  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
 | 8  | [.agents/lint.md](.agents/lint.md) | RTL linting (runs in parallel with Steps 4–6) |
@@ -390,7 +400,7 @@ Full detail on the PTPX flow, liberty paths, and Tcl commands is in
 | rdl (2) | rtl (3), uvm (6), firmware (9) | `design/rtl/verilog/`, `design/rtl/vhdl/`, `firmware/include/IP_NAME_regs.h` |
 | rtl (3) | directed_tests (4), formal (5), uvm (6), lint (8), synthesis (10) | `design/rtl/verilog/`, `design/rtl/vhdl/` |
 | directed_tests (4) | formal (5), regression (7) | `verification/work/*/results.log` |
-| formal (5) | regression (7) | `verification/formal/results.log` |
+| formal (5) | regression (7) | `verification/formal/results.log`, `verification/formal/vcf/results.log` |
 | uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
 | lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
 | synthesis (10) | power (12) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf}` |
@@ -434,7 +444,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | Design Compiler (`dc_shell`) | csun.edu only, on `$PATH` | ASIC synthesis (target: SAED90, SAED32, SAED14, SKY130) |
 | Library Compiler (`lc_shell`) | csun.edu only, on `$PATH` | Compiles sky130's ASCII `.lib` to `.db` (sky130 ships no pre-compiled `.db`, unlike SAED) |
 | SAED90/32/14 PDKs | `/opt/ECE_Lib/...` (csun.edu, shared install) | ASIC standard cell libraries |
-| SKY130 PDK | `/tmp/pet43490/PDK/volare/sky130/...` (csun.edu, per-user install) | Open-source ASIC standard cell library |
+| SKY130 PDK | `/tmp/pet43490/PDK/sky130A` (csun.edu, per-user install — stable symlink to `volare/sky130/versions/<hash>/`) | Open-source ASIC standard cell library |
 | volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 | SpyGlass (`spyglass_vc`) | csun.edu only, on `$PATH` | SV lint (replaces Verilator there); no working VHDL-2008 path — VHDL lint is unavailable on csun.edu |
 | PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |

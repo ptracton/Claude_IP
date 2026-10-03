@@ -123,6 +123,15 @@ else
     echo "         Run: python3 -m venv $(dirname "${CLAUDE_IP_NAME_PATH}")/virtualenv/CLAUDE_IP"
 fi
 unset CLAUDE_IP_VENV
+# Gotcha (found 2026-10-03, see .agents/reference_sky130_pdk.md): this check
+# only confirms bin/activate exists, not that the venv is real. A venv
+# missing pyvenv.cfg (e.g. created oddly, or by an older/different tool)
+# "activates" without error but silently falls through to the system/pyenv
+# Python and its site-packages — `pip install`/`volare` etc. then appear to
+# work but don't actually land in this venv. If a package that should be
+# here (e.g. `volare`) mysteriously isn't found after sourcing this,
+# check for `virtualenv/CLAUDE_IP/pyvenv.cfg` before assuming the package
+# itself is missing; recreate with `python3 -m venv --clear` if it's absent.
 
 # ---------------------------------------------------------------------------
 # PATH — updated LAST so these entries are never overwritten by sourced scripts

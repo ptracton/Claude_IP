@@ -21,8 +21,12 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
 - 90nm PDK at `/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm`.
 - 32nm PDK at `/opt/ECE_Lib/SAED32_EDK`.
 - 14nm PDK at `/opt/ECE_Lib/SAED14nm_EDK_03_2025`.
-- SKY130 PDK at `/tmp/pet43490/PDK/volare/sky130/versions/<hash>/sky130A`
-  (SkyWater open-source PDK, per-user volare install — not under `/opt/ECE_Lib`).
+- SKY130 PDK at `/tmp/pet43490/PDK/sky130A` (SkyWater open-source PDK,
+  per-user volare install — not under `/opt/ECE_Lib`). This is a stable
+  symlink to the real, versioned install
+  (`/tmp/pet43490/PDK/volare/sky130/versions/<hash>/sky130A`) — code should
+  reference the symlink (`build_sky130_libs.SKY130_PDK`), not the versioned
+  path directly, so re-fetching a version only means repointing the symlink.
   `lc_shell` must also be on `$PATH`: sky130 ships only ASCII `.lib`, and it
   needs compiling to `.db` before `dc_shell` can use it as a
   `target_library` (see the sky130 subsection below).
@@ -204,7 +208,7 @@ not through volare's own bookkeeping (`volare ls --pdk-root <path>` returns
 #### `synthesis/clean.sh`
 
 A standalone bash script that removes all DC- and PrimeTime-generated files:
-- Directories: `cksum_dir/`, `reports/`, `netlists/`, `ARCH/`, `ENTI/`, `PACK/` (DC VHDL library dirs).
+- Directories: `cksum_dir/`, `reports/`, `netlists/`, `ARCH/`, `ENTI/`, `PACK/` (DC VHDL library dirs), `alib-*/` (compile_ultra's abstract-library cache, one shared dir across whichever PDKs were synthesized — numeric suffix e.g. `alib-52` isn't stable, so this is a glob in both `clean.sh` and `run_vendor_synth.py`'s `DESIGNCOMPILER_CLEAN_DIR_GLOBS`).
 - Files: `*.v`, `*.sdf`, `*.pvk`, `*.pvl`, `*.syn`, `*.mr`, `dc_saed90_run.log`, `dc_saed32_run.log`, `dc_saed14_run.log`, `dc_sky130_run.log`, `command.log`, `default.svf`, `report.txt`.
 - PrimeTime: `primetime/reports/`, `primetime/.rce/`, `primetime/pt_*_run.log`,
   `primetime/pt_shell_command.log` (see PrimeTime STA subsection below for

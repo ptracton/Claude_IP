@@ -2,7 +2,8 @@
 """run_regression.py — Full regression harness for the Timer IP.
 
 Runs simulation (Icarus SV + GHDL VHDL + Vivado xsim UVM),
-formal verification (SymbiYosys), and collects lint results;
+formal verification (VC Formal where `vcf` is on PATH, e.g. csun.edu;
+SymbiYosys otherwise), and collects lint results;
 prints a consolidated pass/fail table.
 
 Usage:
@@ -14,6 +15,7 @@ Results written to:
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -152,6 +154,15 @@ def collect_results(timer_path: str) -> list:
             status = read_result_log(str(rlog))
             entries.append((f"formal/{proto_dir.name}", status))
 
+    # VC Formal results: work/vcf/<top>_<lang>/results.log  (one per job)
+    vcf_work = work / "vcf"
+    if vcf_work.exists():
+        for job_dir in sorted(vcf_work.iterdir()):
+            if not job_dir.is_dir():
+                continue
+            status = read_result_log(str(job_dir / "results.log"))
+            entries.append((f"formal/vcf/{job_dir.name}", status))
+
     # UVM results: work/xsim/uvm/results.log — single entry per test run (only on standard hosts)
     if not ON_CSUN:
         uvm_work = work / "xsim" / "uvm"
@@ -273,12 +284,21 @@ def main():
     # 2. Formal verification
     # ------------------------------------------------------------------ #
     if not args.skip_formal:
-        run_step(
-            "SymbiYosys formal verification (all protocols)",
-            [sys.executable,
-             os.path.join(tools_dir, "run_formal.py"),
-             "--proto", "all"],
-        )
+        if shutil.which("vcf"):
+            # Synopsys VC Formal (csun.edu): 4 protocols x SV + VHDL
+            run_step(
+                "VC Formal verification (all protocols, SV + VHDL)",
+                [sys.executable,
+                 os.path.join(tools_dir, "formal_timer.py"),
+                 "--tool", "vcf"],
+            )
+        else:
+            run_step(
+                "SymbiYosys formal verification (all protocols)",
+                [sys.executable,
+                 os.path.join(tools_dir, "run_formal.py"),
+                 "--proto", "all"],
+            )
 
     # ------------------------------------------------------------------ #
     # 3. Collect all results

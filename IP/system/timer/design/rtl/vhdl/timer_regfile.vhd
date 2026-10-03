@@ -91,7 +91,12 @@ begin
         ctrl_q <= TIMER_CTRL_RESET;
       elsif wr_en = '1' and wr_addr = TIMER_CTRL_OFFSET then
         -- Capture write; mask reserved bits [31:15] to zero.
-        ctrl_q <= apply_strb(ctrl_q, wr_data, wr_strb)
+        -- Self-clearing bits start from '0' so a write can only set them:
+        -- a byte-masked CTRL write right after RESTART/SNAPSHOT must not
+        -- stretch the one-cycle pulse.
+        ctrl_q <= apply_strb(ctrl_q and not (TIMER_CTRL_RESTART_MASK or
+                                             TIMER_CTRL_SNAPSHOT_MASK),
+                             wr_data, wr_strb)
                   and x"00007FFF";
       else
         -- Auto-clear self-clearing command bits when not writing.

@@ -1,6 +1,6 @@
 ---
-name: PrimeTime STA on csun.edu — separate script, SAED + SKY130, and the SV clock bug it surfaced
-description: run_primetime_sta.py is a script separate from run_vendor_synth.py; STA covers SAED90/32/14 (one corner each) and SKY130 (ss/tt/ff); the pre-existing SV create_clock bug found while adding write_sdc
+name: PrimeTime STA on csun.edu — separate script, SAED + SKY130, accepted SAED90 timing violation
+description: run_primetime_sta.py is a script separate from run_vendor_synth.py; STA covers SAED90/32/14 (one corner each) and SKY130 (ss/tt/ff); the pre-existing SV create_clock bug it surfaced; SKY130's ss-corner violation (fixed via retune) and SAED90's (accepted, not fixed)
 type: reference
 ---
 
@@ -77,21 +77,35 @@ actual slack — confirming the constraint is now live. All four PDKs were
 re-synthesized after this fix (not just SKY130) since the bug lived in the
 shared `synth.tcl` used by all of them; VHDL variants were unaffected.
 
-**Finding, not a bug: the design does not meet 100 MHz at `ss_100C_1v60`.**
-With the clock fix in place, STA across all three SKY130 corners gives:
-worst-case WNS = -2.850 ns (TNS = -121.360 ns) at `ss_100C_1v60`, but
-+3.250 ns at `tt_025C_1v80` and +5.660 ns at `ff_n40C_1v95`. This is
-expected — DC only synthesizes to the typical corner
-(`SKY130_SYNTH_CORNER`) — and is recorded in
-`synthesis/known_issues.md` as a real timing result, not something PrimeTime
-or the script got wrong. Closing worst-case timing (re-synthesizing to
-`ss_100C_1v60`, or multi-corner DC optimization) is future work, out of
-scope for adding the STA capability itself. The three SAED targets all meet
-100 MHz too (WNS = +0.000 ns saed90, +7.260 ns saed32, +3.820 ns saed14) —
-each is DC's compile checking its own work, so a violation there would mean
-DC's own optimization failed, not a corner-coverage gap. SAED90's +0.000 ns
-is genuinely tight rather than a rounding artifact: `timer_axi4l` and
-`timer_wb` both land at exactly 0.00 ns critical-path slack.
+**SKY130's worst-case violation (2026-09-20 finding) was fixed, not
+accepted — by retuning what corner DC synthesizes to, not by touching STA.**
+Originally DC synthesized SKY130 only to its typical corner
+(`tt_025C_1v80`), so the worst-case `ss_100C_1v60` corner legitimately
+violated (WNS -2.850 ns) when STA rechecked the typical-corner netlist
+against it — expected, not a bug, for a netlist never optimized for that
+corner. Fixed later (2026-09-26) by changing `SKY130_SYNTH_CORNER` to
+`ss_100C_1v60` and upgrading `compile` to `compile_ultra -no_autoungroup`
+with `synthetic_library dw_foundation.sldb`. Current result: all three
+SKY130 corners meet 100 MHz (`ss_100C_1v60` +1.39 ns, `tt_025C_1v80`
++5.64 ns, `ff_n40C_1v95` +7.23 ns). Full numbers and history in
+`synthesis/known_issues.md` — not duplicated here.
+
+**SAED90 violates 100 MHz (WNS -0.40 ns) and this is accepted, not
+fixed — in the hope a real place-and-route flow would close it.** The same
+`compile_ultra` retune above applies to every PDK (shared `synth.tcl`), and
+pushed SAED90 — already marginal before (-0.01 ns) — further into
+violation. Decided (2026-10-03) to accept rather than chase: this flow is
+flat, pre-layout synthesis with a generic wire-load model, so a margin this
+small plausibly closes under real P&R, which this project doesn't run.
+**This directly explains why SAED90 post-synthesis gate-level simulation
+is unreliable** (confirmed via a real `$setuphold` violation on
+`u_core/count_q_reg` when timing checks are re-enabled for diagnosis — the
+normal post-syn flow runs with `+notimingcheck`, which turns that
+violation into silent `X`-propagation instead of a reported error, rather
+than masking it). SAED32 (+7.81 ns) and SAED14 (+4.92 ns) both meet timing
+comfortably. Full numbers, the two-layer root-cause (a real clock-port
+wire-load bug, fixed, plus this accepted violation), and the now-reverted
+`set_register_replication` dead end are all in `synthesis/known_issues.md`.
 
 **Pass/fail semantics mirror `write_vivado_report`, not a naive
 "violated = fail."** `run_sta`'s return value means "`pt_shell` completed"

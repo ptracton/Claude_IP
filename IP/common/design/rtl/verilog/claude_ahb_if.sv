@@ -7,7 +7,12 @@
 //
 // Protocol notes:
 //   - Two-phase pipeline: address phase then data phase.
-//   - HREADY is always asserted (zero wait-states).
+//   - Writes are zero-wait. Reads insert ONE wait state: the regfile read
+//     data is registered (valid the cycle after rd_en), so the first
+//     data-phase cycle of a read drives HREADY low and issues rd_en, and the
+//     second drives HREADY high with HRDATA = rd_data. Issuing rd_en in the
+//     data phase (not the address phase) also means a read that directly
+//     follows a write to the same register returns the new value.
 //   - HRESP is always OKAY (no error response).
 //   - Only HTRANS == NONSEQ (2'b10) initiates a transfer.
 //   - HSEL qualifies all transactions.
@@ -21,7 +26,7 @@
 //   HWDATA[31:0]  — write data (valid in data phase)
 //   HWSTRB[3:0]   — byte write enables (valid in data phase)
 //   HRDATA[31:0]  — read data output
-//   HREADY        — ready output (always 1 — zero wait states)
+//   HREADY        — ready output (low for the first data-phase cycle of a read)
 //   HRESP         — response (always 0 — OKAY)
 //
 // Ports (regfile side):
@@ -46,7 +51,7 @@ module claude_ahb_if #(
   input  logic [DATA_W-1:0]     HWDATA,         // write data (data phase)
   input  logic [DATA_W/8-1:0]   HWSTRB,         // byte strobes (data phase)
   output logic [DATA_W-1:0]     HRDATA,         // read data
-  output logic                  HREADY,         // always ready
+  output logic                  HREADY,         // ready (1 wait state on reads)
   output logic                  HRESP,          // always OKAY
 
   // Register-file write channel
@@ -71,23 +76,28 @@ module claude_ahb_if #(
   logic                dphase_valid_q; // data phase active
   logic                dphase_write_q; // 1=write, 0=read
   logic [ADDR_W-1:0]   dphase_addr_q;  // word address latched in address phase
+  logic                rd_wait_q;      // first data-phase cycle of a read
 
   // -------------------------------------------------------------------------
-  // Address phase: latch when a valid NONSEQ transfer is selected
+  // Address phase: sampled only when HREADY is high (a stalled data phase
+  // keeps its address-phase information; the master holds the next address
+  // phase until HREADY rises).
   // -------------------------------------------------------------------------
   always_ff @(posedge HCLK) begin : p_addr_phase
     if (!HRESETn) begin
       dphase_valid_q <= 1'b0;
       dphase_write_q <= 1'b0;
       dphase_addr_q  <= {ADDR_W{1'b0}};
+      rd_wait_q      <= 1'b0;
     end else begin
-      if (HSEL && (HTRANS == AHB_TRANS_NONSEQ) && HREADY) begin
-        dphase_valid_q <= 1'b1;
+      if (HREADY) begin
+        dphase_valid_q <= HSEL && (HTRANS == AHB_TRANS_NONSEQ);
         dphase_write_q <= HWRITE;
         dphase_addr_q  <= HADDR[ADDR_W+1:2]; // byte -> word address
-      end else begin
-        dphase_valid_q <= 1'b0;
       end
+      // Read wait state: set on an accepted read address phase, cleared
+      // after one cycle (HREADY is low while it is set).
+      rd_wait_q <= HREADY && HSEL && (HTRANS == AHB_TRANS_NONSEQ) && !HWRITE;
     end
   end
 
@@ -100,17 +110,18 @@ module claude_ahb_if #(
   assign wr_strb = HWSTRB;
 
   // -------------------------------------------------------------------------
-  // Read channel: assert rd_en and capture address during address phase
-  // (registered read data in regfile is valid the cycle after rd_en)
+  // Read channel: rd_en in the first (wait) cycle of the read data phase;
+  // the regfile's registered rd_data is then valid in the second cycle,
+  // when HREADY is high.
   // -------------------------------------------------------------------------
-  assign rd_en   = dphase_valid_q & ~dphase_write_q;
+  assign rd_en   = rd_wait_q;
   assign rd_addr = dphase_addr_q;
   assign HRDATA  = rd_data;
 
   // -------------------------------------------------------------------------
-  // AHB handshake: zero wait-states, always OKAY
+  // AHB handshake: one wait state on reads, always OKAY
   // -------------------------------------------------------------------------
-  assign HREADY = 1'b1;
+  assign HREADY = ~rd_wait_q;
   assign HRESP  = 1'b0; // OKAY
 
 endmodule : claude_ahb_if

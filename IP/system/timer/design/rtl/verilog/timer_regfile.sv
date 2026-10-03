@@ -113,7 +113,11 @@ module timer_regfile
     end else if (wr_en && (wr_addr == TIMER_CTRL_OFFSET)) begin
       // Capture write; mask reserved bits [31:15] to zero.
       // Self-clearing bits (RESTART[12], SNAPSHOT[14]) are held for 1 cycle.
-      ctrl_q <= apply_strb(ctrl_q, wr_data, wr_strb) & 32'h0000_7FFF;
+      // Self-clearing bits start from 0 so a write can only set them: a
+      // byte-masked CTRL write right after RESTART/SNAPSHOT must not
+      // stretch the one-cycle pulse.
+      ctrl_q <= apply_strb(ctrl_q & ~(TIMER_CTRL_RESTART_MASK | TIMER_CTRL_SNAPSHOT_MASK),
+                           wr_data, wr_strb) & 32'h0000_7FFF;
     end else begin
       // Auto-clear self-clearing command bits when not writing.
       ctrl_q[TIMER_CTRL_RESTART_BIT]  <= 1'b0;

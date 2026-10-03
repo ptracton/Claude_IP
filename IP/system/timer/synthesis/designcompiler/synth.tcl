@@ -57,12 +57,12 @@ if { $PDK_TARGET eq "saed90" } {
         exit 1
     }
     set PDK_PATH $env(SKY130_PDK)
-    # High-density std cell library, typical corner (TT, 1.80 V, 25 °C),
+    # High-density std cell library, worst-case corner (SS, 1.60 V, 100 °C),
     # pre-compiled from the open PDK's ASCII .lib to .db via lc_shell — dc_shell
     # on this host cannot read ASCII .lib directly as a target_library (DB-1).
-    # The SS (worst-case) and FF (best-case) corners are compiled to .db
-    # alongside it (see run_vendor_synth.py) for future multi-corner analysis,
-    # but are not used for synthesis itself.
+    # Which corner is used is SKY130_SYNTH_CORNER in
+    # IP/common/synthesis/designcompiler/build_sky130_libs.py. The TT and FF
+    # corners are compiled alongside it and checked by PrimeTime.
     set STDLIB $env(SKY130_STDLIB_DB)
 } else {
     puts "ERROR: Unknown PDK_TARGET '$PDK_TARGET' — must be saed90, saed32, saed14, or sky130"
@@ -86,8 +86,13 @@ puts "  Stdlib     : $STDLIB"
 set_app_var verilog_mode      2012
 set_app_var hdlin_vhdl_std    2008
 
+# DesignWare Foundation: gives compile_ultra fast arithmetic architectures
+# (e.g. parallel-prefix adders/subtractors) instead of ripple-only
+# implementations. Without it the 32-bit timer decrementer is a 32-stage
+# ripple chain.
+set_app_var synthetic_library dw_foundation.sldb
 set_app_var target_library $STDLIB
-set_app_var link_library   [list * $STDLIB]
+set_app_var link_library   [list * $STDLIB dw_foundation.sldb]
 
 set_app_var search_path [list \
     "./../../design/rtl/verilog" \
@@ -133,13 +138,22 @@ proc synth_variant { variant clk_port reset_port rpt_dir net_dir suffix } {
     set_clock_transition 0.1 $clk_port
     set_clock_latency    0.2 $clk_port
 
-    # Mark the synchronous reset port as an ideal network.
-    # The reset fans out to every DFF's D-input reset mux, making it the
-    # highest-fanout net in the design.  DC's wire-load model assigns a
-    # very large RC to such nets, producing a hundreds-of-nanoseconds
+    # Mark the clock and synchronous reset ports as ideal networks.
+    # Both fan out to every DFF (CLK and reset-mux inputs respectively),
+    # making them the highest-fanout nets in the design.  DC's wire-load
+    # model assigns a very large RC to such nets, producing a huge
     # INTERCONNECT entry in the SDF that breaks functional gate-level sim.
-    # set_ideal_network zeroes the wire-load for this port only, leaving
-    # all data/control port delays unaffected.
+    # This was already applied to reset; it must also cover the clock port
+    # — confirmed via SAED90's SDF showing a 6595.71 ns PCLK->CLK
+    # interconnect delay (vs 0.000 ns for SAED32, 0.004 ns for SAED14),
+    # which silently stalls every flop's effective clock edge far outside
+    # any realistic simulation time window (SAED90 post-syn sim was
+    # otherwise passing test_reset by coincidence — its async reset path
+    # doesn't depend on CLK — while every write-then-read-back test failed
+    # or hung, since those genuinely need a clock edge to be captured).
+    # set_ideal_network zeroes the wire-load for these ports only, leaving
+    # all other data/control port delays unaffected.
+    set_ideal_network [get_ports $clk_port]
     set_ideal_network [get_ports $reset_port]
 
     # Written before compile so it reflects the constraints as specified
@@ -148,7 +162,10 @@ proc synth_variant { variant clk_port reset_port rpt_dir net_dir suffix } {
     write_sdc "${net_dir}/${variant}${suffix}.sdc"
     puts "Wrote SDC: ${net_dir}/${variant}${suffix}.sdc"
 
-    compile -map_effort low
+    # compile_ultra: timing-driven mapping with DesignWare architecture
+    # selection. -no_autoungroup keeps the u_<proto>_if / u_regfile / u_core
+    # hierarchy that PrimeTime reports and gate-level simulation rely on.
+    compile_ultra -no_autoungroup
 
     puts "\n--- Report Area ---"
     redirect -append ${rpt_dir}/${variant}${suffix}_area.rpt   { report_area -hier }

@@ -100,11 +100,23 @@ POSTSYN_PDK_CONFIGS = {
     },
     "saed14": {
         "label":     "SAED14 (14 nm)",
+        # Each subtree's main .v is a timing-check wrapper whose cells
+        # instantiate a "_func"-suffixed primitive (e.g. SAEDRVT14_EO2_2
+        # wraps SAEDRVT14_EO2_2_func); the _func UDP bodies live in a
+        # separate companion *_udp.v file, not the main one. Omitting the
+        # UDP files fails post-syn compile with "Unresolved modules" for
+        # literally every synthesized cell, since even the simplest gates
+        # (AND/OR/FF) hit this split — SAED90/32 ship one self-contained
+        # model per cell instead, so they don't need a _udp.v counterpart.
         "cell_libs": [
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/base/saed14rvt_base.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/base/saed14rvt_base_udp.v",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg_udp.v",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl_udp.v",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso_udp.v",
         ],
         "db_libs": [
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/base/saed14rvt_base_tt0p8v25c.db",
@@ -116,6 +128,16 @@ POSTSYN_PDK_CONFIGS = {
 }
 
 SUPPORTED_PDKS = list(POSTSYN_PDK_CONFIGS.keys())
+
+# SAED90 has a real, accepted timing violation (WNS -0.40 ns at 100 MHz,
+# confirmed via $setuphold violations on u_core/count_q_reg under full
+# timing checks — see synthesis/known_issues.md). The normal post-syn flow
+# compiles with +notimingcheck, so instead of a reported violation this
+# shows up as silent X-propagation / wrong functional results. Accepted
+# rather than chased further in this synthesis flow (no real place-and-
+# route here, just flat wire-load-model DC synthesis); documented as a
+# known, expected failure rather than a mystery to re-debug.
+POSTSYN_KNOWN_FAILURES = {"saed90"}
 
 # ---------------------------------------------------------------------------
 # Tool paths
@@ -1441,7 +1463,16 @@ def main() -> None:
                     work_dir = os.path.join(work_base, "postsyn", pdk, proto)
                     ok = run_vcs_postsyn(proto, pdk, timer_path, work_dir)
                     label = f"postsyn-vcs/{proto}/{pdk}"
-                    results_summary.append((label, "PASS" if ok else "FAIL"))
+                    if ok:
+                        status = "PASS"
+                    elif pdk in POSTSYN_KNOWN_FAILURES:
+                        status = "FAIL (known)"
+                        print(f"  [{label}] Known failure — SAED90 has a real "
+                              f"timing violation at 100 MHz (not a tool/script "
+                              f"bug); see synthesis/known_issues.md.")
+                    else:
+                        status = "FAIL"
+                    results_summary.append((label, status))
                     if not ok:
                         all_pass = False
 
@@ -1454,15 +1485,21 @@ def main() -> None:
                             all_pass = False
 
     # Print summary
-    GREEN = "\033[32m"
-    RED   = "\033[31m"
-    RESET = "\033[0m"
+    GREEN  = "\033[32m"
+    YELLOW = "\033[33m"
+    RED    = "\033[31m"
+    RESET  = "\033[0m"
 
     print("\n" + "=" * 60)
     print("Simulation Results Summary")
     print("=" * 60)
     for label, status in results_summary:
-        color = GREEN if status == "PASS" else RED
+        if status == "PASS":
+            color = GREEN
+        elif status == "FAIL (known)":
+            color = YELLOW
+        else:
+            color = RED
         print(f"  {label:<35} {color}{status}{RESET}")
     print("=" * 60)
 

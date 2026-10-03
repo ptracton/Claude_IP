@@ -36,14 +36,20 @@ of a testbench-embedded call.
 **Xcelium (SV):** single `xrun -64 -access +rwc` step.  
 **Xcelium (VHDL):** `xmvhdl -V200X` → `xmelab` → `xmsim -input <shm script>`.
 
-**Results summary:** Colored ANSI output — green for PASS, red for FAIL.
+**Results summary:** Colored ANSI output — green for PASS, red for FAIL,
+**yellow for `FAIL (known)`** (post-syn only — see
+[project_timer_postsyn_sim.md](project_timer_postsyn_sim.md) for SAED90's
+accepted timing violation, the one case that uses this).
 
 **Protocols supported:** `apb`, `ahb`, `wb`, `axi4l`  
-**PDKs supported:** `saed90`, `saed32`, `saed14`
+**PDKs supported:** `saed90`, `saed32`, `saed14` (post-syn only; SKY130 isn't wired in)
 
 `run_sims.sh` (a standalone runner alongside `sim_timer.py`) delegates to
 `sim_timer.py --sim vcs` on csun.edu instead of invoking Icarus/GHDL directly,
-since those tools aren't installed there.
+since those tools aren't installed there. **Note:** currently missing from
+the working tree (uncommitted deletion predating the synthesis/PrimeTime
+work in this file — not something that session touched; flagged, not
+investigated further).
 
 bus_matrix's `sim_bus_matrix.py` mirrors this same host-detection, default, and
 waveform-dump design (`tb_bus_matrix_{ahb,axi,wb}.sv` carry the same

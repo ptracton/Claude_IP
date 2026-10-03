@@ -2,7 +2,7 @@
 PrimeTime STA Report — timer IP
 Target        : SAED32 (32nm) — SS 0.95V 125°C (worst-case) — single corner shipped by this EDK
 Tool version  : PrimeTime (pt_shell)
-Run date      : 2026-09-20
+Run date      : 2026-10-03
 ========================================================================
 
 STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
@@ -11,7 +11,7 @@ STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
 ------------------------------------------------------------------------
 Timing Summary (across all variants, 100 MHz / 10 ns target)
 ------------------------------------------------------------------------
-  Worst-case WNS : 7.260 ns
+  Worst-case WNS : 7.810 ns
   Total TNS      : 0.000 ns
   Timing         : MET
 

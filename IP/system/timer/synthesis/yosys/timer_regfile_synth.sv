@@ -102,7 +102,9 @@ module timer_regfile (
     if (!rst_n) begin
       ctrl_q <= TIMER_CTRL_RESET;
     end else if (wr_en && (wr_addr == TIMER_CTRL_OFFSET)) begin
-      ctrl_q <= apply_strb(ctrl_q, wr_data, wr_strb) & 32'h0000_7FFF;
+      // Self-clearing RESTART[12]/SNAPSHOT[14] start from 0 so a write can
+      // only set them (kept in sync with design/rtl/verilog/timer_regfile.sv).
+      ctrl_q <= apply_strb(ctrl_q & ~32'h0000_5000, wr_data, wr_strb) & 32'h0000_7FFF;
     end else begin
       ctrl_q[TIMER_CTRL_RESTART_BIT]  <= 1'b0;
       ctrl_q[TIMER_CTRL_SNAPSHOT_BIT] <= 1'b0;

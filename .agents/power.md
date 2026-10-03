@@ -16,6 +16,14 @@ python sim_timer.py --power --proto apb   # APB only
 
 `--power` implies `--postsyn` — it runs the gate-level simulation first, then power analysis.
 
+**SAED90 caveat:** SAED90 has an accepted (not fixed) timing violation that
+makes its post-syn gate-level simulation functionally unreliable (reads
+`X`, not real counting/timing — see
+[project_timer_postsyn_sim.md](project_timer_postsyn_sim.md)). Since
+`--power` depends on a real `vcdplus.vpd` from that same simulation,
+treat any SAED90 power numbers as not meaningful until that's resolved —
+SAED32/SAED14 are unaffected.
+
 ## Flow
 
 1. **Post-syn sim** (`run_vcs_postsyn`) — generates `vcdplus.vpd` in the work dir

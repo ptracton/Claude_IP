@@ -128,8 +128,9 @@ begin
           -- EN just asserted: load counter and mark as active.
           count_q  <= safe_load_val;
           active_q <= '1';
-        elsif ctrl_restart = '1' and active_q = '1' then
+        elsif ctrl_en = '1' and ctrl_restart = '1' and active_q = '1' then
           -- Force-reload: reload without disabling; active_q stays '1'.
+          -- Guarded by ctrl_en so EN=0 always takes priority (matches SV).
           count_q <= safe_load_val;
         elsif active_q = '1' and tick = '1' then
           if count_q = to_unsigned(0, DATA_W) then

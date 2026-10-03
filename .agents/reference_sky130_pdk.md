@@ -11,11 +11,14 @@ regular Design Compiler synthesis target on csun.edu. First wired up in
 synthesis step should follow.
 
 **PDK location (csun.edu, per-user, not `/opt/ECE_Lib`):**
-`/tmp/pet43490/PDK/volare/sky130/versions/0fe599b2afb6708d281543108caf8310912f54af/sky130A`
-— installed manually via `volare` by the user, not through volare's own
-version bookkeeping (`volare ls --pdk-root /tmp/pet43490/PDK/volare` returns
-`[]` for it). Treat `build_sky130_libs.SKY130_PDK` as the source of truth
-for the path, not a volare query.
+`/tmp/pet43490/PDK/sky130A` — a stable symlink to the real, versioned
+install (`/tmp/pet43490/PDK/volare/sky130/versions/<hash>/sky130A`, hash
+`0fe599b2afb6708d281543108caf8310912f54af` as of 2026-10-03), added after
+the versioned path's content was found wiped (see below) so re-fetching a
+version only means repointing the symlink, not a code change. Treat
+`build_sky130_libs.SKY130_PDK` as the source of truth for the path, not a
+volare query — this install isn't through volare's own version bookkeeping
+(`volare ls --pdk-root /tmp/pet43490/PDK/volare` returns `[]` for it).
 
 **The gotcha that cost real debugging time:** sky130 ships only ASCII
 `.lib`, no pre-compiled `.db` (unlike every SAED PDK). Pointing
@@ -68,3 +71,42 @@ transitive deps: `anyio`, `certifi`, `h11`, `httpcore`, `httpx`, `idna`,
 so future PDK version management (`volare fetch`, `volare ls-remote`, etc.)
 is available in the project's venv — but no script imports it today; the
 existing install is used directly by path.
+
+**This `/tmp`-based install is not durable — confirmed the hard way, then
+fixed (2026-10-03).** The entire `sky130A` tree under
+`/tmp/pet43490/PDK/volare/sky130/.../sky130A/` was found wiped down to one
+unrelated file, 13 days after it was placed — almost certainly routine
+`/tmp` cleanup on the host, not anything this project did. `ensure_sky130_dbs()`
+hard-fails (`return None`, for every corner, not just the missing one) the
+moment any one corner's ASCII `.lib` is gone, since it can't verify the
+cached `.db`'s freshness without the source. The compiled `.db` cache in
+`IP/common/synthesis/designcompiler/sky130_lib/` survived fine (it's under
+the repo, not `/tmp`) throughout.
+
+**Re-fetched via volare** (same pinned version hash, to keep the compiled
+`.db` cache meaningfully comparable): `volare fetch --pdk-root
+/tmp/pet43490/PDK --pdk sky130 -l all <hash>`. One gotcha during the
+re-fetch: volare checks only whether a library's *directory* already
+exists under the target version — the libraries whose directories
+existed-but-empty from the original wipe (`sky130_fd_sc_hd` among them,
+the one this project actually needs) were silently skipped as "already
+found" and not re-downloaded on the first `fetch` call. Fix: `rm -rf` the
+empty library directories first, then re-run `fetch` — it correctly listed
+them as "not found" and downloaded them the second time. This project's
+venv also needed rebuilding from scratch to run `volare` at all — it had
+no `pyvenv.cfg` and no local `pip` (not a real isolated venv despite
+existing on disk), and `virtualenv/requirements.txt` itself was one of a
+large batch of tracked files separately found missing from the working
+tree (see
+[project_timer_wip_2026-09-26](project_timer_wip_2026-09-26.md)) — restored
+via `git checkout HEAD -- virtualenv/requirements.txt`.
+
+Re-verified end to end after the fix: `ensure_sky130_dbs(force=True)`
+recompiled all three corners cleanly, and `--dcsky130` / `run_primetime_sta.py
+--sky130` reproduced the exact same cell count (737) and STA numbers
+(ss +1.39 ns, tt +5.64 ns, ff +7.23 ns, all MET) as the pre-wipe
+2026-09-26 run — confirming the re-fetched content is identical, as
+expected for a pinned version hash.
+
+If this keeps recurring, the real fix is moving the install outside `/tmp`
+entirely (not done here).

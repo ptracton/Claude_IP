@@ -21,6 +21,7 @@ rm -rf \
     "$DC_DIR"/ARCH \
     "$DC_DIR"/ENTI \
     "$DC_DIR"/PACK \
+    "$DC_DIR"/alib-* \
     "$DC_DIR"/command.log \
     "$DC_DIR"/dc_saed90_run.log \
     "$DC_DIR"/dc_saed32_run.log \

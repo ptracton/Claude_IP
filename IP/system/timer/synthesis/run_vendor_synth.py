@@ -28,8 +28,9 @@ Requirements:
         90nm PDK at /opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm
         32nm PDK at /opt/ECE_Lib/SAED32_EDK
         14nm PDK at /opt/ECE_Lib/SAED14nm_EDK_03_2025
-        SKY130 PDK at /tmp/pet43490/PDK/volare/sky130/versions/<version>/sky130A
-            (SkyWater open-source PDK, installed per-user via volare)
+        SKY130 PDK at /tmp/pet43490/PDK/sky130A (a stable symlink to
+            /tmp/pet43490/PDK/volare/sky130/versions/<version>/sky130A —
+            SkyWater open-source PDK, installed per-user via volare)
 
 Outputs:
     synthesis/vivado/report.txt                      — Vivado summary (standard hosts only)
@@ -170,6 +171,10 @@ DESIGNCOMPILER_CLEAN = [
     "designcompiler/report.txt",
 ]
 DESIGNCOMPILER_CLEAN_GLOBS = ["*.v", "*.sdf", "*.pvk", "*.pvl", "*.syn", "*.mr"]
+# ALIB cache dirs (compile_ultra's abstract-library cache, one shared dir
+# across all PDKs synthesized in designcompiler/, e.g. "alib-52" — the
+# numeric suffix isn't stable, hence the glob).
+DESIGNCOMPILER_CLEAN_DIR_GLOBS = ["alib-*"]
 
 
 def clean_vivado(synth_dir: Path) -> None:
@@ -219,6 +224,10 @@ def clean_design_compiler(synth_dir: Path) -> None:
         for p in dc_dir.glob(pattern):
             p.unlink()
             print(f"  removed {p.relative_to(synth_dir.parent)}")
+    for pattern in DESIGNCOMPILER_CLEAN_DIR_GLOBS:
+        for p in dc_dir.glob(pattern):
+            shutil.rmtree(p)
+            print(f"  removed {p.relative_to(synth_dir.parent)}/")
     print("=== Design Compiler clean complete ===")
 
 

@@ -29,20 +29,24 @@ from typing import Optional
 
 # SkyWater 130nm open-source PDK, installed per-user via volare (not under
 # /opt/ECE_Lib like the SAED PDKs — those are shared installs; this one is
-# each CSUN user's own scratch install).
-SKY130_PDK = ("/tmp/pet43490/PDK/volare/sky130/versions/"
-              "0fe599b2afb6708d281543108caf8310912f54af/sky130A")
+# each CSUN user's own scratch install). This is a stable symlink
+# (/tmp/pet43490/PDK/sky130A) rather than the volare-versioned path
+# directly, since the versioned path's content was found wiped on
+# 2026-10-03 (see .agents/reference_sky130_pdk.md) — the flat symlink
+# target can be repointed at a re-fetched version without a code change.
+SKY130_PDK = "/tmp/pet43490/PDK/sky130A"
 
 # All three sky130_fd_sc_hd corners are compiled so per-corner STA/analysis
-# has them available; synthesis itself only targets the typical corner
-# (SKY130_SYNTH_CORNER) — matching how the SAED PDKs synthesize to a single
-# corner's .db.
+# has them available; synthesis itself targets the worst-case (slow) corner
+# (SKY130_SYNTH_CORNER), matching how the SAED PDKs synthesize to their
+# worst-case .db. Synthesizing to typical left the 32-bit timer decrementer
+# as a ripple chain that met 100 MHz at TT but failed at SS by 2.85 ns.
 SKY130_CORNERS = {
     "ss_100C_1v60": "libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__ss_100C_1v60.lib",  # worst-case (slow)
     "tt_025C_1v80": "libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__tt_025C_1v80.lib",  # typical
     "ff_n40C_1v95": "libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__ff_n40C_1v95.lib",  # best-case (fast)
 }
-SKY130_SYNTH_CORNER = "tt_025C_1v80"
+SKY130_SYNTH_CORNER = "ss_100C_1v60"
 
 CACHE_DIR = Path(__file__).resolve().parent / "sky130_lib"
 

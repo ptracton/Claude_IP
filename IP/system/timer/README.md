@@ -112,7 +112,7 @@ SC = self-clearing command bit (reads back as 0; write 1 to trigger one-cycle ac
 | Module | Protocol | Address bits | Data width | Clock/Reset |
 |--------|----------|-------------|-----------|-------------|
 | `timer_apb` | APB4 | 12-bit byte addr (PADDR[11:0]) | 32-bit | PCLK / PRESETn (active-low) |
-| `timer_ahb` | AHB-Lite | 32-bit byte addr (HADDR[31:0]) | 32-bit | HCLK / HRESETn (active-low) |
+| `timer_ahb` | AHB-Lite | 32-bit byte addr (HADDR[31:0]) | 32-bit | HCLK / HRESETn (active-low); writes zero-wait, reads 1 wait state |
 | `timer_axi4l` | AXI4-Lite | 32-bit byte addr | 32-bit | ACLK / ARESETn (active-low) |
 | `timer_wb` | Wishbone B4 | 4-bit word addr (ADR_I[3:0]) | 32-bit | CLK_I / RST_I (active-high) |
 
@@ -158,15 +158,19 @@ Cadence Xcelium on `*.csun.edu` hosts (Icarus/GHDL are not installed there; see
 | Wishbone  | Cadence Xcelium 25.03  | VHDL    | reset, rw, timer_ops                    | PASS   |
 
 Icarus/GHDL results generated 2026-03-19 on a standard host. VCS/Xcelium results
-generated 2026-09-07 on a `*.csun.edu` host.
+generated 2026-10-03 on a `*.csun.edu` host — re-verified after the VC
+Formal-driven RTL fixes on 2026-09-26 (VHDL `timer_core` RESTART gated by
+EN; `timer_regfile` RESTART/SNAPSHOT pulse stretch; common `claude_ahb_if`
+one-cycle read wait state for late `HRDATA`) found no regressions.
 See `verification/work/icarus/*/results.log`, `verification/work/ghdl/*/results.log`,
 `verification/work/vcs/*/results.log`, and `verification/work/xcelium/*/results.log`
 for full output. VCS dumps waveforms to `vcdplus.vpd`; Xcelium dumps to `waves.shm/`
 (both per-run-directory).
 
 Run all 8 host-appropriate simulations (icarus+ghdl on standard hosts, vcs on
-`*.csun.edu`): `bash verification/tools/run_sims.sh`. For Xcelium, or to pick a
-specific simulator/protocol/language directly, use `sim_timer.py` — e.g.
+`*.csun.edu`): `python3 verification/tools/sim_timer.py --proto all --lang all`
+(host-aware default simulator). For Xcelium, or to pick a specific
+simulator/protocol/language directly, pass `--sim` — e.g.
 `python3 verification/tools/sim_timer.py --sim xcelium --proto all --lang all`.
 
 ## Interactive Simulation (GUI)
@@ -269,6 +273,38 @@ Replace `apb` with `ahb`, `axi4l`, or `wb` for other variants.
 
 ## Formal Verification Results
 
+### Synopsys VC Formal (csun.edu) — SV and VHDL
+
+Full formal property verification (unbounded proofs) of all four bus
+top-levels in **both SystemVerilog and VHDL-2008**. The same SVA checkers are
+bound into both languages: the common bus-protocol checkers from
+`IP/common/verification/formal/` plus the timer register-map, register-file
+and core checkers in `verification/formal/vcf/`. For details, waivers and
+bugs found, see [verification/formal/vcf/README.md](verification/formal/vcf/README.md).
+
+```
+python3 verification/tools/formal_timer.py --tool vcf
+```
+
+| Top-level | Language | Assertions proven | Covers covered | Waived | Result |
+|-----------|----------|-------------------|----------------|--------|--------|
+| `timer_apb`   | SV   | 70/70 | 47/48 | 1 | PASS |
+| `timer_apb`   | VHDL | 70/70 | 47/48 | 1 | PASS |
+| `timer_ahb`   | SV   | 71/72 | 49/49 | 1 | PASS |
+| `timer_ahb`   | VHDL | 71/72 | 49/49 | 1 | PASS |
+| `timer_axi4l` | SV   | 79/79 | 50/50 | 0 | PASS |
+| `timer_axi4l` | VHDL | 79/79 | 50/50 | 0 | PASS |
+| `timer_wb`    | SV   | 72/72 | 47/48 | 1 | PASS |
+| `timer_wb`    | VHDL | 72/72 | 47/48 | 1 | PASS |
+
+The waived results come from error responses that the common bus bridges
+tie off: the unreachable APB PSLVERR and Wishbone ERR_O covers, and the
+vacuous AHB ERROR-response check.
+
+Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-09-26.
+
+### SymbiYosys (standard hosts) — SV
+
 Bounded model checking (BMC, depth 20) using SymbiYosys with smtbmc/boolector.
 All four bus-interface variants verified with 9 properties each (P1–P9) plus 3 cover goals.
 
@@ -280,6 +316,13 @@ All four bus-interface variants verified with 9 properties each (P1–P9) plus 3
 | Wishbone  | SymbiYosys   | smtbmc boolector | 20   | 9 assert, 3 cover | PASS |
 
 Results generated: 2026-03-19. See `verification/formal/` for `.sby` scripts and flat wrapper modules.
+
+**Not yet re-verified** against the 2026-09-26 RTL fixes — SymbiYosys isn't
+installed on csun.edu, where this session ran. The VC Formal results above
+(unbounded proof, strictly stronger than this bounded depth-20 BMC) *were*
+re-verified post-fix and pass clean, which covers the same properties with
+more rigor — but re-run this on a standard host too before relying on it
+specifically.
 
 **Properties verified (all variants):**
 - P1: `irq == ctrl_intr_en & (ctrl_irq_mode ? hw_intr_set : status_intr)` (IRQ mode-aware gate: level when `IRQ_MODE=0`, one-cycle pulse when `IRQ_MODE=1`)
@@ -323,6 +366,14 @@ See `verification/work/xsim/uvm/results.log` for full simulator output.
 
 Results generated: 2026-03-18. No waivers required — all RTL sources are clean.
 
+**Not yet re-verified** against the 2026-09-26 RTL fixes (both tools lint
+RTL that changed: Verilator covers `claude_ahb_if.sv`/`timer_regfile.sv`,
+GHDL covers `claude_ahb_if.vhd`/`timer_core.vhd`/`timer_regfile.vhd`) —
+Verilator/GHDL aren't installed on csun.edu, where this session ran, so
+this couldn't be regenerated here. The csun.edu/SpyGlass row below *was*
+re-verified (SpyGlass covers the same SV sources) and still passes clean,
+which is a good sign but not a substitute for re-running these two.
+
 **On csun.edu** (Verilator/GHDL not installed there — see `.agents/reference_spyglass_lint.md`):
 
 | Language | Tool     | Version       | Findings | Waivers | Result  |
@@ -330,7 +381,8 @@ Results generated: 2026-03-18. No waivers required — all RTL sources are clean
 | SV       | SpyGlass | Y-2026.03-SP1 | 0        | 2       | PASS    |
 | VHDL     | —        | —             | —        | —       | SKIPPED |
 
-Results generated: 2026-09-20. VHDL lint is unavailable on csun.edu — GHDL
+Results generated: 2026-10-03 (re-verified after the 2026-09-26 RTL fixes —
+still 0 findings, both waivers intact). VHDL lint is unavailable on csun.edu — GHDL
 isn't installed there, and SpyGlass has no supported way to lint this
 repo's VHDL-2008 RTL. SV waivers: `timer_core.sv` (`STARC05-2.11.3.1`,
 accepted style deviation) and the shared `claude_apb_if.sv` (`W240`, unused
@@ -428,6 +480,13 @@ Flip-flop count = `$_SDFFE_*` + `$_SDFF_*` cells. Higher count vs. previous run 
 CAPTURE register, RESTART/SNAPSHOT command bits, IRQ_MODE, and OVF status additions.
 See `synthesis/yosys/work/synthesis_report.log` for full cell breakdown.
 
+**Not yet re-verified** against the 2026-09-26 RTL fixes (`timer_regfile.sv`
+RESTART/SNAPSHOT pulse stretch, affecting all four variants; common
+`claude_ahb_if.sv` one-cycle read wait state, affecting AHB-Lite) — Yosys
+isn't installed on csun.edu, where this session ran, so these numbers
+couldn't be regenerated here. Re-run `synthesis/yosys/run_synth.py` on a
+standard host to confirm before relying on exact cell counts.
+
 Run: `python3 synthesis/yosys/run_synth.py`
 
 ### Vivado (Zynq-7010 `xc7z010clg400-1`)
@@ -440,6 +499,10 @@ Out-of-context synthesis. Top module: `timer_apb`. Clock: 100 MHz.
 
 Results generated: 2026-03-19. Tool: Vivado 2023.2. Board: Zybo-Z7-10.
 See `synthesis/vivado/utilization.rpt` and `synthesis/vivado/timing_summary.rpt`.
+
+**Not yet re-verified** against the 2026-09-26 `timer_regfile.sv` RTL fix
+(affects `timer_apb`, synthesized here) — Vivado isn't installed on
+csun.edu, so this couldn't be regenerated in this session.
 
 Run: `python3 synthesis/run_vendor_synth.py --vivado`
 
@@ -454,24 +517,35 @@ Analysis & Synthesis only (Fitter not run — ALMs require post-fit). Top module
 Results generated: 2026-03-19. Tool: Quartus Prime Lite 23.1. Board: DE0-Nano-SoC (Arrow SoCKit).
 See `synthesis/quartus/work/timer_apb.map.rpt`.
 
+**Not yet re-verified** against the 2026-09-26 `timer_regfile.sv` RTL fix
+(affects `timer_apb`, synthesized here) — Quartus isn't installed on
+csun.edu, so this couldn't be regenerated in this session.
+
 Run: `python3 synthesis/run_vendor_synth.py --quartus`
 
 ### Design Compiler (csun.edu only)
 
-Synopsys Design Compiler across four PDKs — SAED90/32/14 (single, worst-case
-corner each) and SKY130 (SkyWater open-source PDK, three PVT corners
-compiled, synthesized to the typical corner). Clock: 100 MHz. All 4 SV + 4
-VHDL variants synthesized per PDK.
+Synopsys Design Compiler across four PDKs — SAED90/32/14 (single corner
+each) and SKY130 (SkyWater open-source PDK, three PVT corners compiled,
+synthesized directly to the worst-case corner — see the retune note below).
+`compile_ultra -no_autoungroup` with `synthetic_library dw_foundation.sldb`
+(DesignWare-aware timing-driven mapping). Clock: 100 MHz. All 4 SV + 4 VHDL
+variants synthesized per PDK.
 
 | PDK | Corner (synthesis target) | Total cells | Flip-flops | Result |
 |-----|---------------------------|-------------|------------|--------|
-| SAED90 (90nm)  | `saed90nm_max`            | 821 | 191 | PASS |
-| SAED32 (32nm)  | SS 0.95V 125°C            | 714 | 191 | PASS |
-| SAED14 (14nm)  | SS 0.72V 125°C            | 871 | 208 | PASS |
-| SKY130 (130nm) | `tt_025C_1v80` (typical)  | 879 | 191 | PASS |
+| SAED90 (90nm)  | `saed90nm_max`              | 838 | 191 | PASS |
+| SAED32 (32nm)  | SS 0.95V 125°C              | 675 | 191 | PASS |
+| SAED14 (14nm)  | SS 0.72V 125°C              | 655 | 191 | PASS |
+| SKY130 (130nm) | `ss_100C_1v60` (worst-case) | 737 | 191 | PASS |
 
-Results generated: 2026-09-20. Tool: Design Compiler (`dc_shell`) Y-2026.03-SP1.
-See `synthesis/designcompiler/report_<pdk>.txt` and
+Results generated: 2026-10-03. Tool: Design Compiler (`dc_shell`)
+Y-2026.03-SP1. SKY130's synthesis target was retuned from the typical to
+the worst-case corner to close its STA violation (see PrimeTime STA
+below); the PDK's `/tmp` install was briefly wiped by host cleanup and has
+been reinstalled via `volare` at a stable symlink path — see
+`synthesis/known_issues.md`. See
+`synthesis/designcompiler/report_<pdk>.txt` and
 `synthesis/designcompiler/reports/<pdk>/` for per-variant area/timing detail.
 
 Run: `python3 synthesis/run_vendor_synth.py --dc` (all four PDKs; `--dc90`/`--dc32`/`--dc14`/`--dcsky130` for one).
@@ -493,20 +567,55 @@ Clock: 100 MHz (10 ns), across all 8 variants (4 SV + 4 VHDL) per target.
 
 | Target | Corner / Voltage / Temp | Worst-case WNS | Total TNS | Result |
 |--------|--------------------------|-----------------|-----------|--------|
-| SAED90 (90nm)               | `saed90nm_max` (single corner)  | +0.000 ns | 0.000 ns    | MET      |
-| SAED32 (32nm)               | SS 0.95V 125°C (single corner)  | +7.260 ns | 0.000 ns    | MET      |
-| SAED14 (14nm)               | SS 0.72V 125°C (single corner)  | +3.820 ns | 0.000 ns    | MET      |
-| SKY130 `ss_100C_1v60` (worst-case) | 1.60 V, 100 °C            | -2.850 ns | -121.360 ns | VIOLATED |
-| SKY130 `tt_025C_1v80` (typical)    | 1.80 V, 25 °C             | +3.250 ns |    0.000 ns | MET      |
-| SKY130 `ff_n40C_1v95` (best-case)  | 1.95 V, -40 °C            | +5.660 ns |    0.000 ns | MET      |
+| SAED90 (90nm)               | `saed90nm_max` (single corner)  | -0.400 ns |  -25.540 ns | VIOLATED |
+| SAED32 (32nm)               | SS 0.95V 125°C (single corner)  | +7.810 ns |    0.000 ns | MET      |
+| SAED14 (14nm)               | SS 0.72V 125°C (single corner)  | +4.920 ns |    0.000 ns | MET      |
+| SKY130 `ss_100C_1v60` (worst-case) | 1.60 V, 100 °C            | +1.390 ns |    0.000 ns | MET      |
+| SKY130 `tt_025C_1v80` (typical)    | 1.80 V, 25 °C             | +5.640 ns |    0.000 ns | MET      |
+| SKY130 `ff_n40C_1v95` (best-case)  | 1.95 V, -40 °C            | +7.230 ns |    0.000 ns | MET      |
 
-Results generated: 2026-09-20. Tool: PrimeTime (`pt_shell`) Y-2026.03-SP1.
-SAED90's +0.000 ns is genuinely tight, not a rounding artifact — `timer_axi4l`
-and `timer_wb` both land at exactly 0.00 ns critical-path slack against
-`saed90nm_max`. The SKY130 netlist meets 100 MHz at the typical and
-best-case corners but not at the worst-case corner — expected for a
-netlist synthesized only to the typical corner; see
-`synthesis/known_issues.md`. See `synthesis/primetime/report_sta_<target>.txt`
-and `synthesis/primetime/reports/<target>/` for per-variant detail.
+Results generated: 2026-10-03. Tool: PrimeTime (`pt_shell`) Y-2026.03-SP1.
+SKY130 was retuned to synthesize directly to its worst-case corner and now
+meets 100 MHz at all three PVT corners.
+
+**SAED90 violates 100 MHz by -0.40 ns and this is accepted, not fixed** —
+see `synthesis/known_issues.md` for the full writeup. This repo's DC flow
+is flat, pre-layout synthesis with a generic wire-load model (no
+floorplan, no clock-tree synthesis); a margin this small would plausibly
+close under a real place-and-route flow, which this project doesn't run.
+A direct, confirmed consequence: SAED90's post-synthesis gate-level
+simulation is unreliable as a result (see below) — this is the same
+violation surfacing as functional incorrectness instead of a timing
+report, not a second bug. See
+`synthesis/primetime/report_sta_<target>.txt` and
+`synthesis/primetime/reports/<target>/` for per-variant detail.
 
 Run: `python3 synthesis/run_primetime_sta.py` (all six targets; `--saed90`/`--saed32`/`--saed14`/`--sky130`/`--ss`/`--tt`/`--ff` for one).
+
+### Post-Synthesis Gate-Level Simulation (csun.edu only)
+
+`sim_timer.py --sim vcs --postsyn --pdk <saed90|saed32|saed14|all> --proto all`
+re-runs the full test suite against the Design Compiler netlists with SDF
+back-annotation (SKY130 is not wired into this capability). All 4
+protocols, SV testbenches (netlist is always Verilog regardless of which
+RTL language was synthesized).
+
+| PDK | APB | AHB | AXI4-Lite | Wishbone |
+|-----|-----|-----|-----------|----------|
+| SAED90 (90nm) | FAIL (known) | FAIL (known) | FAIL (known) | FAIL (known) |
+| SAED32 (32nm) | PASS | PASS | PASS | PASS |
+| SAED14 (14nm) | PASS | PASS | PASS | PASS |
+
+Results generated: 2026-10-03. Tool: VCS (`vcs`) Y-2026.03-SP1.
+**SAED90's failures are the accepted timing violation above surfacing
+functionally** (`COUNT` reads back `X` — confirmed via a real `$setuphold`
+violation on `u_core/count_q_reg` at reset release when timing checks are
+enabled; the normal flow suppresses them to evaluate function independent
+of PVT-matched clock period, which is what turns the violation into silent
+`X` instead of a reported error) — not a tool, script, or RTL bug. See
+`synthesis/known_issues.md`. SAED14 required adding its `*_udp.v` companion
+model files (each cell's primitive body lives in a separate file from its
+timing-check wrapper) to `sim_timer.py`'s file list — also documented
+there.
+
+Run: `python3 verification/tools/sim_timer.py --sim vcs --postsyn --pdk all --proto all`.
