@@ -8,6 +8,27 @@ linted, synthesized, and accompanied by firmware device-driver support and compl
 
 ---
 
+## Reference Implementation (mandatory for all sub-agents)
+
+`IP/system/timer/` is the **gold standard** for how an IP block is built. It has been
+through every step below on both standard hosts and csun.edu (VCS/Xcelium, SpyGlass,
+VC Formal, Design Compiler for SAED90/32/14 and SKY130, PrimeTime STA, post-synthesis
+simulation, PrimePower).
+
+**RULE — Build new IP from the timer.** Before generating any step's deliverables, read
+the timer's equivalent files (scripts, testbenches, synthesis flow, `cleanup.sh`,
+README layout) and follow them, applying the IP Name Substitution Rule below.
+
+**RULE — Where a step file and the timer disagree, the timer wins.** The timer carries
+fixes found by running the real tools that the step templates may not have caught up
+with yet. When you find such a disagreement, update the step file in `.agents/` to match
+the timer, in the same change.
+
+Shared code still belongs in `IP/common/` (see the next section), not copied out of the
+timer.
+
+---
+
 ## Common Components Rule (mandatory for all sub-agents)
 
 Reusable parts live in `IP/common/` and are shared across every IP project in this
