@@ -110,3 +110,10 @@ expected for a pinned version hash.
 
 If this keeps recurring, the real fix is moving the install outside `/tmp`
 entirely (not done here).
+
+**Gate-level simulation + power (2026-10-09):** SKY130 is now a
+`sim_timer.py --postsyn/--power` PDK too. VCS can't compile the PDK's
+Verilog models as shipped (`default_nettype none` UDPs, and a broken
+`lpflow_bleeder_1` cell); the workarounds are documented in
+[power](power.md) under "SKY130 gate-level simulation in VCS". Power uses
+the cached tt `.db`.

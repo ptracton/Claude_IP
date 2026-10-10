@@ -180,12 +180,21 @@ rm -rf "${CLAUDE_IP_NAME_PATH}/firmware/lib"/*
 # Synthesis outputs (Vivado and Quartus reports, logs, and project directories)
 python3 "${CLAUDE_IP_NAME_PATH}/synthesis/run_vendor_synth.py" --clean
 
-# Formal verification results (keep scripts and properties)
+# Formal verification results, SymbiYosys and VC Formal (keep scripts and properties)
 rm -f "${CLAUDE_IP_NAME_PATH}/verification/formal/results.log"
+rm -f "${CLAUDE_IP_NAME_PATH}/verification/formal/vcf/results.log"
 rm -rf "${CLAUDE_IP_NAME_PATH}/verification/formal/work"
 
 # Lint logs (keep config and waivers)
 rm -f "${CLAUDE_IP_NAME_PATH}/verification/lint/lint_results.log"
+
+# Files Synopsys tools drop into whatever directory they are launched from
+for dir in "${CLAUDE_IP_NAME_PATH}" "${CLAUDE_IP_NAME_PATH}/verification/tools"; do
+    rm -rf "${dir}/command.log" "${dir}/"*_command.log "${dir}/fsdb2vcdLog" \
+           "${dir}/verdiLog" "${dir}/novas_dump.log" "${dir}/ucli.key" \
+           "${dir}/DVEfiles" "${dir}/csrc" "${dir}/simv" "${dir}/simv.daidir" \
+           "${dir}/vcdplus.vpd" "${dir}/.rce"
+done
 
 echo "Clean complete."
 ```

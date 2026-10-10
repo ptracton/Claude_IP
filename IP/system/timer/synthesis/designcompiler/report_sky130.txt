@@ -2,7 +2,7 @@
 Design Compiler Synthesis Report — timer IP
 Target PDK    : SKY130 (130nm, SkyWater open-source PDK)
 Tool version  : Design Compiler (dc_shell)
-Run date      : 2026-10-03
+Run date      : 2026-10-09
 ========================================================================
 
 STATUS: PASS — synthesis completed successfully.

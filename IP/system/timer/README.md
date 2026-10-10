@@ -558,7 +558,7 @@ It covers all four PDKs:
 - SAED90/32/14 — one STA run each, against the same single `.db` each EDK
   was already synthesized to (a real gate-level timing recheck, not a
   repeat of DC's own compile-time estimate).
-- SKY130 — three STA runs, rechecking the one (typical-corner) netlist set
+- SKY130 — three STA runs, rechecking the one (slow-corner) netlist set
   above against all three PVT corners. SKY130 is the only PDK here with
   full, equally-maintained multi-corner `.db` coverage — see
   `.agents/reference_primetime_sta.md`.
@@ -594,10 +594,9 @@ Run: `python3 synthesis/run_primetime_sta.py` (all six targets; `--saed90`/`--sa
 
 ### Post-Synthesis Gate-Level Simulation (csun.edu only)
 
-`sim_timer.py --sim vcs --postsyn --pdk <saed90|saed32|saed14|all> --proto all`
+`sim_timer.py --sim vcs --postsyn --pdk <saed90|saed32|saed14|sky130|all> --proto all`
 re-runs the full test suite against the Design Compiler netlists with SDF
-back-annotation (SKY130 is not wired into this capability). All 4
-protocols, SV testbenches (netlist is always Verilog regardless of which
+back-annotation. All 4 protocols, SV testbenches (netlist is always Verilog regardless of which
 RTL language was synthesized).
 
 | PDK | APB | AHB | AXI4-Lite | Wishbone |
@@ -605,8 +604,9 @@ RTL language was synthesized).
 | SAED90 (90nm) | FAIL (known) | FAIL (known) | FAIL (known) | FAIL (known) |
 | SAED32 (32nm) | PASS | PASS | PASS | PASS |
 | SAED14 (14nm) | PASS | PASS | PASS | PASS |
+| SKY130 (130nm) | PASS | PASS | PASS | PASS |
 
-Results generated: 2026-10-03. Tool: VCS (`vcs`) Y-2026.03-SP1.
+Results generated: 2026-10-03 (SKY130: 2026-10-09). Tool: VCS (`vcs`) Y-2026.03-SP1.
 **SAED90's failures are the accepted timing violation above surfacing
 functionally** (`COUNT` reads back `X` — confirmed via a real `$setuphold`
 violation on `u_core/count_q_reg` at reset release when timing checks are
@@ -618,4 +618,75 @@ model files (each cell's primitive body lives in a separate file from its
 timing-check wrapper) to `sim_timer.py`'s file list — also documented
 there.
 
+SKY130's Verilog models don't compile in VCS as shipped. `sim_timer.py`
+works around this without modifying the PDK: it compiles a copy of
+`primitives.v` with `` `default_nettype none `` changed to `wire` (VCS
+rejects the UDPs' non-ANSI port declarations otherwise), and passes
+`sky130_fd_sc_hd.v` as a `-v` library so only the cells the netlist uses
+are elaborated (one unused cell, `lpflow_bleeder_1`, references an
+undeclared `VPWR`). The SKY130 netlist is synthesized at the slow corner,
+so its SDF carries `ss_100C_1v60` delays.
+
 Run: `python3 verification/tools/sim_timer.py --sim vcs --postsyn --pdk all --proto all`.
+
+### Power Analysis — PrimePower (csun.edu only)
+
+`sim_timer.py --power` runs the post-synthesis gate-level simulation above,
+converts its `vcdplus.vpd` to SAIF (`vcd2saif`), and runs PrimePower
+(`pt_shell`, averaged mode) on the DC netlist + SDC with that switching
+activity. Every run annotates 100% of nets from the SAIF.
+
+Total power, in mW, at 100 MHz:
+
+| PDK (corner) | APB | AHB | AXI4-Lite | Wishbone |
+|--------------|-----|-----|-----------|----------|
+| SAED90 (typ) | SKIP | SKIP | SKIP | SKIP |
+| SAED32 (tt 1.05 V 25 °C) | 0.432 | 0.457 | 0.614 | 0.443 |
+| SAED14 (tt 0.8 V 25 °C) | 0.054 | 0.051 | 0.070 | 0.047 |
+| SKY130 (tt 1.8 V 25 °C) | 0.808 | 0.840 | 1.150 | 0.806 |
+
+Breakdown for the APB variant (mW):
+
+| PDK | Internal | Switching | Leakage | Clock network | `u_regfile` | `u_core` | bus bridge |
+|-----|----------|-----------|---------|---------------|-------------|----------|------------|
+| SAED32 | 0.156 | 0.002 | 0.274 | 0.152 | 0.315 | 0.116 | 0.0005 |
+| SAED14 | 0.037 | 0.017 | 0.0001 | 0.036 | 0.038 | 0.016 | 0.0003 |
+| SKY130 | 0.781 | 0.027 | 0.000003 | 0.761 | 0.607 | 0.200 | 0.001 |
+
+Results generated: 2026-10-09. Tool: PrimePower (`pt_shell`) Y-2026.03-SP1.
+
+How to read these numbers:
+- **SAED32 is leakage-dominated (~63%)**; SAED14 and SKY130 are almost
+  entirely dynamic. SKY130 is the highest-power target by far: 94% of its
+  power is flop clock-pin internal power (about 4 µW per flop at 1.8 V),
+  and its leakage is negligible (~3 nW total). The register file holds
+  70–75% of total power on every PDK because it has the most flops — the flops' clock-pin internal power is the
+  `clock_network` group.
+- **AXI4-Lite costs ~40% more than the other buses** — its bridge has the
+  most state (separate read/write channels).
+- **SKY130 corners differ between steps.** Its netlist is synthesized at
+  the slow corner (`ss_100C_1v60`, to close timing) but power is analyzed
+  at typical (`tt_025C_1v80`), matching the SAED PDKs' typical-corner power
+  numbers.
+- **The workload is the directed test suite** (2.9–4.7 µs of register
+  traffic and short timer runs), not a representative application profile.
+  Treat the numbers as relative comparisons, not a power budget.
+- **No clock tree is included.** The flow is pre-layout: DC marks the clock
+  ideal and uses wire-load models, so clock-buffer and real wire power are
+  absent. Post-CTS power will be higher.
+- **SAED90 is skipped, not measured.** Its gate-level simulation fails
+  (accepted timing violation, see above), and activity from a failing,
+  X-filled simulation would yield plausible-looking but meaningless
+  numbers, so `--power` skips any PDK/protocol whose post-syn sim did not
+  pass.
+
+Reports per run, in `verification/work/postsyn/<pdk>/<proto>/power/`:
+`power_overall.rpt` (by power group), `power_hierarchy.rpt` (by block),
+`power_top_cells.rpt` (top 10 leaf cells), `power_top_nets.rpt` (top 10
+nets by switching power), `power_annotation.rpt` (SAIF coverage), plus
+`power.saif`, `run_power.tcl`, and `pt_shell.log`.
+
+Run: `python3 verification/tools/sim_timer.py --power --pdk all --proto all`
+(implies `--postsyn`; requires synthesis first:
+`python3 synthesis/run_vendor_synth.py --dc`). SKY130's typical-corner `.db`
+is built on demand from the shared `IP/common` cache, like for STA.

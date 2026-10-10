@@ -1,11 +1,14 @@
 ---
 name: Timer WIP handoff (2026-09-26, closed out 2026-10-03) — VC Formal + synthesis retune + SAED90 timing accepted + mass-deletion restored
-description: VC Formal done, synthesis retuned, both post-synthesis simulation failures (SAED90/SAED14) root-caused and resolved, SAED90's timing violation accepted by the user, sky130 PDK reinstalled, a ~50-file mass deletion found and restored from git — everything documented, nothing committed yet
+description: VC Formal done, synthesis retuned, both post-synthesis simulation failures (SAED90/SAED14) root-caused and resolved, SAED90's timing violation accepted by the user, sky130 PDK reinstalled, a ~50-file mass deletion found and restored from git — everything documented; since committed (048d40d)
 type: project
 ---
 
-**State: nothing committed.** Everything below is uncommitted in the working
-tree on `main` (`git status` shows it).
+**Historical handoff.** Everything below was committed afterwards (commits
+e03dcc2 and 048d40d, "Getting timer to work with Synopsys flow"). Later
+work (Step 12 power analysis, SKY130 post-syn simulation, 2026-10-09) is
+in [power](power.md). The "nothing committed" statements below describe the
+state at the time of writing.
 
 ## Done and verified
 1. **VC Formal flow** for the timer: 4 protocols × SV/VHDL, all 8 jobs PASS

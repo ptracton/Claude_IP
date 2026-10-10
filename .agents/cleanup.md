@@ -13,8 +13,18 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
 
 ## Responsibilities
 
-1. Run `cleanup.sh` (created in Step 1) to remove all build and simulation artifacts:
-   - `verification/work/` contents.
+1. Run `cleanup.sh` (created in Step 1) to remove **every** tool output — after it runs,
+   `git status --ignored` inside `IP_NAME/` must show nothing:
+   - `verification/work/` contents (includes post-syn sims and power reports under
+     `work/postsyn/<pdk>/<proto>/`).
+   - Formal: `python3 verification/tools/formal_IP_NAME.py --clean` — SymbiYosys run dirs,
+     `verification/formal/results.log` **and** `verification/formal/vcf/results.log`
+     (VC Formal). `run_formal.sh --clean` alone misses both results logs.
+   - Files Synopsys tools drop into whatever directory they are launched from, in the
+     `IP_NAME/` root and `verification/tools/`: `command.log`, `*_command.log`,
+     `fsdb2vcdLog/`, `verdiLog/`, `novas_dump.log`, `ucli.key`, `DVEfiles/`, `csrc/`,
+     `simv*`, `vcdplus.vpd`, `.rce/`. These appear when a tool is run by hand (debugging),
+     not from the scripts.
    - `firmware/build/`, `firmware/obj/`, `firmware/lib/`.
    - Synthesis intermediate files in `synthesis/*/` via two calls:
      - `python3 synthesis/run_vendor_synth.py --clean` — Vivado, Quartus outputs.

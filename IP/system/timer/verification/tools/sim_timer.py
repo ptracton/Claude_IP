@@ -17,6 +17,11 @@ Usage examples:
     python3 sim_timer.py --sim xcelium  --proto all --lang all
     python3 sim_timer.py --proto all --lang all   (runs icarus+ghdl on standard hosts;
                                                    vcs+xcelium on csun.edu)
+
+csun.edu only — gate-level simulation of the Design Compiler netlists
+(SAED90/32/14, SKY130) and PrimePower power analysis on top of it:
+    python3 sim_timer.py --sim vcs --postsyn --pdk all --proto all
+    python3 sim_timer.py --power --pdk sky130 --proto apb   (implies --postsyn)
 """
 
 import argparse
@@ -73,11 +78,21 @@ def get_timer_path() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Post-synthesis PDK configs (Design Compiler netlists + SAED cell libraries)
+# Post-synthesis PDK configs (Design Compiler netlists + SAED/SKY130 cell libraries)
 # ---------------------------------------------------------------------------
 _SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
 _SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
 _SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
+
+# sky130 PDK tooling is shared across IPs in IP/common (see
+# synthesis/run_primetime_sta.py, which imports it the same way).
+_IP_COMMON_PATH = os.environ.get("IP_COMMON_PATH") or os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "..", "..", "..", "..", "common")
+)
+sys.path.insert(0, os.path.join(_IP_COMMON_PATH, "synthesis", "designcompiler"))
+import build_sky130_libs  # noqa: E402
+_SKY130_VERILOG = f"{build_sky130_libs.SKY130_PDK}/libs.ref/sky130_fd_sc_hd/verilog"
 
 POSTSYN_PDK_CONFIGS = {
     "saed90": {
@@ -123,6 +138,30 @@ POSTSYN_PDK_CONFIGS = {
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/cg/saed14rvt_cg_tt0p8v25c.db",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/dlvl/saed14rvt_dlvl_tt0p8v25c_i0p8v.db",
             f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/iso/saed14rvt_iso_tt0p8v25c.db",
+        ],
+    },
+    "sky130": {
+        "label":     "SKY130 (130 nm)",
+        # The cell file selects its variant by define: no USE_POWER_PINS (DC
+        # netlists have no VPWR/VGND pins) and no FUNCTIONAL (keep the
+        # specify-block timing models so the SDF annotates). VCS rejects the
+        # PDK's Verilog as shipped in two ways, worked around without
+        # modifying the PDK:
+        #  - primitives.v declares its UDPs with non-ANSI port lists under
+        #    `default_nettype none, which VCS treats as undeclared
+        #    identifiers. A copy with `default_nettype wire is compiled.
+        #  - sky130_fd_sc_hd.v contains a cell (lpflow_bleeder_1) whose
+        #    timing model references an undeclared VPWR. Passing the file
+        #    with -v (library) only elaborates the cells the netlist uses.
+        #    UDPs are not resolved from -v files, hence primitives.v above.
+        "cell_libs": [],
+        "cell_libs_nettype_wire": [f"{_SKY130_VERILOG}/primitives.v"],
+        "cell_libs_v": [f"{_SKY130_VERILOG}/sky130_fd_sc_hd.v"],
+        # Power uses the typical corner, like the SAED PDKs. sky130 ships no
+        # .db, so this is the shared lc_shell-compiled cache (built on demand
+        # by build_sky130_libs.ensure_sky130_dbs()).
+        "db_libs": [
+            str(build_sky130_libs.CACHE_DIR / "sky130_fd_sc_hd__tt_025C_1v80.db"),
         ],
     },
 }
@@ -868,7 +907,7 @@ def run_vcs(proto: str, lang: str, timer_path: str, work_dir: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Post-synthesis VCS runner (csun.edu only — requires DC netlists + SAED libs)
+# Post-synthesis VCS runner (csun.edu only — requires DC netlists + PDK cell models)
 # ---------------------------------------------------------------------------
 
 def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> bool:
@@ -901,18 +940,32 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
     # ── Pre-flight checks ────────────────────────────────────────────────
     if not os.path.isfile(netlist):
         msg = (f"ERROR: netlist not found at {netlist}\n"
-               f"       Run synthesis/run_vendor_synth.py --dc{pdk[4:]} first.")
+               f"       Run synthesis/run_vendor_synth.py "
+               f"--dc{pdk.replace('saed', '')} first.")
         print(f"  [{tag}] {msg}")
         _write_result(results, "FAIL", msg)
         return False
 
-    cfg      = POSTSYN_PDK_CONFIGS[pdk]
-    missing  = [f for f in cfg["cell_libs"] if not os.path.isfile(f)]
+    cfg       = POSTSYN_PDK_CONFIGS[pdk]
+    fix_libs  = cfg.get("cell_libs_nettype_wire", [])
+    v_libs    = cfg.get("cell_libs_v", [])
+    missing   = [f for f in cfg["cell_libs"] + fix_libs + v_libs
+                 if not os.path.isfile(f)]
     if missing:
         msg = "ERROR: cell library models not found:\n" + "\n".join(missing)
         print(f"  [{tag}] {msg}")
         _write_result(results, "FAIL", msg)
         return False
+
+    # Copies of models whose `default_nettype none VCS cannot compile.
+    fixed_libs = []
+    for src in fix_libs:
+        dst = os.path.join(work_dir, "nettype_wire_" + os.path.basename(src))
+        with open(src) as fh:
+            text = fh.read()
+        with open(dst, "w") as fh:
+            fh.write(text.replace("`default_nettype none", "`default_nettype wire"))
+        fixed_libs.append(dst)
 
     # ── Source file list ─────────────────────────────────────────────────
     rtl    = os.path.join(timer_path, "design", "rtl", "verilog")
@@ -922,7 +975,8 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
 
     src_files = (
         [os.path.join(rtl, "timer_reg_pkg.sv")]   # package used by testbench
-        + cfg["cell_libs"]                          # SAED standard-cell models
+        + cfg["cell_libs"]                          # standard-cell models
+        + fixed_libs                                # patched copies (sky130 UDPs)
         + [netlist]                                 # DC gate-level netlist
         + [os.path.join(tb_dir, f"{tb_top}.sv")]   # SV testbench (always SV)
     )
@@ -942,7 +996,10 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
     else:
         print(f"  [{tag}] Compiling (no SDF found — functional only) ...")
 
-    compile_cmd += src_files + ["-o", simv]
+    compile_cmd += src_files
+    for lib in v_libs:
+        compile_cmd += ["-v", lib]
+    compile_cmd += ["-o", simv]
 
     try:
         cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -994,16 +1051,18 @@ def run_vcs_postsyn(proto: str, pdk: str, timer_path: str, work_dir: str) -> boo
 
 
 # ---------------------------------------------------------------------------
-# PrimePower (PTPX) power analysis (csun.edu only — requires pt_shell + SAED DB)
+# PrimePower (PTPX) power analysis (csun.edu only — requires pt_shell + PDK .db)
 # ---------------------------------------------------------------------------
 
-def _print_power_report(tag: str, overall_rpt: str, cells_rpt: str, nets_rpt: str) -> None:
-    """Print overall power, top-10 cells, and top-10 nets to stdout."""
+def _print_power_report(tag: str, overall_rpt: str, hier_rpt: str,
+                        cells_rpt: str, nets_rpt: str) -> None:
+    """Print overall, per-block, top-10 cell, and top-10 net power to stdout."""
     print(f"\n  [{tag}] {'=' * 55}")
     print(f"  [{tag}] Power Analysis Report")
     print(f"  [{tag}] {'=' * 55}")
     for title, path in [
         ("Overall Power", overall_rpt),
+        ("Power by Hierarchy", hier_rpt),
         ("Top 10 Cells by Total Power", cells_rpt),
         ("Top 10 Nets by Switching Power", nets_rpt),
     ]:
@@ -1022,7 +1081,7 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
 
     Flow:
       1. Convert VPD → SAIF with vcd2saif (scope = tb_timer_{proto}/u_dut)
-      2. Write a PTPX Tcl script that reads the netlist, SAIF, and liberty DB
+      2. Write a PTPX Tcl script that reads the netlist, SDC, SAIF, and liberty DB
       3. Run pt_shell -f run_power.tcl
       4. Print overall power, top-10 cells, top-10 nets from generated reports
 
@@ -1030,8 +1089,10 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
       power.saif            — switching-activity from simulation
       run_power.tcl         — generated PTPX script
       pt_shell.log          — raw pt_shell transcript
-      power_overall.rpt     — report_power -nosplit
-      power_top_cells.rpt   — top 10 instances by total power
+      power_annotation.rpt  — SAIF annotation coverage (should be ~100%)
+      power_overall.rpt     — report_power, by power group (mW)
+      power_hierarchy.rpt   — report_power -hierarchy (u_core/u_regfile/bus bridge)
+      power_top_cells.rpt   — top 10 leaf cells by total power
       power_top_nets.rpt    — top 10 nets by switching power
     """
     power_dir = os.path.join(postsyn_work_dir, "power")
@@ -1060,6 +1121,11 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
 
     cfg      = POSTSYN_PDK_CONFIGS[pdk]
     db_libs  = cfg.get("db_libs", [])
+    if pdk == "sky130" and build_sky130_libs.ensure_sky130_dbs() is None:
+        msg = "ERROR: could not build the sky130 .db cache (see lc_run.log)"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
     missing  = [f for f in db_libs if not os.path.isfile(f)]
     if missing:
         msg = "ERROR: liberty DB files not found:\n" + "\n".join(missing)
@@ -1073,15 +1139,18 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
     scope     = f"{tb_top}/u_dut"
     saif_file = os.path.join(power_dir, "power.saif")
 
-    print(f"  [{tag}] Converting VPD → SAIF (scope={scope}) ...")
+    print(f"  [{tag}] Converting VPD → SAIF (instance={scope}) ...")
+    if os.path.isfile(saif_file):
+        os.remove(saif_file)
     try:
         cp = subprocess.run(
             ["vcd2saif", "-input", vpd_file, "-output", saif_file,
-             "-scope", scope],
+             "-instance", scope],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             universal_newlines=True, timeout=120,
         )
-        if cp.returncode != 0:
+        # vcd2saif exits 0 even on bad arguments — check for the output file.
+        if cp.returncode != 0 or not os.path.isfile(saif_file):
             msg = f"ERROR: vcd2saif failed:\n{cp.stdout}{cp.stderr}"
             print(f"  [{tag}] {msg}")
             _write_result(results, "FAIL", msg)
@@ -1096,7 +1165,20 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
     overall_rpt = os.path.join(power_dir, "power_overall.rpt")
     cells_rpt   = os.path.join(power_dir, "power_top_cells.rpt")
     nets_rpt    = os.path.join(power_dir, "power_top_nets.rpt")
+    hier_rpt    = os.path.join(power_dir, "power_hierarchy.rpt")
+    annot_rpt   = os.path.join(power_dir, "power_annotation.rpt")
     tcl_script  = os.path.join(power_dir, "run_power.tcl")
+    for stale in (overall_rpt, hier_rpt, cells_rpt, nets_rpt, annot_rpt):
+        if os.path.isfile(stale):
+            os.remove(stale)
+
+    # DC writes the SDC next to the netlist; it defines the clock PTPX needs.
+    sdc_file = os.path.join(netlist_dir, f"timer_{proto}.sdc")
+    if not os.path.isfile(sdc_file):
+        msg = f"ERROR: SDC not found at {sdc_file}"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
 
     db_str = " ".join(db_libs)
     tcl_lines = [
@@ -1110,46 +1192,19 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
         f"read_verilog {netlist}",
         f"current_design {design}",
         "link_design",
+        f"read_sdc {sdc_file}",
         "",
-        f"read_saif {saif_file} -scope {scope} -strip_path {scope}",
+        f"read_saif {saif_file} -strip_path {scope}",
         "",
         "update_power",
         "",
-        f"redirect {overall_rpt} {{ report_power -nosplit }}",
-        "",
-        "# Top 10 cells by total power",
-        "set cells [sort_collection -descending [get_cells -hierarchical *] total_power]",
-        "set ncells [sizeof_collection $cells]",
-        "if {$ncells > 10} { set ncells 10 }",
-        f"set fh [open {cells_rpt} w]",
-        'puts $fh [format "%-55s %12s %12s %12s %12s" \\',
-        '    Cell Internal(mW) Switching(mW) Leakage(nW) Total(mW)]',
-        "puts $fh [string repeat - 107]",
-        "for {set i 0} {$i < $ncells} {incr i} {",
-        "    set c  [index_collection $cells $i]",
-        "    set nm [get_object_name $c]",
-        "    set ip [get_attribute $c internal_power]",
-        "    set sp [get_attribute $c switching_power]",
-        "    set lp [get_attribute $c leakage_power]",
-        "    set tp [get_attribute $c total_power]",
-        '    puts $fh [format "%-55s %12.4f %12.4f %12.4f %12.4f" $nm $ip $sp $lp $tp]',
-        "}",
-        "close $fh",
-        "",
-        "# Top 10 nets by switching power",
-        "set nets [sort_collection -descending [get_nets -hierarchical *] net_switching_power]",
-        "set nnets [sizeof_collection $nets]",
-        "if {$nnets > 10} { set nnets 10 }",
-        f"set fh [open {nets_rpt} w]",
-        'puts $fh [format "%-65s %15s" Net Switching(mW)]',
-        "puts $fh [string repeat - 82]",
-        "for {set i 0} {$i < $nnets} {incr i} {",
-        "    set net [index_collection $nets $i]",
-        "    set nm  [get_object_name $net]",
-        "    set sp  [get_attribute $net net_switching_power]",
-        '    puts $fh [format "%-65s %15.4f" $nm $sp]',
-        "}",
-        "close $fh",
+        f"redirect {annot_rpt} {{ report_switching_activity -list_not_annotated }}",
+        f"redirect {overall_rpt} {{ report_power -nosplit -unit mW }}",
+        f"redirect {hier_rpt} {{ report_power -nosplit -unit mW -hierarchy -levels 2 }}",
+        f"redirect {cells_rpt} {{ report_power -nosplit -unit mW -cell_power -leaf \\",
+        "    -nworst 10 -sort_by total_power }",
+        f"redirect {nets_rpt} {{ report_power -nosplit -unit mW -net_power -leaf \\",
+        "    -nworst 10 -sort_by net_switching_power }",
         "",
         "exit",
     ]
@@ -1175,12 +1230,22 @@ def run_power_analysis(proto: str, pdk: str, timer_path: str,
     with open(pt_log, "w") as fh:
         fh.write(full_log)
 
-    if cp.returncode != 0:
+    # pt_shell exits 0 even when the script aborts on an error, so judge the
+    # run by its log and its reports. PT-063 (Library Compiler path unset) is
+    # printed at every startup and is harmless — we only read compiled .db files.
+    errors = [ln for ln in full_log.splitlines()
+              if ln.startswith("Error:") and "(PT-063)" not in ln]
+    missing_rpts = [r for r in (overall_rpt, hier_rpt, cells_rpt, nets_rpt)
+                    if not os.path.isfile(r) or os.path.getsize(r) == 0]
+    if cp.returncode != 0 or errors or missing_rpts:
         print(f"  [{tag}] pt_shell FAILED (see {pt_log})")
+        for ln in errors:
+            print(f"    {ln}")
+        _print_power_report(tag, overall_rpt, hier_rpt, cells_rpt, nets_rpt)
         _write_result(results, "FAIL", full_log)
         return False
 
-    _print_power_report(tag, overall_rpt, cells_rpt, nets_rpt)
+    _print_power_report(tag, overall_rpt, hier_rpt, cells_rpt, nets_rpt)
     _write_result(results, "PASS", full_log)
     return True
 
@@ -1385,7 +1450,7 @@ def main() -> None:
         "--pdk",
         choices=SUPPORTED_PDKS + ["all"],
         default="all",
-        help="PDK for post-synthesis simulation: saed90, saed32, saed14, or all "
+        help="PDK for post-synthesis simulation: saed90, saed32, saed14, sky130, or all "
              "(default: %(default)s). Ignored unless --postsyn or --power is given.",
     )
     parser.add_argument(
@@ -1394,7 +1459,7 @@ def main() -> None:
         default=False,
         help="Run PrimePower (PTPX) power analysis after post-synthesis simulation. "
              "Implies --postsyn. Reports overall power, top 10 worst cells, top 10 "
-             "worst nets. csun.edu only; requires pt_shell and SAED liberty DB files.",
+             "worst nets. csun.edu only; requires pt_shell and the PDK liberty DB files.",
     )
     args = parser.parse_args()
 
@@ -1455,7 +1520,7 @@ def main() -> None:
     if args.postsyn or args.power:
         if not ON_CSUN:
             print("WARNING: --postsyn/--power is only supported on *.csun.edu "
-                  "(requires VCS, SAED PDK libraries, and pt_shell). Skipping.")
+                  "(requires VCS, the PDK libraries, and pt_shell). Skipping.")
         else:
             pdks = SUPPORTED_PDKS if args.pdk == "all" else [args.pdk]
             for pdk in pdks:
@@ -1476,7 +1541,14 @@ def main() -> None:
                     if not ok:
                         all_pass = False
 
-                    if args.power:
+                    if args.power and not ok:
+                        # Switching activity from a failing gate-level sim
+                        # (e.g. X-filled registers) would yield plausible-looking
+                        # but meaningless power numbers, so don't produce any.
+                        print(f"  [power/{proto}/{pdk}] Skipped — post-syn "
+                              f"simulation did not pass.")
+                        results_summary.append((f"power/{proto}/{pdk}", "SKIP"))
+                    elif args.power:
                         pow_ok = run_power_analysis(proto, pdk, timer_path, work_dir)
                         results_summary.append(
                             (f"power/{proto}/{pdk}", "PASS" if pow_ok else "FAIL")
@@ -1496,7 +1568,7 @@ def main() -> None:
     for label, status in results_summary:
         if status == "PASS":
             color = GREEN
-        elif status == "FAIL (known)":
+        elif status in ("FAIL (known)", "SKIP"):
             color = YELLOW
         else:
             color = RED

@@ -197,6 +197,13 @@ def do_clean(formal_dir):
     if os.path.isdir(work):
         shutil.rmtree(work)
         print(f"  removed {work}")
+    for results_log in [
+        os.path.join(formal_dir, "results.log"),          # SymbiYosys
+        os.path.join(formal_dir, "vcf", "results.log"),   # VC Formal
+    ]:
+        if os.path.isfile(results_log):
+            os.remove(results_log)
+            print(f"  removed {results_log}")
     print("Formal clean complete.")
 
 

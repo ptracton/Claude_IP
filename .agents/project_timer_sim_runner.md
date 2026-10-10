@@ -42,14 +42,12 @@ of a testbench-embedded call.
 accepted timing violation, the one case that uses this).
 
 **Protocols supported:** `apb`, `ahb`, `wb`, `axi4l`  
-**PDKs supported:** `saed90`, `saed32`, `saed14` (post-syn only; SKY130 isn't wired in)
+**PDKs supported:** `saed90`, `saed32`, `saed14`, `sky130` (post-syn / power only)
 
 `run_sims.sh` (a standalone runner alongside `sim_timer.py`) delegates to
 `sim_timer.py --sim vcs` on csun.edu instead of invoking Icarus/GHDL directly,
-since those tools aren't installed there. **Note:** currently missing from
-the working tree (uncommitted deletion predating the synthesis/PrimeTime
-work in this file — not something that session touched; flagged, not
-investigated further).
+since those tools aren't installed there. (It was once found deleted from
+the working tree; restored from git on 2026-10-03 and tracked since.)
 
 bus_matrix's `sim_bus_matrix.py` mirrors this same host-detection, default, and
 waveform-dump design (`tb_bus_matrix_{ahb,axi,wb}.sv` carry the same

@@ -313,14 +313,14 @@ tape-out readiness and design optimization.
 Run power analysis when:
 - Synthesis (Step 10) has completed and DC netlists exist under
   `synthesis/designcompiler/netlists/<pdk>/`
-- The design targets an ASIC PDK (SAED90, SAED32, or SAED14)
+- The design targets an ASIC PDK (SAED90, SAED32, SAED14, or SKY130)
 - Power consumption is a design concern or a specification requirement
 - Identifying power hotspots to guide RTL optimization
 
 Do **not** run power analysis:
 - Before synthesis is complete (no netlist exists)
 - For FPGA targets (Vivado/Quartus) — power estimation is handled by those tools natively
-- On a host other than csun.edu (requires `pt_shell` and the SAED PDK liberty `.db` files)
+- On a host other than csun.edu (requires `pt_shell` and the SAED or SKY130 liberty `.db` files)
 
 ### How to run
 
@@ -345,10 +345,19 @@ The flow for each `(proto, pdk)` pair:
 
 1. **Gate-level simulation** — VCS compiles and runs the SV testbench with the DC netlist
    and SDF back-annotation, producing `vcdplus.vpd`
-2. **SAIF generation** — `vcd2saif` converts the VPD to a switching-activity file scoped
-   to the DUT instance (`tb_IP_NAME_{proto}/u_dut`)
-3. **PTPX analysis** — `pt_shell` reads the liberty DB, netlist, and SAIF, runs
-   `update_power`, and generates three reports
+2. **SAIF generation** — `vcd2saif -instance tb_IP_NAME_{proto}/u_dut` converts the VPD
+   to a switching-activity file scoped to the DUT instance
+3. **PTPX analysis** — `pt_shell` reads the liberty DB, netlist, SDC (for the clock) and
+   SAIF (`read_saif -strip_path tb_IP_NAME_{proto}/u_dut`), runs `update_power`, and
+   generates the reports below
+
+If the gate-level simulation in step 1 does not pass, power analysis is **skipped**
+(`SKIP` in the summary): activity from a failing, X-filled simulation produces
+plausible-looking but meaningless power numbers.
+
+`vcd2saif` and `pt_shell` both exit 0 on errors, so pass/fail is judged by the
+SAIF file existing, `pt_shell.log` having no `Error:` lines (other than the
+harmless startup PT-063), and every report being non-empty.
 
 Output files land in `verification/work/postsyn/<pdk>/<proto>/power/`:
 
@@ -357,17 +366,23 @@ Output files land in `verification/work/postsyn/<pdk>/<proto>/power/`:
 | `power.saif` | Switching activity extracted from simulation |
 | `run_power.tcl` | Auto-generated PTPX script (inspect for debug) |
 | `pt_shell.log` | Full pt_shell transcript |
-| `power_overall.rpt` | Total power broken down by power group |
-| `power_top_cells.rpt` | Top 10 instances ranked by total power |
+| `power_annotation.rpt` | SAIF annotation coverage — should be ~100% of nets |
+| `power_overall.rpt` | Total power broken down by power group (mW) |
+| `power_hierarchy.rpt` | Power per block (regfile, core, bus bridge) |
+| `power_top_cells.rpt` | Top 10 leaf cells ranked by total power |
 | `power_top_nets.rpt` | Top 10 nets ranked by switching power |
 
-The console summary prints overall power, top-10 worst cells, and top-10 worst nets
+The console summary prints overall, per-block, top-10 cell and top-10 net power
 immediately after the analysis completes.
 
 ### Interpreting results
 
+- **Annotation first**: if `power_annotation.rpt` shows nets not annotated from the
+  activity file, the SAIF scope is wrong and every number below is unreliable.
 - **Overall power**: the Total row of `power_overall.rpt` gives internal + switching +
   leakage power in mW. Compare against the power budget in the specification.
+  The flow is pre-layout (ideal clock, wire-load models), so clock-tree power is not
+  included; the directed-test workload is not an application profile.
 - **Top 10 worst cells** (`power_top_cells.rpt`): instances consuming the most power.
   High internal power → combinational depth or glitching. High switching power → high
   toggle rate or large fanout.
@@ -403,7 +418,7 @@ Full detail on the PTPX flow, liberty paths, and Tcl commands is in
 | formal (5) | regression (7) | `verification/formal/results.log`, `verification/formal/vcf/results.log` |
 | uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
 | lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
-| synthesis (10) | power (12) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf}` |
+| synthesis (10) | power (12) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf,sdc}` |
 | All (2–9) | cleanup (11) | Full passing regression |
 | power (12) | cleanup (11) | `verification/work/postsyn/<pdk>/<proto>/power/power_*.rpt` |
 

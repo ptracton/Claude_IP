@@ -33,8 +33,9 @@ bash "${CLAUDE_TIMER_PATH}/synthesis/clean.sh"
 # PrimeTime STA outputs (csun.edu only; --clean is host-agnostic and a no-op elsewhere)
 python3 "${CLAUDE_TIMER_PATH}/synthesis/run_primetime_sta.py" --clean
 
-# Formal verification results (keep scripts and properties)
-bash "${CLAUDE_TIMER_PATH}/verification/formal/run_formal.sh" --clean
+# Formal verification run dirs and results logs, SymbiYosys and VC Formal
+# (keep scripts and properties). Superset of run_formal.sh --clean.
+python3 "${CLAUDE_TIMER_PATH}/verification/tools/formal_timer.py" --clean
 
 # Lint logs (keep config and waivers)
 rm -f "${CLAUDE_TIMER_PATH}/verification/lint/lint_results.log"
@@ -49,6 +50,23 @@ rm -rf "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/vcst_rtdb" \
        "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/spyglass.out" \
        "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/report_hdl.txt" \
        "${CLAUDE_TIMER_PATH}/verification/lint/spyglass/VCSOptFile.txt"
+
+# Files Synopsys tools drop into whatever directory they are launched from
+# (dc_shell/pt_shell/lc_shell command logs, fsdb2vcd/Verdi/VCS scratch) — left
+# behind when a tool is run by hand from the IP root or the tools directory.
+for dir in "${CLAUDE_TIMER_PATH}" "${CLAUDE_TIMER_PATH}/verification/tools"; do
+    rm -rf "${dir}/command.log" \
+           "${dir}/"*_command.log \
+           "${dir}/fsdb2vcdLog" \
+           "${dir}/verdiLog" \
+           "${dir}/novas_dump.log" \
+           "${dir}/ucli.key" \
+           "${dir}/DVEfiles" \
+           "${dir}/csrc" \
+           "${dir}/simv" "${dir}/simv.daidir" \
+           "${dir}/vcdplus.vpd" \
+           "${dir}/.rce"
+done
 
 # Python cache directories
 find "${CLAUDE_TIMER_PATH}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
