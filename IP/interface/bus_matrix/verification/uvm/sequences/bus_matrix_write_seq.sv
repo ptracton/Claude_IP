@@ -6,9 +6,9 @@
 class bus_matrix_write_seq extends bus_matrix_base_seq;
   `uvm_object_utils(bus_matrix_write_seq)
 
-  // Base addresses for the two slave regions (match testbench register config)
-  localparam logic [31:0] S0_BASE = 32'h1000_0000;
-  localparam logic [31:0] S1_BASE = 32'h2000_0000;
+  // Base addresses of two slave regions (bus_matrix_pkg address map)
+  localparam logic [31:0] S0_BASE = 32'h0000_0000; // Boot ROM (bus_matrix_pkg)
+  localparam logic [31:0] S1_BASE = 32'h2000_0000; // SRAM     (bus_matrix_pkg)
 
   int unsigned num_words = 8;
 

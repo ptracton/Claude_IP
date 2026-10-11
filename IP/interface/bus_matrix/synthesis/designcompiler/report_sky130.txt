@@ -1,0 +1,32 @@
+==============================================================================
+Design Compiler Synthesis Report — bus_matrix IP
+Target PDK    : SKY130 (130nm, SkyWater open-source PDK)
+Configuration : 2 masters, 4 slaves, round robin (bus_matrix_pkg defaults)
+Constraints   : 100 MHz clk; 3.0 ns input and output delay on every port
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-10-10
+==============================================================================
+
+STATUS: PASS — synthesis completed.
+
+Variant                    Cells   FFs         Area  WNS (ns)  Timing
+------------------------------------------------------------------------------
+bus_matrix_apb               849    18  4834.636727     +2.86  MET
+bus_matrix_ahb              1020    88  6972.937475     +2.57  MET
+bus_matrix_axi4l            1668   316 14472.630102     +3.19  MET
+bus_matrix_wb                819    14  4616.927928     +2.86  MET
+bus_matrix_apb_vhdl          845    18  4829.631927     +2.83  MET
+bus_matrix_ahb_vhdl         1016    88  6965.430275     +2.54  MET
+bus_matrix_axi4l_vhdl       1664   316 14467.625303     +3.16  MET
+bus_matrix_wb_vhdl           815    14  4611.923129     +2.83  MET
+
+Area is in the library's units (um^2 for SAED32/14 and SKY130).
+WNS is the worst slack among the 10 paths in each <variant>_timing.rpt.
+
+Per-variant area and timing reports:
+  synthesis/designcompiler/reports/sky130/
+Netlists, SDF and SDC:
+  synthesis/designcompiler/netlists/sky130/
+Full log:
+  synthesis/designcompiler/dc_sky130_run.log
+==============================================================================

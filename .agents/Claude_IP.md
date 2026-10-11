@@ -317,7 +317,7 @@ deliverables exist before starting work.
 | 7  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
 | 8  | [.agents/lint.md](.agents/lint.md) | RTL linting (runs in parallel with Steps 4–6) |
 | 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8) |
-| 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, and Quartus |
+| 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, Quartus; Design Compiler + PrimeTime + gate-level simulation on csun.edu |
 | 11 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag |
 | 12 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |
 
@@ -484,6 +484,10 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 | SpyGlass (`spyglass_vc`) | csun.edu only, on `$PATH` | SV lint (replaces Verilator there); no working VHDL-2008 path — VHDL lint is unavailable on csun.edu |
 | PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |
+| PrimePower (`pt_shell`, power mode) | csun.edu only, on `$PATH` | Power analysis from gate-level SAIF (`sim_<ip>.py --power`, Step 12) |
+| Synopsys VCS MX (`vcs`) | Y-2026.03, csun.edu only | SV/VHDL directed simulation, gate-level simulation, UVM (`-ntb_opts uvm-1.2`; Vivado is not available there) |
+| Cadence Xcelium (`xrun`) | 25.03, csun.edu only | SV/VHDL directed simulation |
+| Synopsys VC Formal (`vcf`) | Y-2026.03, csun.edu only | Formal property verification of SV and VHDL tops (replaces SymbiYosys there) |
 
 ---
 

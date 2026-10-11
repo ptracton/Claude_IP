@@ -1,0 +1,36 @@
+========================================================================
+PrimeTime STA Report — bus_matrix IP
+Target        : SKY130 (130nm, SkyWater open-source PDK) — ff_n40C_1v95 (best-case)
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-10-10
+========================================================================
+
+STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
+        Timing is MET at this target — see Timing Summary below.
+
+------------------------------------------------------------------------
+Timing Summary (across all variants, 100 MHz / 10 ns target)
+------------------------------------------------------------------------
+  Worst-case WNS : 3.570 ns
+  Total TNS      : 0.000 ns
+  Timing         : MET
+
+  Variant                   Setup WNS   Hold WNS  DRV viol.
+  bus_matrix_ahb                3.580      0.290          0
+  bus_matrix_ahb_vhdl           3.570      0.290          0
+  bus_matrix_apb                3.660      0.290          0
+  bus_matrix_apb_vhdl           3.660      0.290          0
+  bus_matrix_axi4l              5.800      0.290          0
+  bus_matrix_axi4l_vhdl         5.790      0.290          0
+  bus_matrix_wb                 3.660      0.290          0
+  bus_matrix_wb_vhdl            3.650      0.290          0
+
+  DRV viol. = report_constraint -all_violators entries (max_capacitance,
+  max_transition, ... plus any setup/hold violators), <variant>_constraint.rpt.
+
+Per-variant reports:
+  synthesis/primetime/reports/ff_n40C_1v95/
+
+Full log:
+  synthesis/primetime/pt_ff_n40C_1v95_run.log
+========================================================================

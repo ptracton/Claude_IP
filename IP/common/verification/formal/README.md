@@ -108,6 +108,27 @@ Use `IP/system/timer/verification/formal/vcf/` as the worked example.
    `claude_vcf.run_job()`. The helpers `common_bridge_file()` and
    `common_checker_files()` supply the common files.
 
+### IPs without a register map (interconnects)
+
+`IP/interface/bus_matrix/verification/formal/vcf/` is the worked example for
+an IP that is a bus master on some ports and a bus slave on others:
+- **Both directions:** instantiate `claude_<proto>_fv` once per port. Master
+  ports use the default, where the solver is the external master and the
+  design must obey the slave rules. Slave ports use `MASTER_IS_ENV=0`, where
+  the solver is the external slave and the design must obey the master rules.
+  Skip `claude_reg_fv` and check end-to-end properties instead.
+- **Clock and reset:** if the IP's clock and reset ports don't use the
+  protocol's standard names, pass `clock=`, `reset=` and `reset_sense=` to
+  `VcfJob`.
+- **VHDL generics:** an SV bind cannot see VHDL generics; they arrive as 0.
+  Generate the configuration as literals into an `.svh` file before the run.
+- **Waiver globs:** when the bound checker has generate blocks, the VHDL
+  hierarchy gains an extra `u_fv` level. Write globs as `<top>.u_fv*.<rest>`
+  so one line covers both languages.
+- **Time budget:** liveness-style response bounds can need far more than the
+  default 30 minutes. bus_matrix's AXI4-Lite bounds take about 100 minutes.
+  Set `max_time` per job.
+
 ## Running VC Formal directly
 
 `claude_vcf.run_job()` is the normal entry point. To run by hand, set the

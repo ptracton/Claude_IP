@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""uvm_bus_matrix.py — Standalone UVM runner for bus_matrix (Vivado xsim).
+"""uvm_bus_matrix.py — Standalone UVM runner for bus_matrix (Vivado xsim or VCS).
 
-Three-step flow: xvlog (compile RTL + UVM), xelab (elaborate), xsim (simulate).
-Uses Popen + polling for xsim to avoid hangs.
+xsim (standard hosts): xvlog (compile RTL + UVM), xelab (elaborate), xsim
+(simulate); Popen + polling for xsim to avoid hangs.
+VCS (csun.edu): one `vcs -ntb_opts uvm-1.2` compile, then simv per test.
+--sim auto (the default) picks xsim when xvlog is on PATH, else VCS.
+
+The DUT is bus_matrix_axi4l with its default (bus_matrix_pkg) configuration;
+the slaves are the shared claude_axi4l_if bridge + bus_matrix_tb_mem.
 
 Usage:
     source IP/interface/bus_matrix/setup.sh
     python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/uvm_bus_matrix.py
     python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/uvm_bus_matrix.py --test bus_matrix_rw_test
-    python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/uvm_bus_matrix.py --test bus_matrix_contention_test
+    python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/uvm_bus_matrix.py --test all --sim vcs
 """
 
 import argparse
@@ -18,6 +23,35 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+TESTS = ["bus_matrix_base_test", "bus_matrix_rw_test", "bus_matrix_contention_test",
+         "bus_matrix_map_test", "bus_matrix_decerr_test"]
+
+
+def rtl_files(ip_path):
+    """RTL of the AXI4-Lite variant, package first."""
+    rtl = os.path.join(ip_path, "design", "rtl", "verilog")
+    return [os.path.join(rtl, f) for f in [
+        "bus_matrix_pkg.sv", "bus_matrix_decoder.sv", "bus_matrix_arb.sv",
+        "bus_matrix_core.sv", "bus_matrix_axi4l_tgt.sv", "bus_matrix_axi4l_ini.sv",
+        "bus_matrix_axi4l.sv",
+    ]]
+
+
+def tb_model_files(ip_path):
+    """Slave models shared with the directed testbench."""
+    common = os.environ.get("IP_COMMON_PATH",
+                            os.path.join(ip_path, "..", "..", "common"))
+    return [
+        os.path.join(common, "design", "rtl", "verilog", "claude_axi4l_if.sv"),
+        os.path.join(ip_path, "verification", "testbench", "bus_matrix_tb_mem.sv"),
+        os.path.join(ip_path, "verification", "testbench", "bus_matrix_tb_axi4l_slave.sv"),
+    ]
+
+
+def uvm_incdirs(uvm_dir):
+    return [uvm_dir] + [os.path.join(uvm_dir, d)
+                        for d in ("agents/axi_master", "sequences", "env", "tests")]
 
 
 def find_vivado_root():
@@ -65,12 +99,25 @@ def main():
         sys.exit(1)
     ip_path = str(Path(ip_path).resolve())
 
-    parser = argparse.ArgumentParser(description="Run UVM tests for bus_matrix (xsim)")
+    parser = argparse.ArgumentParser(description="Run UVM tests for bus_matrix (xsim or VCS)")
     parser.add_argument("--test", default="bus_matrix_base_test",
-                        help="UVM test name (default: bus_matrix_base_test)")
+                        help="UVM test name, or 'all' (default: bus_matrix_base_test)")
     parser.add_argument("--verbosity", default="UVM_MEDIUM",
                         help="UVM verbosity (default: UVM_MEDIUM)")
+    parser.add_argument("--sim", choices=["auto", "xsim", "vcs"], default="auto",
+                        help="simulator (default: xsim if xvlog is on PATH, else vcs)")
     args = parser.parse_args()
+    tests = TESTS if args.test == "all" else [args.test]
+
+    sim = args.sim
+    if sim == "auto":
+        sim = "xsim" if shutil.which("xvlog") or find_vivado_root() else "vcs"
+    if sim == "vcs":
+        sys.exit(run_vcs(ip_path, tests, args.verbosity))
+    if len(tests) > 1:
+        print("ERROR: --test all is supported with --sim vcs only; run xsim tests one at a time.")
+        sys.exit(1)
+    args.test = tests[0]
 
     vivado_root = find_vivado_root()
     if not vivado_root:
@@ -94,19 +141,9 @@ def main():
     rtl_lib_dir = os.path.join(work_dir, "rtl_lib")
     work_lib_dir = os.path.join(work_dir, "work")
 
-    # RTL source files
-    rtl_files = [
-        os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-        os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-        os.path.join(rtl_dir, "bus_matrix_core.sv"),
-        os.path.join(rtl_dir, "bus_matrix_axi.sv"),
-    ]
-
-    # UVM source files — interface first, then package, then testbench
-    # Slave BFM from directed test testbench dir (reused)
-    uvm_files = [
+    # UVM source files — slave models, interface, package, testbench
+    uvm_files = tb_model_files(ip_path) + [
         os.path.join(uvm_dir, "bus_matrix_axi_if.sv"),
-        os.path.join(tb_dir, "bus_matrix_axi_slave.sv"),
         os.path.join(uvm_dir, "bus_matrix_uvm_pkg.sv"),
         os.path.join(uvm_dir, "tb_bus_matrix_uvm.sv"),
     ]
@@ -122,7 +159,7 @@ def main():
         XVLOG, "--sv",
         "--work", f"rtl_lib={rtl_lib_dir}",
         "--log", os.path.join(work_dir, "xvlog_rtl.log"),
-    ] + rtl_files
+    ] + rtl_files(ip_path)
 
     rc, out = run_cmd(xvlog_rtl_cmd, cwd=work_dir)
     if rc != 0:
@@ -140,11 +177,7 @@ def main():
         XVLOG, "--sv",
         "-L", f"uvm={uvm_lib_dir}",
         "-i", uvm_inc_dir,
-        "-i", uvm_dir,
-        "-i", os.path.join(uvm_dir, "agents", "axi_master"),
-        "-i", os.path.join(uvm_dir, "sequences"),
-        "-i", os.path.join(uvm_dir, "env"),
-        "-i", os.path.join(uvm_dir, "tests"),
+    ] + [x for d in uvm_incdirs(uvm_dir) for x in ("-i", d)] + [
         "--work", f"work={work_lib_dir}",
         "-L", f"rtl_lib={rtl_lib_dir}",
         "--log", os.path.join(work_dir, "xvlog_uvm.log"),
@@ -250,6 +283,46 @@ def main():
     print(f"Results: {os.path.join(work_dir, 'results.log')}")
 
     sys.exit(0 if passed else 1)
+
+
+def run_vcs(ip_path, tests, verbosity):
+    """Compile once with VCS (built-in UVM 1.2) and run each test. Returns exit code."""
+    uvm_dir = os.path.join(ip_path, "verification", "uvm")
+    work_dir = os.path.join(ip_path, "verification", "work", "vcs", "uvm")
+    os.makedirs(work_dir, exist_ok=True)
+
+    files = rtl_files(ip_path) + tb_model_files(ip_path) + [
+        os.path.join(uvm_dir, "bus_matrix_axi_if.sv"),
+        os.path.join(uvm_dir, "bus_matrix_uvm_pkg.sv"),
+        os.path.join(uvm_dir, "tb_bus_matrix_uvm.sv"),
+    ]
+    print("\n=== UVM (VCS) ===")
+    rc, out = run_cmd(["vcs", "-full64", "-sverilog", "-ntb_opts", "uvm-1.2",
+                       "-timescale=1ns/1ps",
+                       "+incdir+" + "+".join(uvm_incdirs(uvm_dir))] + files +
+                      ["-o", "simv_uvm"],
+                      cwd=work_dir, logfile=os.path.join(work_dir, "compile.log"))
+    if rc != 0:
+        print(f"  vcs compile FAILED (rc={rc})")
+        print(out[-1500:])
+        write_result(work_dir, False, out)
+        return 1
+
+    all_out, all_pass = [], True
+    for test in tests:
+        rc, out = run_cmd([os.path.join(work_dir, "simv_uvm"),
+                           f"+UVM_TESTNAME={test}", f"+UVM_VERBOSITY={verbosity}"],
+                          cwd=work_dir, logfile=os.path.join(work_dir, f"{test}.log"))
+        passed = rc == 0 and "TEST PASSED" in out and "TEST FAILED" not in out
+        all_pass &= passed
+        print(f"  {test}: {'PASS' if passed else 'FAIL'}")
+        all_out.append(f"{test}: {'PASS' if passed else 'FAIL'}")
+        all_out.append(out)
+
+    write_result(work_dir, all_pass, "\n".join(all_out))
+    print(f"\nUVM {'PASSED' if all_pass else 'FAILED'} — results: "
+          f"{os.path.join(work_dir, 'results.log')}")
+    return 0 if all_pass else 1
 
 
 def write_result(work_dir, passed, sim_out):

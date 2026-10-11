@@ -306,13 +306,45 @@ Pass/fail (`ok` return value) reflects whether `pt_shell` **ran**
 successfully (exit 0) — not whether timing was met. Timing MET/VIOLATED is
 a separate field, parsed from `report_qor`'s `Critical Path Slack` /
 `Total Negative Slack` lines (worst-case WNS across all 8 variants' `*_qor.rpt`
-files, TNS summed across them) via `parse_pt_qor`, and written into
+files, TNS summed across them) via `parse_pt_qor`. **Only the
+`(max_delay/setup)` sections count toward WNS/TNS** — `report_qor` also has a
+`(min_delay/hold)` section per clock, and taking the minimum over every
+`Critical Path Slack` reports the hold slack as "WNS" (bus_matrix port bug,
+2026-10-10). Report hold WNS per variant separately, plus the number of
+`report_constraint -all_violators` entries (count `(VIOLATED` — PrimeTime
+also prints `(VIOLATED: increase significant digits)` for rounding-level
+max_capacitance violators), and written into
 `write_pt_report`'s `report_sta_<target>.txt` alongside a `STATUS: PASS`
 line that only ever means "STA completed" — exactly the same PASS/timing
 split already used by `write_vivado_report`. A `VIOLATED` target is a real
 synthesis/STA finding to record in `known_issues.md`, not a script bug.
 
+#### High-fan-out select nets (interconnect IPs)
+
+A wide AND-OR mux selected by a registered one-hot (e.g. bus_matrix's grant
+selecting a 69-bit request field) times out on SAED90 even at small cell
+counts: SAED90's wire-load models give each net a wire delay that grows much
+faster than its fan-out (~0.3 ns at fan-out 2, 2.4–2.9 ns at fan-out 5–7), so
+every buffer level costs 2.5–3 ns. What helped (bus_matrix, -1.25 → -0.56 ns,
+and SKY130 ss +0.84 → +2.54 ns):
+- `set_cost_priority -delay` before compile — by default DC fixes design
+  rules first and leaves timing-critical sinks at the leaves of the buffer
+  tree;
+- a second `compile_ultra -incremental` pass;
+- keeping decoders out of request paths in the RTL (drive a slave request
+  from the registered grant, not `grant & request`).
+`set_max_fanout` alone changed nothing, and `-timing_high_effort_script` is
+ignored by this DC version (OPT-1342). To diagnose, run
+`report_timing -nets -capacitance -transition_time -input_pins` in PrimeTime:
+large `Incr` on an input pin with small cell delays is wire-load delay.
+
 ### Yosys (`synthesis/yosys/`)
+
+Yosys (0.60) cannot parse a package import in a module header
+(`module X import pkg::*; #(...)`). Reference package items by name in
+parameter defaults instead (`parameter int N = pkg::N`) so the RTL itself
+reads in Yosys — the timer instead keeps a Yosys-only copy of its regfile
+(`timer_regfile_synth.sv`), which can drift.
 
 Write one `.ys` script per bus-interface variant for both SV and VHDL:
 

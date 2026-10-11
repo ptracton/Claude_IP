@@ -139,6 +139,8 @@ celerybeat.pid
 .envrc
 .venv
 env/
+# ...but not UVM environment class directories
+!IP/**/verification/uvm/env/
 venv/
 ENV/
 env.bak/

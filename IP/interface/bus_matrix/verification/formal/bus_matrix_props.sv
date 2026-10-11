@@ -1,156 +1,195 @@
-// bus_matrix_props.sv — Formal property module for bus_matrix_core verification.
+// bus_matrix_props.sv — SymbiYosys harness for bus_matrix_core (standard hosts).
 //
-// Yosys-compatible. Uses always @(posedge clk) with assert/assume/cover
-// for SymbiYosys bounded model checking.
+// Yosys-compatible: immediate assert/assume/cover in always @(posedge clk).
+// The harness's inputs are free, so the solver plays every master and slave.
+// It checks the core of the default configuration (2 masters, the 4-slave
+// bus_matrix_pkg address map) in either arbitration mode (ARB_MODE, set per
+// task in bus_matrix_core.sby). The same properties are proven unbounded on
+// csun.edu with VC Formal (verification/formal/vcf/bus_matrix_core_fv.sv,
+// bus_matrix_arb_fv.sv); this is the bounded, open-source equivalent.
 //
-// Properties verified (hold for registered-grant crossbar):
-//   P1_ONE_HOT       : At most one master granted at a time (mst_gnt one-hot)
-//   P5_DECODE_ONEHOT : slv_req is zero or one-hot (single slave per cycle)
-//   P7_SLV_REQ_ONEHOT: when any slave is requested, at most one master granted
+// Environment (assumed):
+//   E1  a master holds mst_req and its request fields until mst_done
+//   E2  a slave completes (slv_done) only while it is requested (slv_req)
+// Properties (asserted):
+//   P1  mst_done[i] only while mst_req[i]
+//   P2  a request that matches no slave is answered, with an error, next cycle
+//   P3  slv_req[j] carries the fields of a requesting master that addressed j
+//   P4  every slave completion is returned to such a master with its data/err
+//   P5  a slave's request fields are stable until it completes
+//   P6  a slave never sees two consecutive transactions (idle cycle between grants)
 
 module bus_matrix_props #(
-  parameter NUM_MASTERS = 2,
-  parameter NUM_SLAVES  = 2,
-  parameter DATA_W      = 32,
-  parameter ADDR_W      = 32,
-  parameter ARB_MODE    = 0,
-  parameter [NUM_MASTERS*4-1:0]  M_PRIORITY = {NUM_MASTERS*4{1'b0}},
-  parameter [NUM_SLAVES*32-1:0]  S_BASE     = {NUM_SLAVES*32{1'b0}},
-  parameter [NUM_SLAVES*32-1:0]  S_MASK     = {NUM_SLAVES*32{1'b0}}
+  parameter ARB_MODE = 1
 ) (
-  input wire clk,
-  input wire rst_n,
-
-  // Master-side inputs
-  input wire [NUM_MASTERS-1:0]          mst_req,
-  input wire [NUM_MASTERS*ADDR_W-1:0]   mst_addr,
-  input wire [NUM_MASTERS*DATA_W-1:0]   mst_wdata,
-  input wire [NUM_MASTERS-1:0]          mst_we,
-  input wire [NUM_MASTERS*4-1:0]        mst_be,
-
-  // Slave-side inputs (responses from slave)
-  input wire [NUM_SLAVES-1:0]           slv_gnt,
-  input wire [NUM_SLAVES*DATA_W-1:0]    slv_rdata,
-  input wire [NUM_SLAVES-1:0]           slv_rvalid
+  input wire        clk,
+  input wire        rst_n,
+  input wire [1:0]  mst_req,
+  input wire [63:0] mst_addr,
+  input wire [63:0] mst_wdata,
+  input wire [1:0]  mst_we,
+  input wire [7:0]  mst_be,
+  input wire [3:0]  slv_done,
+  input wire [127:0] slv_rdata,
+  input wire [3:0]  slv_err
 );
 
-  // DUT outputs (driven by bus_matrix_core)
-  wire [NUM_MASTERS-1:0]         mst_gnt;
-  wire [NUM_MASTERS*DATA_W-1:0]  mst_rdata;
-  wire [NUM_MASTERS-1:0]         mst_rvalid_out;
-  wire [NUM_MASTERS-1:0]         mst_err;
-  wire [NUM_SLAVES-1:0]          slv_req;
-  wire [NUM_SLAVES*ADDR_W-1:0]   slv_addr;
-  wire [NUM_SLAVES*DATA_W-1:0]   slv_wdata_out;
-  wire [NUM_SLAVES-1:0]          slv_we_out;
-  wire [NUM_SLAVES*4-1:0]        slv_be_out;
+  localparam NM = 2;
+  localparam NS = 4;
+  localparam [NS*32-1:0] S_BASE = {32'h6000_0000, 32'h4000_0000, 32'h2000_0000, 32'h0000_0000};
+  localparam [NS*32-1:0] S_MASK = {32'hF000_0000, 32'hFFFF_0000, 32'hFFFE_0000, 32'hFFFF_0000};
 
-  // -------------------------------------------------------------------------
-  // DUT instantiation
-  // -------------------------------------------------------------------------
+  wire [NM-1:0]    mst_done;
+  wire [NM*32-1:0] mst_rdata;
+  wire [NM-1:0]    mst_err;
+  wire [NS-1:0]    slv_req;
+  wire [NS*32-1:0] slv_addr;
+  wire [NS*32-1:0] slv_wdata;
+  wire [NS-1:0]    slv_we;
+  wire [NS*4-1:0]  slv_be;
+
   bus_matrix_core #(
-    .NUM_MASTERS (NUM_MASTERS),
-    .NUM_SLAVES  (NUM_SLAVES),
-    .DATA_W      (DATA_W),
-    .ADDR_W      (ADDR_W),
+    .NUM_MASTERS (NM),
+    .NUM_SLAVES  (NS),
+    .DATA_W      (32),
+    .ADDR_W      (32),
     .ARB_MODE    (ARB_MODE),
-    .M_PRIORITY  (M_PRIORITY),
+    .M_PRIORITY  (8'h10),
     .S_BASE      (S_BASE),
     .S_MASK      (S_MASK)
   ) u_dut (
-    .clk        (clk),
-    .rst_n      (rst_n),
-    .mst_req    (mst_req),
-    .mst_addr   (mst_addr),
-    .mst_wdata  (mst_wdata),
-    .mst_we     (mst_we),
-    .mst_be     (mst_be),
-    .mst_gnt    (mst_gnt),
-    .mst_rdata  (mst_rdata),
-    .mst_rvalid (mst_rvalid_out),
-    .mst_err    (mst_err),
-    .slv_req    (slv_req),
-    .slv_addr   (slv_addr),
-    .slv_wdata  (slv_wdata_out),
-    .slv_we     (slv_we_out),
-    .slv_be     (slv_be_out),
-    .slv_gnt    (slv_gnt),
-    .slv_rdata  (slv_rdata),
-    .slv_rvalid (slv_rvalid)
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .mst_req   (mst_req),
+    .mst_addr  (mst_addr),
+    .mst_wdata (mst_wdata),
+    .mst_we    (mst_we),
+    .mst_be    (mst_be),
+    .mst_done  (mst_done),
+    .mst_rdata (mst_rdata),
+    .mst_err   (mst_err),
+    .slv_req   (slv_req),
+    .slv_addr  (slv_addr),
+    .slv_wdata (slv_wdata),
+    .slv_we    (slv_we),
+    .slv_be    (slv_be),
+    .slv_done  (slv_done),
+    .slv_rdata (slv_rdata),
+    .slv_err   (slv_err)
   );
 
-  // -------------------------------------------------------------------------
-  // Helper wires: one-hot or zero check (x & (x-1) == 0)
-  // -------------------------------------------------------------------------
-  wire onehot_mst_gnt = (mst_gnt & (mst_gnt - 1)) == 0;
-  wire onehot_slv_req = (slv_req & (slv_req - 1)) == 0;
+  // Address decode restated from the map (lowest matching slave wins).
+  function [NS-1:0] decode;
+    input [31:0] a;
+    integer j;
+    begin
+      decode = 0;
+      for (j = NS - 1; j >= 0; j = j - 1)
+        if ((a & S_MASK[j*32+:32]) == (S_BASE[j*32+:32] & S_MASK[j*32+:32]))
+          decode = (1 << j);
+    end
+  endfunction
 
-  // -------------------------------------------------------------------------
-  // Reset assumption: rst_n low on first cycle, then stays high
-  // -------------------------------------------------------------------------
-  reg f_past_valid;
-  initial f_past_valid = 1'b0;
-  always @(posedge clk) f_past_valid <= 1'b1;
+  wire [NS-1:0] sel0 = decode(mst_addr[31:0]);
+  wire [NS-1:0] sel1 = decode(mst_addr[63:32]);
+
+  // Slave j carries master i's request fields.
+  function same;
+    input integer j;
+    input integer i;
+    begin
+      same = (slv_addr[j*32+:32]  == mst_addr[i*32+:32]) &&
+             (slv_wdata[j*32+:32] == mst_wdata[i*32+:32]) &&
+             (slv_we[j]           == mst_we[i]) &&
+             (slv_be[j*4+:4]      == mst_be[i*4+:4]);
+    end
+  endfunction
+
+  reg        f_past_valid = 1'b0;
+  reg [1:0]  req_q, done_q;
+  reg [63:0] addr_q, wdata_q;
+  reg [1:0]  we_q;
+  reg [7:0]  be_q;
+  reg [3:0]  sreq_q, sdone_q;
+  reg [NS*32-1:0] saddr_q, swdata_q;
+  reg [NS-1:0]    swe_q;
+  reg [NS*4-1:0]  sbe_q;
+  reg [1:0]  decerr_pend_q;
 
   always @(posedge clk) begin
-    if (!f_past_valid)
-      assume (!rst_n);
-    else
-      assume (rst_n);
+    f_past_valid  <= 1'b1;
+    req_q         <= mst_req;
+    done_q        <= mst_done;
+    addr_q        <= mst_addr;
+    wdata_q       <= mst_wdata;
+    we_q          <= mst_we;
+    be_q          <= mst_be;
+    sreq_q        <= slv_req;
+    sdone_q       <= slv_done;
+    saddr_q       <= slv_addr;
+    swdata_q      <= slv_wdata;
+    swe_q         <= slv_we;
+    sbe_q         <= slv_be;
+    decerr_pend_q <= mst_req & ~mst_done & {(sel1 == 0), (sel0 == 0)};
   end
 
-  // -------------------------------------------------------------------------
-  // Assume constraints: slave grant only when requested
-  // -------------------------------------------------------------------------
-  generate
-    genvar gi;
-    for (gi = 0; gi < NUM_SLAVES; gi = gi + 1) begin : gen_assume_slv_gnt
-      always @(posedge clk) begin
-        if (rst_n) begin
-          assume (!(slv_gnt[gi]) || slv_req[gi]);
-        end
+  // Reset in the first cycle.
+  always @(*) if (!f_past_valid) assume (!rst_n);
+
+  integer i, j;
+  always @(posedge clk) begin
+    if (f_past_valid && rst_n) begin
+      // E1: masters hold request and fields until done
+      for (i = 0; i < NM; i = i + 1)
+        if (req_q[i] && !done_q[i])
+          assume (mst_req[i] &&
+                  mst_addr[i*32+:32]  == addr_q[i*32+:32] &&
+                  mst_wdata[i*32+:32] == wdata_q[i*32+:32] &&
+                  mst_we[i] == we_q[i] && mst_be[i*4+:4] == be_q[i*4+:4]);
+    end
+    // E2: slaves complete only while requested
+    for (j = 0; j < NS; j = j + 1)
+      if (!slv_req[j]) assume (!slv_done[j]);
+  end
+
+  always @(posedge clk) begin
+    if (f_past_valid && rst_n) begin
+      // P1
+      for (i = 0; i < NM; i = i + 1)
+        if (mst_done[i]) assert (mst_req[i]);
+
+      // P2
+      for (i = 0; i < NM; i = i + 1)
+        if (decerr_pend_q[i] && $past(rst_n)) assert (mst_done[i] && mst_err[i]);
+
+      for (j = 0; j < NS; j = j + 1) begin
+        // P3
+        if (slv_req[j])
+          assert ((mst_req[0] && sel0[j] && same(j, 0)) ||
+                  (mst_req[1] && sel1[j] && same(j, 1)));
+        // P4
+        if (slv_req[j] && slv_done[j])
+          assert ((mst_req[0] && sel0[j] && same(j, 0) && mst_done[0] &&
+                   mst_rdata[31:0] == slv_rdata[j*32+:32] && mst_err[0] == slv_err[j]) ||
+                  (mst_req[1] && sel1[j] && same(j, 1) && mst_done[1] &&
+                   mst_rdata[63:32] == slv_rdata[j*32+:32] && mst_err[1] == slv_err[j]));
+        // P5
+        if (sreq_q[j] && !sdone_q[j] && $past(rst_n))
+          assert (slv_req[j] &&
+                  slv_addr[j*32+:32]  == saddr_q[j*32+:32] &&
+                  slv_wdata[j*32+:32] == swdata_q[j*32+:32] &&
+                  slv_we[j] == swe_q[j] && slv_be[j*4+:4] == sbe_q[j*4+:4]);
+        // P6
+        if (sreq_q[j] && sdone_q[j] && $past(rst_n))
+          assert (!slv_req[j]);
       end
-    end
-  endgenerate
 
-  // =========================================================================
-  // P1 — At most one master granted (mst_gnt one-hot or zero)
-  // =========================================================================
-  always @(posedge clk) begin
-    if (f_past_valid && rst_n) begin
-      P1_ONE_HOT: assert (onehot_mst_gnt);
-    end
-  end
-
-  // =========================================================================
-  // P5 — Decode one-hot: slv_req is zero or one-hot (one slave per cycle)
-  // =========================================================================
-  always @(posedge clk) begin
-    if (f_past_valid && rst_n) begin
-      P5_DECODE_ONEHOT: assert (onehot_slv_req);
-    end
-  end
-
-  // =========================================================================
-  // P7 — When any slave is requested, at most one master is granted
-  // =========================================================================
-  always @(posedge clk) begin
-    if (f_past_valid && rst_n) begin
-      P7_SLV_REQ_ONEHOT: assert (!(|slv_req) || onehot_mst_gnt);
-    end
-  end
-
-  // =========================================================================
-  // Cover points — verify interesting scenarios are reachable
-  // =========================================================================
-  always @(posedge clk) begin
-    if (f_past_valid && rst_n) begin
-      COV_MST0_GRANTED:      cover (mst_gnt[0] && mst_req[0]);
-      COV_MST1_GRANTED:      cover (mst_gnt[1] && mst_req[1]);
-      COV_CONTENTION:        cover (mst_req[0] && mst_req[1]);
-      COV_DECODE_ERROR:      cover (|mst_err && |mst_req);
-      COV_SLV0_TXN_COMPLETE: cover (slv_req[0] && slv_gnt[0]);
-      COV_SLV1_TXN_COMPLETE: cover (slv_req[1] && slv_gnt[1]);
+      // Reachability
+      cover (slv_req[0] && slv_done[0]);
+      cover (slv_req[3] && slv_done[3]);
+      cover (mst_done[0] && mst_err[0] && sel0 == 0);
+      cover (slv_done[1] && slv_done[2]);                      // two slaves in parallel
+      cover (mst_req[0] && mst_req[1] && sel0 == sel1 && sel0 != 0); // contention
     end
   end
 

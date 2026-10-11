@@ -1,0 +1,15 @@
+# bus_matrix_fv_waivers.txt — VC Formal result waivers for the bus_matrix IP.
+#
+# Format:  <property-name glob>  <waived result>  # justification (required)
+# Waived results: falsified, inconclusive, vacuous, uncoverable.
+# Globs are case-insensitive, and `u_fv*` also matches the extra `u_fv`
+# level the VHDL bind adds, so one line covers the SV and VHDL runs.
+# Every entry must also be listed in verification/formal/vcf/README.md.
+bus_matrix_apb.u_fv*.g_slv*.u_bus.c_back2back   uncoverable  # the arbiter leaves one idle cycle on a slave between grants, so a SETUP never directly follows a completed transfer
+bus_matrix_ahb.u_fv*.g_slv*.u_bus.g_m_addr_hold.*   vacuous      # the initiator presents an address phase only when no data phase is in flight, and an AHB-Lite slave holds HREADY high outside data phases (s_idle_okay), so an address phase is never stalled
+bus_matrix_ahb.u_fv*.g_slv*.u_bus.c_pipelined       uncoverable  # the initiator runs one transfer per grant and the arbiter leaves an idle cycle between grants, so slave-side transfers never overlap
+bus_matrix_ahb.u_fv*.g_slv*.u_bus.c_wr_then_rd      uncoverable  # same reason as c_pipelined: no address phase during a data phase on a slave port
+bus_matrix_axi4l.u_fv*.g_slv*.u_bus.c_b_backpressure  uncoverable  # the initiator holds BREADY high for the whole write, so BVALID is never stalled
+bus_matrix_axi4l.u_fv*.g_slv*.u_bus.c_r_backpressure  uncoverable  # the initiator holds RREADY high for the whole read, so RVALID is never stalled
+bus_matrix_axi4l.u_fv*.g_slv*.u_bus.c_rd_wr_overlap   uncoverable  # the initiator runs one transaction per grant, never a read and a write at once
+bus_matrix_wb.u_fv*.g_slv*.u_bus.c_back2back      uncoverable  # the arbiter leaves one idle cycle on a slave between grants, so a request never directly follows a termination

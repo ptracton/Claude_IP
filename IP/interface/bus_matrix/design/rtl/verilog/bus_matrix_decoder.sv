@@ -28,20 +28,9 @@ module bus_matrix_decoder #(
     end
   endgenerate
 
-  // Priority encoder: lowest-numbered matching slave wins (one-hot output).
-  // Track whether a lower-indexed slave already matched.
-  always_comb begin : p_priority_encode
-    logic found;
-    slave_sel = '0;
-    found = 1'b0;
-    for (int j = 0; j < NUM_SLAVES; j = j + 1) begin
-      if (match[j] && !found) begin
-        slave_sel[j] = 1'b1;
-        found = 1'b1;
-      end
-    end
-  end
-
-  assign decode_err = ~(|slave_sel);
+  // Priority select: lowest-numbered matching slave wins (one-hot output).
+  // x & (~x + 1) isolates the lowest set bit.
+  assign slave_sel  = match & (~match + NUM_SLAVES'(1));
+  assign decode_err = ~(|match);
 
 endmodule : bus_matrix_decoder

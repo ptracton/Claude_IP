@@ -1,7 +1,18 @@
--- bus_matrix_arb.vhd — Bus Matrix arbitration for one slave port (VHDL-2008).
+-- bus_matrix_arb.vhd — Bus Matrix arbiter for one slave port (VHDL-2008).
 --
--- Implements fixed-priority and round-robin arbitration.
--- One instance per slave. Configuration entirely via generics.
+-- One instance per slave. Picks one requesting master when the slave is free
+-- and locks that grant until the transaction completes, so a higher-priority
+-- request can never take the slave away mid-transaction.
+--
+--   Fixed priority (ARB_MODE=0): lowest M_PRIORITY value wins; ties go to
+--     the lower master index.
+--   Round robin   (ARB_MODE=1): the first requester after the last granted
+--     master wins (master 0 is first after reset).
+--
+-- Grant timing: gnt is registered. It is set on the clock edge after a
+-- request is seen with the slave free, held while the owner keeps requesting,
+-- and cleared on the edge where done is high (or the owner stops
+-- requesting). No new grant is made on the edge that releases one.
 -- Mirrors bus_matrix_arb.sv.
 
 library ieee;
@@ -12,136 +23,108 @@ entity bus_matrix_arb is
   generic (
     NUM_MASTERS : positive := 2;  -- 1-16 active masters
     ARB_MODE    : natural  := 0;  -- 0=fixed-priority, 1=round-robin
-    -- Flat-packed priorities: master i at bits [(i+1)*4-1 : i*4]
-    -- Maximum 16 masters = 64 bits.
-    M_PRIORITY  : std_ulogic_vector(16*4-1 downto 0) := (others => '0')
+    -- Master i priority at bits (i*4+3 downto i*4), lower value = higher
+    -- priority; maximum-width (16 masters), only NUM_MASTERS entries used.
+    M_PRIORITY  : std_ulogic_vector(16 * 4 - 1 downto 0) := (others => '0')
   );
   port (
-    clk       : in  std_ulogic;
-    rst_n     : in  std_ulogic;
-    req       : in  std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-    valid_trx : in  std_ulogic;
-    slv_gnt   : in  std_ulogic;
-    gnt       : out std_ulogic_vector(NUM_MASTERS - 1 downto 0)
+    clk   : in  std_ulogic;                                   -- system clock
+    rst_n : in  std_ulogic;                                   -- synchronous active-low reset
+    req   : in  std_ulogic_vector(NUM_MASTERS - 1 downto 0);  -- master i requests this slave
+    done  : in  std_ulogic;                                   -- owner's transaction completes
+    gnt   : out std_ulogic_vector(NUM_MASTERS - 1 downto 0)   -- one-hot grant (registered)
   );
 end entity bus_matrix_arb;
 
 architecture rtl of bus_matrix_arb is
 
-  function clog2(val : positive) return positive is
-    variable v : positive := 1;
-    variable n : natural  := 0;
-  begin
-    while v < val loop
-      v := v * 2;
-      n := n + 1;
-    end loop;
-    if n = 0 then return 1; end if;
-    return n;
-  end function clog2;
+  constant ONE : unsigned(NUM_MASTERS - 1 downto 0) := to_unsigned(1, NUM_MASTERS);
 
-  constant PTR_W : positive := clog2(NUM_MASTERS);
-
-  signal fp_gnt      : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-  signal rr_ptr_q    : unsigned(PTR_W - 1 downto 0);
-  signal rr_gnt_q    : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-  signal rr_gnt_next : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-  signal gnt_next    : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
+  signal pick        : std_ulogic_vector(NUM_MASTERS - 1 downto 0);  -- one-hot winner
+  signal take        : std_ulogic;                    -- make a new grant on this edge
+  signal gnt_q       : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
+  signal busy        : std_ulogic;                    -- a grant is held
+  signal owner_req   : std_ulogic;                    -- the granted master still requests
+  signal release_gnt : std_ulogic;                    -- drop the grant on this edge
 
 begin
 
-  -- -------------------------------------------------------------------------
-  -- Fixed-priority (combinational)
-  -- -------------------------------------------------------------------------
-  p_fp : process(req) is
-    variable beaten : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-    variable pi, pj : unsigned(3 downto 0);
-  begin
-    beaten := (others => '0');
-    for i in 0 to NUM_MASTERS - 1 loop
-      pi := unsigned(M_PRIORITY((i+1)*4-1 downto i*4));
-      for j in 0 to NUM_MASTERS - 1 loop
-        if j /= i and req(j) = '1' then
-          pj := unsigned(M_PRIORITY((j+1)*4-1 downto j*4));
-          if pj < pi then
-            beaten(i) := '1';
-          elsif pj = pi and j < i then
-            beaten(i) := '1';
-          end if;
-        end if;
-      end loop;
-    end loop;
-    fp_gnt <= req and not beaten;
-  end process p_fp;
+  gen_fp : if ARB_MODE = 0 generate
+    -- -----------------------------------------------------------------------
+    -- Fixed priority: master i wins unless another requester j beats it with
+    -- a strictly lower priority value, or the same value and a lower index.
+    -- -----------------------------------------------------------------------
+    gen_m : for gi in 0 to NUM_MASTERS - 1 generate
+      signal beats : std_ulogic_vector(NUM_MASTERS - 1 downto 0);  -- j beats master i
+    begin
+      gen_cmp : for gj in 0 to NUM_MASTERS - 1 generate
+        gen_lo : if gj < gi generate
+          beats(gj) <= req(gj) when unsigned(M_PRIORITY(gj * 4 + 3 downto gj * 4)) <=
+                                    unsigned(M_PRIORITY(gi * 4 + 3 downto gi * 4)) else '0';
+        end generate gen_lo;
+        gen_hi : if gj > gi generate
+          beats(gj) <= req(gj) when unsigned(M_PRIORITY(gj * 4 + 3 downto gj * 4)) <
+                                    unsigned(M_PRIORITY(gi * 4 + 3 downto gi * 4)) else '0';
+        end generate gen_hi;
+        gen_self : if gj = gi generate
+          beats(gj) <= '0';
+        end generate gen_self;
+      end generate gen_cmp;
 
-  -- -------------------------------------------------------------------------
-  -- Round-robin next grant (combinational)
-  -- -------------------------------------------------------------------------
-  p_rr_comb : process(req, rr_ptr_q) is
-    variable result : std_ulogic_vector(NUM_MASTERS - 1 downto 0);
-    variable found  : boolean;
-    variable idx    : integer;
+      pick(gi) <= req(gi) when beats = (beats'range => '0') else '0';
+    end generate gen_m;
+  end generate gen_fp;
+
+  gen_rr : if ARB_MODE /= 0 generate
+    -- -----------------------------------------------------------------------
+    -- Round robin: the lowest requester above the last granted master, else
+    -- the lowest requester overall (wrap). last_q is one-hot; resetting it to
+    -- the top master makes master 0 first after reset.
+    -- -----------------------------------------------------------------------
+    signal last_q : unsigned(NUM_MASTERS - 1 downto 0);  -- one-hot last granted master
+    signal above  : unsigned(NUM_MASTERS - 1 downto 0);  -- masters strictly above last_q
+    signal req_u  : unsigned(NUM_MASTERS - 1 downto 0);
+    signal req_hi : unsigned(NUM_MASTERS - 1 downto 0);  -- requesters above last_q
   begin
-    result := (others => '0');
-    found  := false;
-    if req /= (req'range => '0') then
-      -- First pass: above rr_ptr_q
-      for k in 0 to NUM_MASTERS - 1 loop
-        idx := k;
-        if idx > to_integer(rr_ptr_q) and req(idx) = '1' and not found then
-          result(idx) := '1';
-          found       := true;
+    req_u  <= unsigned(req);
+    above  <= not ((shift_left(last_q, 1)) - ONE);
+    req_hi <= req_u and above;
+    pick   <= std_ulogic_vector(req_hi and ((not req_hi) + ONE)) when req_hi /= (req_hi'range => '0') else
+              std_ulogic_vector(req_u and ((not req_u) + ONE));
+
+    p_last : process (clk) is
+    begin
+      if rising_edge(clk) then
+        if rst_n = '0' then
+          last_q <= shift_left(ONE, NUM_MASTERS - 1);
+        elsif take = '1' then
+          last_q <= unsigned(pick);
         end if;
-      end loop;
-      -- Second pass (wrap): 0..rr_ptr_q
-      if not found then
-        for k in 0 to NUM_MASTERS - 1 loop
-          idx := k;
-          if idx <= to_integer(rr_ptr_q) and req(idx) = '1' and not found then
-            result(idx) := '1';
-            found       := true;
-          end if;
-        end loop;
       end if;
-    end if;
-    rr_gnt_next <= result;
-  end process p_rr_comb;
+    end process p_last;
+  end generate gen_rr;
 
-  p_rr_reg : process(clk) is
+  -- -------------------------------------------------------------------------
+  -- Grant lock
+  -- -------------------------------------------------------------------------
+  busy        <= '1' when gnt_q /= (gnt_q'range => '0') else '0';
+  owner_req   <= '1' when (gnt_q and req) /= (gnt_q'range => '0') else '0';
+  release_gnt <= busy and (done or not owner_req);
+  take        <= '1' when busy = '0' and req /= (req'range => '0') else '0';
+
+  p_gnt : process (clk) is
   begin
     if rising_edge(clk) then
       if rst_n = '0' then
-        rr_ptr_q <= (others => '0');
-        rr_gnt_q <= (others => '0');
-      elsif valid_trx = '0' then
-        rr_gnt_q <= rr_gnt_next;
-        if rr_gnt_next /= (rr_gnt_next'range => '0') then
-          for k in 0 to NUM_MASTERS - 1 loop
-            if rr_gnt_next(k) = '1' then
-              rr_ptr_q <= to_unsigned(k, PTR_W);
-            end if;
-          end loop;
-        end if;
+        gnt_q <= (others => '0');
+      elsif release_gnt = '1' then
+        gnt_q <= (others => '0');
+      elsif take = '1' then
+        gnt_q <= pick;
       end if;
     end if;
-  end process p_rr_reg;
+  end process p_gnt;
 
-  -- -------------------------------------------------------------------------
-  -- Mux and registered output
-  -- -------------------------------------------------------------------------
-  gnt_next <= (others => '0') when (valid_trx = '1' and slv_gnt = '1') else
-              rr_gnt_q        when ARB_MODE /= 0 else
-              fp_gnt;
-
-  p_gnt_reg : process(clk) is
-  begin
-    if rising_edge(clk) then
-      if rst_n = '0' then
-        gnt <= (others => '0');
-      else
-        gnt <= gnt_next;
-      end if;
-    end if;
-  end process p_gnt_reg;
+  gnt <= gnt_q;
 
 end architecture rtl;

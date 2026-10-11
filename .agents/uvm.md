@@ -248,7 +248,33 @@ UVM_MACROS_INC = <vivado_root>/data/xsim/system_verilog/uvm_include
 
 Use `` `timescale 1ns/1ps `` at the top of the testbench. Provide clock (10 ns period)
 and active-low reset (8-cycle de-assertion). Set the VIF in `uvm_config_db` before
-`run_test()`:
+`run_test()`.
+
+**The driver must drive every master output idle from time 0** (blocking
+assignments to the VIF at the start of `run_phase`, before waiting for
+reset). AXI requires VALID low during reset; a driver that first drives on
+the clock after reset leaves VALID at X on the first edge the DUT samples,
+and a DUT that registers "handshake seen" latches X for ever (bus_matrix UVM,
+2026-10-10).
+
+**`env/` directories:** the repo's root `.gitignore` ignores `env/` (Python
+virtualenvs), which silently kept bus_matrix's `verification/uvm/env/` out of
+git. `!IP/**/verification/uvm/env/` now re-includes it; keep that exception if
+the `.gitignore` is regenerated.
+
+**Test the error paths and prove the tests can fail.** For an interconnect
+or any IP with error responses, give the testbench at least one behavioral
+slave that inserts wait states and returns errors (bus_matrix:
+`bus_matrix_tb_axi4l_slave.sv`; the shared `claude_<proto>_if` bridges are
+always OKAY and zero-wait), let the scoreboard predict the response of every
+transaction, and add a sequence that hits every address-map gap with guard
+words checked afterwards. Then mutate the DUT in a scratch copy (drop the
+error response; leak an address bit in the decoder) and confirm the tests
+fail — bus_matrix's original RW/contention tests passed with both bugs.
+
+**On csun.edu** there is no Vivado; VCS has UVM 1.2 built in
+(`vcs -ntb_opts uvm-1.2`). `uvm_bus_matrix.py --sim vcs` is the reference
+runner.
 
 ```systemverilog
 `timescale 1ns/1ps

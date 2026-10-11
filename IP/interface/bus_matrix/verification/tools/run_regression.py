@@ -1,406 +1,308 @@
 #!/usr/bin/env python3
-"""run_regression.py — Full bus_matrix verification regression suite.
+"""run_regression.py — Full regression harness for the bus_matrix IP.
 
-Runs directed sims (Icarus, GHDL, xsim, ModelSim, VCS, Xcelium), formal,
-UVM, and lint in order, collects results, writes
-verification/work/regression_results.log.  VCS and Xcelium steps run only
-when those tools are found on PATH (i.e. on *.csun.edu hosts); Icarus,
-GHDL, xsim, and ModelSim are skipped there the same way.
+Runs directed simulation (VCS + Xcelium on csun.edu; Icarus, GHDL, ModelSim
+and Vivado xsim elsewhere), UVM (VCS on csun.edu, Vivado xsim elsewhere), formal
+verification (VC Formal where `vcf` is on PATH, e.g. csun.edu; SymbiYosys
+otherwise), and collects lint results; prints a consolidated pass/fail table.
+Ported from IP/system/timer/verification/tools/run_regression.py.
 
 Usage:
-    source IP/interface/bus_matrix/setup.sh
-    python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/run_regression.py
-    python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/run_regression.py --skip-modelsim --skip-uvm --skip-formal
+    python3 run_regression.py [--skip-sim] [--skip-uvm] [--skip-formal] [--skip-lint]
+                              [--skip-modelsim] [--skip-xsim]
+
+Results written to:
+    ${CLAUDE_BUS_MATRIX_PATH}/verification/work/regression_results.log
 """
 
 import argparse
 import os
-import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+# Host detection
+import socket
 
-def read_result_log(path):
-    """Read the first line of a results.log and return PASS/FAIL/SKIP/NO_RUN.
 
-    Applies Guard 1 (downgrade stale PASS if content contains FAIL) and
-    Guard 2 (treat SKIP as neutral).
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
+
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
     """
-    if not os.path.isfile(path):
-        return "NO_RUN"
-    with open(path) as fh:
-        lines = [l.strip() for l in fh.readlines() if l.strip()]
-    if not lines:
-        return "NO_RUN"
-
-    valid_statuses = ("PASS", "FAIL", "SKIP")
-    overall = lines[0] if lines[0] in valid_statuses else "NO_RUN"
-
-    # Guard 1: downgrade stale PASS to FAIL if body contains FAIL
-    if overall == "PASS" and any("FAIL" in l for l in lines[1:]):
-        overall = "FAIL"
-
-    return overall
-
-
-def parse_per_test_results(sim_log_path, proto):
-    """Parse sim output log for per-test PASS/FAIL lines.
-
-    Looks for lines matching 'test_name: PASS' or 'test_name: FAIL'.
-    Returns list of (test_name, status) tuples.
-    """
-    if not os.path.isfile(sim_log_path):
-        return []
-
-    seen = {}
-    with open(sim_log_path) as fh:
-        for line in fh:
-            m = re.match(r"^(test_\w+):\s+(PASS|FAIL)", line.strip())
-            if m:
-                name, status = m.group(1), m.group(2)
-                # Keep worst status if duplicated (FAIL > PASS)
-                if name not in seen or status == "FAIL":
-                    seen[name] = status
-    return list(seen.items())
-
-
-def tool_installed(name):
-    """Check if a tool is on PATH."""
     try:
-        subprocess.run(
-            [name, "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=10,
-        )
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
+
+
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
+
+PROTOS = ["ahb", "apb", "axi4l", "wb"]
+LANGS = ["sv", "vhdl"]
+KNOWN_TESTS = ["test_reset", "test_route", "test_strobe", "test_decode_err",
+               "test_contention", "test_arb"]
+
+STEP_TIMEOUT = 600
+# Formal runs sequentially: 8 jobs at up to 30 minutes plus the two AXI4-Lite
+# jobs at up to 3 hours each (formal_bus_matrix.py budgets).
+FORMAL_TIMEOUT = 10 * 3600
+
+
+def get_ip_path() -> str:
+    path = os.environ.get("CLAUDE_BUS_MATRIX_PATH")
+    if not path:
+        print("ERROR: CLAUDE_BUS_MATRIX_PATH is not set.  "
+              "Run: source IP/interface/bus_matrix/setup.sh")
+        sys.exit(1)
+    return path
+
+
+def run_step(label: str, cmd: list, cwd: str = None,
+             timeout: int = STEP_TIMEOUT) -> bool:
+    """Run a subprocess step, returning True on success."""
+    print(f"\n{'='*60}")
+    print(f"  Running: {label}")
+    print(f"{'='*60}")
+    try:
+        result = subprocess.run(cmd, cwd=cwd, timeout=timeout)
+        return result.returncode == 0
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: {label} timed out after {timeout} s")
         return False
 
 
-def run_script(cmd, cwd=None, timeout=300):
-    """Run a Python script via subprocess, return (returncode, stdout+stderr)."""
-    print(f"  CMD: {' '.join(cmd)}")
+def read_result_log(path: str) -> str:
+    """Read first line of a results.log; return 'PASS', 'FAIL', or 'MISSING'."""
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
-        )
-        return result.returncode, result.stdout
-    except subprocess.TimeoutExpired:
-        return 1, "TIMEOUT"
+        with open(path) as fh:
+            return fh.readline().strip()
+    except FileNotFoundError:
+        return "MISSING"
+
+
+def parse_per_test_results(log_path: str) -> list:
+    """Return list of (label, status) per test from a results.log.
+
+    Both the SV and VHDL testbenches print ``test_name: PASS/FAIL (N checks)``
+    lines. If none are found the overall first-line status is used for every
+    known test, so a run that died early is still counted per test.
+    """
+    if not os.path.isfile(log_path):
+        return []
+
+    with open(log_path) as fh:
+        lines = [l.strip() for l in fh]
+
+    per_test = {}
+    for line in lines:
+        for test in KNOWN_TESTS:
+            if line.startswith(f"{test}: PASS"):
+                per_test.setdefault(test, "PASS")
+            elif line.startswith(f"{test}: FAIL"):
+                per_test[test] = "FAIL"
+
+    overall = lines[0] if lines and lines[0] in ("PASS", "FAIL", "SKIP") else "MISSING"
+    # Guard: if any line contains "FAIL", downgrade a claimed PASS to FAIL.
+    if overall == "PASS" and any("FAIL" in l for l in lines[1:]):
+        overall = "FAIL"
+
+    if not per_test:
+        per_test = {t: overall for t in KNOWN_TESTS}
+    else:
+        # A test that never reported (run aborted) inherits the overall status,
+        # or FAIL if the overall claims PASS without it.
+        for t in KNOWN_TESTS:
+            if t not in per_test:
+                per_test[t] = "FAIL" if overall == "PASS" else overall
+
+    return [(t, per_test[t]) for t in KNOWN_TESTS]
+
+
+def collect_results(ip_path: str) -> list:
+    """Walk work/ and collect (label, status) pairs, counting individual tests."""
+    work = Path(ip_path) / "verification" / "work"
+    entries = []
+
+    # Determine which simulators to collect based on host
+    if ON_CSUN:
+        expected_sims = ["vcs", "xcelium"]
+    else:
+        expected_sims = ["icarus", "ghdl", "modelsim", "xsim"]
+
+    # Simulation results: work/<sim>/<proto>_<lang>/results.log. Only the
+    # current protocol/language runs are collected, so stale run directories
+    # (e.g. the pre-rename axi_*) never count.
+    for sim in expected_sims:
+        sim_dir = work / sim
+        if not sim_dir.is_dir():
+            continue
+        for proto in PROTOS:
+            for lang in LANGS:
+                run_dir = sim_dir / f"{proto}_{lang}"
+                if not run_dir.is_dir():
+                    continue
+                rlog = str(run_dir / "results.log")
+                for test, status in parse_per_test_results(rlog):
+                    entries.append((f"sim/{sim}/{run_dir.name}/{test}", status))
+
+    # SymbiYosys results: work/formal/<job>/results.log
+    formal_work = work / "formal"
+    if formal_work.exists():
+        for job_dir in sorted(formal_work.iterdir()):
+            if not job_dir.is_dir():
+                continue
+            status = read_result_log(str(job_dir / "results.log"))
+            entries.append((f"formal/{job_dir.name}", status))
+
+    # VC Formal results: work/vcf/<top>_<lang>/results.log  (one per job)
+    vcf_work = work / "vcf"
+    if vcf_work.exists():
+        for job_dir in sorted(vcf_work.iterdir()):
+            if not job_dir.is_dir():
+                continue
+            status = read_result_log(str(job_dir / "results.log"))
+            entries.append((f"formal/vcf/{job_dir.name}", status))
+
+    # UVM results: work/<sim>/uvm/results.log — xsim (one test) on standard
+    # hosts, VCS (all tests) on csun.edu
+    if ON_CSUN:
+        uvm_log = work / "vcs" / "uvm" / "results.log"
+        if uvm_log.exists():
+            entries.append(("uvm/vcs/all_tests", read_result_log(str(uvm_log))))
+    else:
+        uvm_work = work / "xsim" / "uvm"
+        if uvm_work.exists():
+            status = read_result_log(str(uvm_work / "results.log"))
+            entries.append(("uvm/xsim/bus_matrix_base_test", status))
+
+    return entries
 
 
 def main():
-    # Guard: require CLAUDE_BUS_MATRIX_PATH
-    ip_path = os.environ.get("CLAUDE_BUS_MATRIX_PATH")
-    if not ip_path:
-        print("ERROR: CLAUDE_BUS_MATRIX_PATH is not set.")
-        print("       Please run:  source IP/interface/bus_matrix/setup.sh")
-        sys.exit(1)
+    ip_path = get_ip_path()
+    tools_dir = os.path.join(ip_path, "verification", "tools")
+    sim_script = os.path.join(tools_dir, "sim_bus_matrix.py")
 
-    ip_path = str(Path(ip_path).resolve())
-
-    parser = argparse.ArgumentParser(
-        description="Run the full bus_matrix verification regression suite"
-    )
-    parser.add_argument("--skip-sim", action="store_true",
-                        help="Skip all directed simulation steps")
-    parser.add_argument("--skip-uvm", action="store_true",
-                        help="Skip UVM testbench step")
-    parser.add_argument("--skip-formal", action="store_true",
-                        help="Skip formal verification step")
-    parser.add_argument("--skip-lint", action="store_true",
-                        help="Skip lint step")
+    parser = argparse.ArgumentParser(description="bus_matrix IP regression harness.")
+    parser.add_argument("--skip-sim",    action="store_true")
+    parser.add_argument("--skip-uvm",    action="store_true",
+                        help="Skip Vivado xsim UVM simulation")
+    parser.add_argument("--skip-formal", action="store_true")
+    parser.add_argument("--skip-lint",   action="store_true")
     parser.add_argument("--skip-modelsim", action="store_true",
-                        help="Skip ModelSim-specific simulation step")
-    parser.add_argument("--skip-xsim", action="store_true",
-                        help="Skip Vivado xsim-specific simulation step")
+                        help="Skip ModelSim SV+VHDL simulation")
+    parser.add_argument("--skip-xsim",     action="store_true",
+                        help="Skip Vivado xsim SV+VHDL directed simulation")
     args = parser.parse_args()
 
-    tools_dir = os.path.join(ip_path, "verification", "tools")
-    work_dir = os.path.join(ip_path, "verification", "work")
-    os.makedirs(work_dir, exist_ok=True)
-
-    sim_script = os.path.join(tools_dir, "sim_bus_matrix.py")
-    lint_script = os.path.join(tools_dir, "lint_bus_matrix.py")
-    formal_script = os.path.join(tools_dir, "formal_bus_matrix.py")
-
-    protos = ["ahb", "axi", "wb"]
-    entries = []  # List of (label, status)
-
-    # -----------------------------------------------------------------------
-    # 1. Icarus SV directed tests
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
+    # 1. Simulation
+    # ------------------------------------------------------------------ #
     if not args.skip_sim:
-        print("\n=== Icarus SV Directed Tests ===")
-        if tool_installed("iverilog"):
-            rc, out = run_script(
-                [sys.executable, sim_script, "--sim", "icarus", "--proto", "all", "--lang", "sv"]
-            )
-            for proto in protos:
-                run_dir = os.path.join(work_dir, "icarus", f"{proto}_sv")
-                # Try to get per-test results from sim log
-                sim_log = os.path.join(run_dir, "sim.log")
-                per_test = parse_per_test_results(sim_log, proto)
-                if per_test:
-                    for test_name, status in per_test:
-                        entries.append((f"sim/icarus/{proto}_sv/{test_name}", status))
-                else:
-                    # Fall back to results.log overall status
-                    result_log = os.path.join(run_dir, "results.log")
-                    status = read_result_log(result_log)
-                    entries.append((f"sim/icarus/{proto}_sv", status))
+        if ON_CSUN:
+            sims = [("VCS", "vcs"), ("Xcelium", "xcelium")]
         else:
-            for proto in protos:
-                entries.append((f"sim/icarus/{proto}_sv", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 2. GHDL VHDL directed tests
-    # -----------------------------------------------------------------------
-    if not args.skip_sim:
-        print("\n=== GHDL VHDL Directed Tests ===")
-        if tool_installed("ghdl"):
-            rc, out = run_script(
-                [sys.executable, sim_script, "--sim", "ghdl", "--proto", "all", "--lang", "vhdl"]
-            )
-            for proto in protos:
-                run_dir = os.path.join(work_dir, "ghdl", f"{proto}_vhdl")
-                sim_log = os.path.join(run_dir, "ghdl.log")
-                per_test = parse_per_test_results(sim_log, proto)
-                if per_test:
-                    for test_name, status in per_test:
-                        entries.append((f"sim/ghdl/{proto}_vhdl/{test_name}", status))
-                else:
-                    result_log = os.path.join(run_dir, "results.log")
-                    status = read_result_log(result_log)
-                    entries.append((f"sim/ghdl/{proto}_vhdl", status))
-        else:
-            for proto in protos:
-                entries.append((f"sim/ghdl/{proto}_vhdl", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 3. ModelSim SV directed tests
-    # -----------------------------------------------------------------------
-    if not args.skip_sim and not args.skip_modelsim:
-        print("\n=== ModelSim Directed Tests ===")
-        if tool_installed("vsim"):
-            rc, out = run_script(
-                [sys.executable, sim_script, "--sim", "modelsim", "--proto", "all", "--lang", "sv"]
-            )
-            for proto in protos:
-                run_dir = os.path.join(work_dir, "modelsim", f"{proto}_sv")
-                result_log = os.path.join(run_dir, "results.log")
-                status = read_result_log(result_log)
-                entries.append((f"sim/modelsim/{proto}_sv", status))
-
-            rc, out = run_script(
-                [sys.executable, sim_script, "--sim", "modelsim", "--proto", "all", "--lang", "vhdl"]
-            )
-            for proto in protos:
-                run_dir = os.path.join(work_dir, "modelsim", f"{proto}_vhdl")
-                result_log = os.path.join(run_dir, "results.log")
-                status = read_result_log(result_log)
-                entries.append((f"sim/modelsim/{proto}_vhdl", status))
-        else:
-            for proto in protos:
-                entries.append((f"sim/modelsim/{proto}_sv", "SKIP"))
-                entries.append((f"sim/modelsim/{proto}_vhdl", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 4. xsim SV directed tests
-    # -----------------------------------------------------------------------
-    if not args.skip_sim and not args.skip_xsim:
-        print("\n=== Vivado xsim SV Directed Tests ===")
-        if tool_installed("xvlog"):
-            rc, out = run_script(
-                [sys.executable, sim_script, "--sim", "xsim", "--proto", "all", "--lang", "sv"],
-                timeout=600,
-            )
-            for proto in protos:
-                run_dir = os.path.join(work_dir, "xsim", f"{proto}_sv")
-                sim_log = os.path.join(run_dir, "xsim.log")
-                per_test = parse_per_test_results(sim_log, proto)
-                if per_test:
-                    for test_name, status in per_test:
-                        entries.append((f"sim/xsim/{proto}_sv/{test_name}", status))
-                else:
-                    result_log = os.path.join(run_dir, "results.log")
-                    status = read_result_log(result_log)
-                    entries.append((f"sim/xsim/{proto}_sv", status))
-        else:
-            for proto in protos:
-                entries.append((f"sim/xsim/{proto}_sv", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 5. xsim VHDL directed tests (skip — xsim VHDL not currently supported)
-    # -----------------------------------------------------------------------
-    if not args.skip_sim and not args.skip_xsim:
-        # xsim+vhdl: sim_bus_matrix.py will skip these (not implemented)
-        # Register as SKIP so they appear in the table
-        for proto in protos:
-            entries.append((f"sim/xsim/{proto}_vhdl", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 5b. VCS MX directed tests (SV + VHDL — csun.edu only)
-    # -----------------------------------------------------------------------
-    if not args.skip_sim:
-        print("\n=== VCS MX Directed Tests ===")
-        if tool_installed("vcs"):
-            for lang in ("sv", "vhdl"):
-                rc, out = run_script(
-                    [sys.executable, sim_script, "--sim", "vcs", "--proto", "all", "--lang", lang],
-                    timeout=600,
-                )
-                for proto in protos:
-                    run_dir = os.path.join(work_dir, "vcs", f"{proto}_{lang}")
-                    sim_log = os.path.join(run_dir, "sim.log")
-                    per_test = parse_per_test_results(sim_log, proto)
-                    if per_test:
-                        for test_name, status in per_test:
-                            entries.append((f"sim/vcs/{proto}_{lang}/{test_name}", status))
-                    else:
-                        result_log = os.path.join(run_dir, "results.log")
-                        status = read_result_log(result_log)
-                        entries.append((f"sim/vcs/{proto}_{lang}", status))
-        else:
-            for lang in ("sv", "vhdl"):
-                for proto in protos:
-                    entries.append((f"sim/vcs/{proto}_{lang}", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 5c. Xcelium directed tests (SV + VHDL — csun.edu only)
-    # -----------------------------------------------------------------------
-    if not args.skip_sim:
-        print("\n=== Xcelium Directed Tests ===")
-        if tool_installed("xrun"):
-            for lang in ("sv", "vhdl"):
-                rc, out = run_script(
-                    [sys.executable, sim_script, "--sim", "xcelium", "--proto", "all", "--lang", lang],
-                    timeout=600,
-                )
-                for proto in protos:
-                    run_dir = os.path.join(work_dir, "xcelium", f"{proto}_{lang}")
-                    sim_log = os.path.join(run_dir, "sim.log")
-                    per_test = parse_per_test_results(sim_log, proto)
-                    if per_test:
-                        for test_name, status in per_test:
-                            entries.append((f"sim/xcelium/{proto}_{lang}/{test_name}", status))
-                    else:
-                        result_log = os.path.join(run_dir, "results.log")
-                        status = read_result_log(result_log)
-                        entries.append((f"sim/xcelium/{proto}_{lang}", status))
-        else:
-            for lang in ("sv", "vhdl"):
-                for proto in protos:
-                    entries.append((f"sim/xcelium/{proto}_{lang}", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 6. UVM tests (separate script, NOT a flag on sim)
-    # -----------------------------------------------------------------------
-    if not args.skip_uvm:
-        print("\n=== UVM Tests ===")
-        uvm_work = os.path.join(work_dir, "xsim", "uvm")
-        uvm_result = os.path.join(uvm_work, "results.log")
-        # Check if UVM script exists
-        uvm_script = os.path.join(tools_dir, "uvm_bus_matrix.py")
-        if os.path.isfile(uvm_script) and tool_installed("xvlog"):
-            rc, out = run_script(
-                [sys.executable, uvm_script, "--test", "bus_matrix_base_test"],
-                timeout=600,
-            )
-            status = read_result_log(uvm_result)
-            entries.append(("uvm/xsim/bus_matrix_base_test", status))
-        elif os.path.isfile(uvm_result):
-            # UVM was run previously — collect its result
-            status = read_result_log(uvm_result)
-            entries.append(("uvm/xsim/bus_matrix_base_test", status))
-        else:
-            entries.append(("uvm/xsim/bus_matrix_base_test", "SKIP"))
-
-    # -----------------------------------------------------------------------
-    # 7. Formal verification
-    # -----------------------------------------------------------------------
-    if not args.skip_formal:
-        print("\n=== Formal Verification ===")
-        if os.path.isfile(formal_script) and tool_installed("sby"):
-            rc, out = run_script(
-                [sys.executable, formal_script]
-            )
-            formal_result = os.path.join(ip_path, "verification", "formal", "results.log")
-            # Parse formal results per-sby-file
-            if os.path.isfile(formal_result):
-                with open(formal_result) as fh:
-                    for line in fh:
-                        m = re.match(r"\[(\S+)\]\s+(PASS|FAIL|SKIP)", line.strip())
-                        if m:
-                            entries.append((f"formal/{m.group(1)}", m.group(2)))
-                # If no per-file entries found, use overall
-                if not any(label.startswith("formal/") for label, _ in entries):
-                    status = read_result_log(formal_result)
-                    entries.append(("formal", status))
+            sims = [("Icarus", "icarus")]
+            if not args.skip_modelsim:
+                sims.append(("ModelSim", "modelsim"))
+            if not args.skip_xsim:
+                sims.append(("Vivado xsim", "xsim"))
+        for name, sim in sims:
+            run_step(f"{name} SV simulation (all protocols)",
+                     [sys.executable, sim_script,
+                      "--sim", sim, "--proto", "all", "--lang", "sv"])
+            if sim == "icarus":
+                # Icarus has no VHDL; GHDL covers it on standard hosts
+                run_step("GHDL VHDL simulation (all protocols)",
+                         [sys.executable, sim_script,
+                          "--sim", "ghdl", "--proto", "all", "--lang", "vhdl"])
             else:
-                entries.append(("formal", "NO_RUN"))
-        else:
-            entries.append(("formal", "SKIP"))
+                run_step(f"{name} VHDL simulation (all protocols)",
+                         [sys.executable, sim_script,
+                          "--sim", sim, "--proto", "all", "--lang", "vhdl"])
 
-    # -----------------------------------------------------------------------
-    # 8. Lint results
-    # -----------------------------------------------------------------------
-    if not args.skip_lint:
-        print("\n=== Lint ===")
-        lint_result = os.path.join(ip_path, "verification", "lint", "lint_results.log")
-        if os.path.isfile(lint_script):
-            rc, out = run_script(
-                [sys.executable, lint_script]
+    # ------------------------------------------------------------------ #
+    # 1b. UVM simulation — Vivado xsim on standard hosts, VCS on csun.edu
+    # ------------------------------------------------------------------ #
+    if not args.skip_uvm:
+        if ON_CSUN:
+            run_step(
+                "UVM simulation — all tests (VCS)",
+                [sys.executable,
+                 os.path.join(tools_dir, "uvm_bus_matrix.py"),
+                 "--sim", "vcs", "--test", "all"],
             )
-            status = read_result_log(lint_result)
-            entries.append(("lint", status))
-        elif os.path.isfile(lint_result):
-            status = read_result_log(lint_result)
-            entries.append(("lint", status))
         else:
-            entries.append(("lint", "NO_RUN"))
+            run_step(
+                "UVM simulation — bus_matrix_base_test (Vivado xsim)",
+                [sys.executable,
+                 os.path.join(tools_dir, "uvm_bus_matrix.py"),
+                 "--sim", "xsim", "--test", "bus_matrix_base_test"],
+            )
 
-    # -----------------------------------------------------------------------
-    # Results summary
-    # -----------------------------------------------------------------------
-    results_log = os.path.join(work_dir, "regression_results.log")
+    # ------------------------------------------------------------------ #
+    # 2. Formal verification
+    # ------------------------------------------------------------------ #
+    if not args.skip_formal:
+        tool = "vcf" if shutil.which("vcf") else "sby"
+        run_step(
+            f"Formal verification ({tool}, all protocols)",
+            [sys.executable,
+             os.path.join(tools_dir, "formal_bus_matrix.py"),
+             "--tool", tool, "--proto", "all"],
+            timeout=FORMAL_TIMEOUT,
+        )
 
-    n_pass = sum(1 for _, s in entries if s == "PASS")
-    n_skip = sum(1 for _, s in entries if s in ("SKIP", "MISSING"))
-    n_total = len(entries)
-    n_fail = n_total - n_pass - n_skip
+    # ------------------------------------------------------------------ #
+    # 3. Collect all results
+    # ------------------------------------------------------------------ #
+    results = collect_results(ip_path)
 
-    overall = "PASSED" if n_fail == 0 else "FAILED"
+    # Lint
+    if not args.skip_lint:
+        lint_log = os.path.join(ip_path, "verification", "lint", "lint_results.log")
+        results.append(("lint", read_result_log(lint_log)))
 
-    # Build report
+    # ------------------------------------------------------------------ #
+    # 4. Summarise
+    # ------------------------------------------------------------------ #
+    total = len(results)
+    n_pass = sum(1 for _, s in results if s == "PASS")
+    n_skip = sum(1 for _, s in results if s in ("SKIP", "MISSING"))
+    n_fail = total - n_pass - n_skip
+
+    sep = "=" * 60
     lines = []
-    lines.append("=" * 60)
-    lines.append("bus_matrix Regression Results")
-    lines.append("=" * 60)
-
-    max_label = max((len(label) for label, _ in entries), default=40)
-    for label, status in entries:
-        lines.append(f"  {label:<{max_label}}  {status}")
-
+    lines.append(sep)
+    lines.append("bus_matrix IP Regression Results")
+    lines.append(sep)
+    for label, status in results:
+        lines.append(f"  {label:<44} {status}")
     lines.append("-" * 60)
-    lines.append(f"  Total: {n_total}  Pass: {n_pass}  Fail: {n_fail}  Skip: {n_skip}")
-    lines.append("=" * 60)
-    lines.append(f"REGRESSION {overall}")
+    lines.append(f"  Total: {total}  Pass: {n_pass}  Fail: {n_fail}  Skip: {n_skip}")
+    lines.append(sep)
+    lines.append("REGRESSION PASSED" if n_fail == 0 else "REGRESSION FAILED")
 
     report = "\n".join(lines)
-    print(f"\n{report}")
+    print("\n" + report)
 
-    # Write results log
-    with open(results_log, "w") as fh:
+    out_path = os.path.join(ip_path, "verification", "work", "regression_results.log")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as fh:
         fh.write(report + "\n")
-    print(f"\nResults: {results_log}")
+    print(f"\nReport written to: {out_path}")
 
     sys.exit(0 if n_fail == 0 else 1)
 

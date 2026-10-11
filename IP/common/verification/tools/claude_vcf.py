@@ -62,6 +62,12 @@ class VcfJob:
     bind_module: str          # bind-only module name
     incdirs: List[str] = field(default_factory=list)
     max_time: str = "30M"
+    # Clock/reset port names of `top`. None = the protocol's standard names
+    # (BUS_PROTOCOLS); an IP whose top-levels use other names (e.g. a bus
+    # matrix with one clk/rst_n for all ports) sets them here.
+    clock: Optional[str] = None
+    reset: Optional[str] = None
+    reset_sense: Optional[str] = None
 
 
 @dataclass
@@ -256,9 +262,9 @@ def run_job(job: VcfJob, run_dir: str, waivers: List[Tuple[str, str]],
         "FV_SVA_FILES": " ".join(job.sva_files),
         "FV_INCDIRS": " ".join(job.incdirs + [common_formal_dir()]),
         "FV_BIND": job.bind_module,
-        "FV_CLOCK": proto["clock"],
-        "FV_RESET": proto["reset"],
-        "FV_RESET_SENSE": proto["sense"],
+        "FV_CLOCK": job.clock or proto["clock"],
+        "FV_RESET": job.reset or proto["reset"],
+        "FV_RESET_SENSE": job.reset_sense or proto["sense"],
         "FV_MAX_TIME": job.max_time,
         "FV_REPORT": report,
         "FV_TRACE_DIR": os.path.join(run_dir, "traces") if traces else "",

@@ -1,0 +1,18 @@
+# synth_bus_matrix_apb_vhdl.ys — Yosys VHDL-2008 synthesis for bus_matrix_apb (APB4).
+# Requires the ghdl plugin (OSS CAD Suite). Run from IP/interface/bus_matrix/:
+#   yosys synthesis/yosys/synth_bus_matrix_apb_vhdl.ys
+
+plugin -i ghdl
+ghdl --std=08 \
+    design/rtl/vhdl/bus_matrix_pkg.vhd \
+    design/rtl/vhdl/bus_matrix_decoder.vhd \
+    design/rtl/vhdl/bus_matrix_arb.vhd \
+    design/rtl/vhdl/bus_matrix_core.vhd \
+    design/rtl/vhdl/bus_matrix_apb_tgt.vhd \
+    design/rtl/vhdl/bus_matrix_apb_ini.vhd \
+    design/rtl/vhdl/bus_matrix_apb.vhd \
+    -e bus_matrix_apb
+
+synth -top bus_matrix_apb -flatten
+stat
+write_verilog -noattr synthesis/yosys/work/bus_matrix_apb_vhdl_synth.v

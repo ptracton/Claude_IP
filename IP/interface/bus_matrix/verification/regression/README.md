@@ -1,86 +1,89 @@
 # bus_matrix Regression
 
+How to run the full regression for the bus_matrix IP, how to read its result,
+and how to add a test.
+
 ## Prerequisites
 
-| Tool | Minimum Version | Purpose |
-|------|----------------|---------|
-| Icarus Verilog | 11.0+ | SystemVerilog directed tests |
-| GHDL | 3.0+ | VHDL-2008 directed tests |
-| Verilator | 5.0+ | SV linting |
-| Vivado xsim | 2023.2 | xsim SV directed tests + UVM |
-| ModelSim ASE | 21.1 | Mixed-language simulation (optional) |
-| SymbiYosys | 0.36+ | Formal verification (optional) |
+The runner adapts to the host (`hostname -f`):
 
-Not all tools are required. Use `--skip-*` flags to skip unavailable tools.
+| Host | Directed simulation | UVM | Formal | Lint (collected) |
+|------|---------------------|-----|--------|------------------|
+| `*.csun.edu` | Synopsys VCS + Cadence Xcelium (SV + VHDL) | VCS (all tests) | VC Formal (`vcf`) | SpyGlass |
+| standard host | Icarus (SV), GHDL (VHDL), ModelSim, Vivado xsim | Vivado xsim | SymbiYosys | Verilator / GHDL |
+
+A step whose tool is missing fails or is reported as `MISSING`. Use the
+`--skip-*` flags for tools you don't have.
 
 ## Running from a Clean Checkout
 
 ```bash
-# 1. Source the environment
 source IP/interface/bus_matrix/setup.sh
-
-# 2. Run the full regression (skipping tools you don't have)
-python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/run_regression.py \
-    --skip-modelsim --skip-formal --skip-uvm
-
-# 3. Or run everything
 python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/run_regression.py
+# or
+bash $CLAUDE_BUS_MATRIX_PATH/verification/regression/run_regression.sh
 ```
 
-### Available Flags
+Lint is collected from `verification/lint/lint_results.log` but not run, so
+run it first:
+
+```bash
+python3 $CLAUDE_BUS_MATRIX_PATH/verification/tools/lint_bus_matrix.py --lang all
+```
+
+Synthesis, STA, gate-level simulation and power are separate flows (see the
+top-level README).
+
+### Flags
 
 | Flag | Effect |
 |------|--------|
-| `--skip-sim` | Skip all directed simulation (Icarus, GHDL, xsim, ModelSim) |
-| `--skip-uvm` | Skip UVM tests |
-| `--skip-formal` | Skip formal verification |
-| `--skip-lint` | Skip lint check |
-| `--skip-modelsim` | Skip ModelSim simulations |
-| `--skip-xsim` | Skip Vivado xsim simulations |
+| `--skip-sim`      | Skip directed simulation |
+| `--skip-uvm`      | Skip UVM |
+| `--skip-formal`   | Skip formal (a full VC Formal run takes about 4 hours: the AXI4-Lite jobs take ~100 min each) |
+| `--skip-lint`     | Don't collect the lint result |
+| `--skip-modelsim` | Standard hosts: skip ModelSim |
+| `--skip-xsim`     | Standard hosts: skip Vivado xsim directed simulation |
 
 ## Interpreting Results
 
-The regression writes `verification/work/regression_results.log` with a table:
+The runner prints a table and writes it to
+`verification/work/regression_results.log`:
 
 ```
 ============================================================
-bus_matrix Regression Results
+bus_matrix IP Regression Results
 ============================================================
-  sim/icarus/ahb_sv/test_bus_matrix_ops   PASS
-  sim/icarus/axi_sv/test_bus_matrix_ops   PASS
+  sim/vcs/ahb_sv/test_reset                    PASS
   ...
-  formal/bus_matrix_arb                   PASS
-  formal/bus_matrix_crossbar              PASS
-  formal/bus_matrix_decode                PASS
-  uvm/xsim/bus_matrix_base_test          PASS
-  lint                                    PASS
+  sim/xcelium/wb_vhdl/test_arb                 PASS
+  formal/vcf/bus_matrix_ahb_sv                 PASS
+  ...
+  uvm/vcs/all_tests                            PASS
+  lint                                         PASS
 ------------------------------------------------------------
-  Total: 23  Pass: 17  Fail: 0  Skip: 6
+  Total: 108  Pass: 108  Fail: 0  Skip: 0
 ============================================================
 REGRESSION PASSED
 ```
 
-- **PASS**: Test ran and succeeded.
-- **FAIL**: Test ran and failed. Check the corresponding log in `verification/work/`.
-- **SKIP**: Tool not installed or combination not supported. Does not count as failure.
-- **NO_RUN**: Results file missing or empty.
+- Simulation rows are per test, per `<sim>/<proto>_<lang>` run directory. Only
+  the current protocols (`apb`, `ahb`, `axi4l`, `wb`) are collected. If a run
+  reports fewer than the six known tests, the missing ones count as FAIL.
+- `PASS`/`FAIL` come from the first line of each `results.log`. A `PASS` whose
+  log contains `FAIL` anywhere is downgraded to `FAIL`.
+- `MISSING`/`SKIP` do not fail the regression. The exit code is 0 only when
+  nothing failed.
 
-Exit code is 0 only when all non-SKIP entries are PASS.
+`verification/regression/report.md` is a snapshot of the latest full run.
 
 ## Adding a New Test
 
-1. Add the test task to `verification/tests/test_<name>.sv` using the
+1. Write the task in `verification/tests/test_<name>.sv`, using the
    `test_start` / `check_eq` / `test_done` helpers from `ip_test_pkg.sv`.
-2. Include it in the testbench (`tb_bus_matrix_<proto>.sv`) via `` `include ``.
-3. Call the test task from the stimulus `initial` block.
-4. The regression runner automatically picks up per-test results from the
-   `test_name: PASS` lines in the simulation output.
-
-## Alternative: Shell-Based Regression
-
-A shell-based regression script is also available:
-
-```bash
-source IP/interface/bus_matrix/setup.sh
-bash $CLAUDE_BUS_MATRIX_PATH/verification/regression/run_regression.sh [--verbose] [--xsim]
-```
+   Tests are protocol-neutral: they call the `write_reg` / `read_reg` tasks of
+   the master BFMs `u_m0` / `u_m1`.
+2. `` `include `` it in each `tb_bus_matrix_<proto>.sv` and call it from the
+   stimulus block. Add the VHDL equivalent to `tb_bus_matrix_<proto>.vhd`.
+3. Add the name to `KNOWN_TESTS` in `verification/tools/run_regression.py`.
+4. Re-run the regression and check that the new rows appear and pass.

@@ -1,0 +1,33 @@
+# bus_matrix_core.sby — SymbiYosys BMC of bus_matrix_core (standard hosts).
+#
+# Properties P1-P6 and the environment assumptions are in bus_matrix_props.sv.
+# Two tasks: round robin (the default configuration) and fixed priority.
+# Run: sby -f bus_matrix_core.sby          (or formal_bus_matrix.py --tool sby)
+# Unbounded proofs of the same properties: VC Formal, see vcf/README.md.
+
+[tasks]
+rr
+fp
+
+[options]
+mode bmc
+depth 24
+multiclock off
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal bus_matrix_decoder.sv
+read -formal bus_matrix_arb.sv
+read -formal bus_matrix_core.sv
+read -formal bus_matrix_props.sv
+rr: chparam -set ARB_MODE 1 bus_matrix_props
+fp: chparam -set ARB_MODE 0 bus_matrix_props
+prep -top bus_matrix_props
+
+[files]
+../../design/rtl/verilog/bus_matrix_decoder.sv
+../../design/rtl/verilog/bus_matrix_arb.sv
+../../design/rtl/verilog/bus_matrix_core.sv
+bus_matrix_props.sv

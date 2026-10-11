@@ -11,7 +11,7 @@
 class bus_matrix_contention_half_seq extends bus_matrix_base_seq;
   `uvm_object_utils(bus_matrix_contention_half_seq)
 
-  localparam logic [31:0] S0_BASE = 32'h1000_0000;
+  localparam logic [31:0] S0_BASE = 32'h0000_0000; // Boot ROM (bus_matrix_pkg)
 
   int unsigned num_words = 8;
   int unsigned master_id = 0;  // 0 or 1 — used for data pattern only

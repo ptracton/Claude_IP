@@ -1,115 +1,100 @@
-// bus_matrix_arb.sv — Bus Matrix arbitration for one slave port.
+// bus_matrix_arb.sv — Bus Matrix arbiter for one slave port.
 //
-// Implements fixed-priority and round-robin arbitration.
-// One instance per slave. Selects at most one master per cycle.
-// Configuration is entirely via parameters — no runtime register ports.
+// One instance per slave. Picks one requesting master when the slave is free
+// and locks that grant until the transaction completes, so a higher-priority
+// request can never take the slave away mid-transaction.
 //
-// Fixed-priority: master with lowest priority value wins.
-//   Ties broken by lower master index.
-// Round-robin: rotating pointer, starting from master after last granted.
-//   Holds grant stable while valid_trx is asserted.
+//   Fixed priority (ARB_MODE=0): lowest M_PRIORITY value wins; ties go to
+//     the lower master index.
+//   Round robin   (ARB_MODE=1): the first requester after the last granted
+//     master wins (master 0 is first after reset).
 //
-// gnt output is registered to prevent glitching.
-// slv_gnt input: slave acknowledge (HREADY for AHB, BVALID/RVALID for AXI,
-//   ACK for Wishbone). When valid_trx && slv_gnt, the current transaction
-//   completes this cycle; gnt is cleared next cycle.
+// Grant timing: gnt is registered. It is set on the clock edge after a
+// request is seen with the slave free, held while the owner keeps requesting,
+// and cleared on the edge where `done` is high (or the owner stops
+// requesting). No new grant is made on the edge that releases one, so every
+// transaction is followed by one idle cycle on the slave.
 
 module bus_matrix_arb #(
-  parameter int NUM_MASTERS = 2,                             // 1-16 active masters
-  parameter int ARB_MODE    = 0,                             // 0=fixed-priority, 1=round-robin
+  parameter int unsigned NUM_MASTERS = 2,                    // 1-16 active masters
+  parameter int unsigned ARB_MODE    = 0,                    // 0=fixed-priority, 1=round-robin
   parameter logic [NUM_MASTERS*4-1:0] M_PRIORITY = '0       // master i priority at [i*4+:4]
-                                                             // lower value = higher priority
 ) (
-  input  logic                    clk,       // system clock
-  input  logic                    rst_n,     // synchronous active-low reset
-  input  logic [NUM_MASTERS-1:0]  req,       // request from each master
-  input  logic                    valid_trx, // transaction being served; suppress arb change
-  input  logic                    slv_gnt,   // slave acknowledge; clears grant when done
-  output logic [NUM_MASTERS-1:0]  gnt        // one-hot grant output
+  input  logic                    clk,   // system clock
+  input  logic                    rst_n, // synchronous active-low reset
+  input  logic [NUM_MASTERS-1:0]  req,   // master i is requesting this slave
+  input  logic                    done,  // owner's transaction completes this cycle
+  output logic [NUM_MASTERS-1:0]  gnt    // one-hot grant (registered)
 );
 
-  // -------------------------------------------------------------------------
-  // Fixed-priority arbitration (combinational)
-  // beaten[i] = 1 if some other requesting master j has strictly lower
-  //   priority value OR same value and lower index.
-  // fp_gnt = req & ~beaten  → exactly one winner.
-  // -------------------------------------------------------------------------
-  logic [NUM_MASTERS-1:0] beaten;
-  logic [NUM_MASTERS-1:0] fp_gnt;
+  localparam logic [NUM_MASTERS-1:0] ONE = NUM_MASTERS'(1);
 
-  always_comb begin : p_fp_gnt
-    beaten = '0;
-    for (int i = 0; i < NUM_MASTERS; i = i + 1) begin
-      for (int j = 0; j < NUM_MASTERS; j = j + 1) begin
-        if (j != i && req[j]) begin
-          // j beats i if j has strictly lower priority value
-          if (M_PRIORITY[j*4+:4] < M_PRIORITY[i*4+:4])
-            beaten[i] = 1'b1;
-          // or same value and lower index (lower index = higher natural priority)
-          else if ((M_PRIORITY[j*4+:4] == M_PRIORITY[i*4+:4]) && (j < i))
-            beaten[i] = 1'b1;
+  logic [NUM_MASTERS-1:0] pick; // one-hot winner among the requesters
+  logic                   take; // make a new grant on this edge
+
+  if (ARB_MODE == 0) begin : gen_fp
+    // -----------------------------------------------------------------------
+    // Fixed priority: master i wins unless another requester j beats it with
+    // a strictly lower priority value, or the same value and a lower index.
+    // -----------------------------------------------------------------------
+    for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_m
+      logic [NUM_MASTERS-1:0] beats; // beats[j] = requester j beats master i
+
+      for (genvar gj = 0; gj < NUM_MASTERS; gj++) begin : gen_cmp
+        if (gj < gi) begin : gen_lo
+          assign beats[gj] = req[gj] && (M_PRIORITY[gj*4+:4] <= M_PRIORITY[gi*4+:4]);
+        end else if (gj > gi) begin : gen_hi
+          assign beats[gj] = req[gj] && (M_PRIORITY[gj*4+:4] <  M_PRIORITY[gi*4+:4]);
+        end else begin : gen_self
+          assign beats[gj] = 1'b0;
         end
       end
+
+      assign pick[gi] = req[gi] & ~(|beats);
     end
-    fp_gnt = req & ~beaten;
-  end
+  end else begin : gen_rr
+    // -----------------------------------------------------------------------
+    // Round robin: the lowest requester above the last granted master, else
+    // the lowest requester overall (wrap). last_q is one-hot; resetting it to
+    // the top master makes master 0 first after reset.
+    // -----------------------------------------------------------------------
+    logic [NUM_MASTERS-1:0] last_q;  // one-hot last granted master
+    logic [NUM_MASTERS-1:0] above;   // masters strictly above last_q
+    logic [NUM_MASTERS-1:0] req_hi;  // requesters above last_q
 
-  // -------------------------------------------------------------------------
-  // Round-robin arbitration
-  // Two-pass scan: first above rr_ptr_q, then 0..rr_ptr_q (wrap).
-  // -------------------------------------------------------------------------
-  localparam int PTR_W = (NUM_MASTERS > 1) ? $clog2(NUM_MASTERS) : 1;
+    assign above  = ~((last_q << 1) - ONE);
+    assign req_hi = req & above;
+    assign pick   = (|req_hi) ? (req_hi & (~req_hi + ONE)) : (req & (~req + ONE));
 
-  logic [PTR_W-1:0]       rr_ptr_q;    // last-granted master index
-  logic [NUM_MASTERS-1:0] rr_gnt_q;    // registered round-robin grant
-  logic [NUM_MASTERS-1:0] rr_gnt_next; // combinational next RR grant
-
-  always_comb begin : p_rr_comb
-    rr_gnt_next = '0;
-    if (|req) begin
-      // First pass: masters strictly above rr_ptr_q (lowest index wins)
-      for (int k = 0; k < NUM_MASTERS; k = k + 1) begin
-        if ((k > int'(rr_ptr_q)) && req[k] && (rr_gnt_next == '0))
-          rr_gnt_next[k] = 1'b1;
-      end
-      // Second pass (wrap): masters 0..rr_ptr_q (lowest index wins)
-      if (rr_gnt_next == '0) begin
-        for (int k = 0; k < NUM_MASTERS; k = k + 1) begin
-          if ((k <= int'(rr_ptr_q)) && req[k] && (rr_gnt_next == '0))
-            rr_gnt_next[k] = 1'b1;
-        end
+    always_ff @(posedge clk) begin : p_last
+      if (!rst_n) begin
+        last_q <= ONE << (NUM_MASTERS - 1);
+      end else if (take) begin
+        last_q <= pick;
       end
     end
   end
 
-  always_ff @(posedge clk) begin : p_rr_reg
+  // -------------------------------------------------------------------------
+  // Grant lock
+  // -------------------------------------------------------------------------
+  logic busy;        // a grant is held
+  logic owner_req;   // the granted master is still requesting
+  logic release_gnt; // drop the grant on this edge
+
+  assign busy        = |gnt;
+  assign owner_req   = |(gnt & req);
+  assign release_gnt = busy && (done || !owner_req);
+  assign take        = !busy && (|req);
+
+  always_ff @(posedge clk) begin : p_gnt
     if (!rst_n) begin
-      rr_ptr_q <= '0;
-      rr_gnt_q <= '0;
-    end else if (!valid_trx) begin
-      rr_gnt_q <= rr_gnt_next;
-      if (|rr_gnt_next) begin
-        for (int k = 0; k < NUM_MASTERS; k = k + 1) begin
-          if (rr_gnt_next[k]) rr_ptr_q <= PTR_W'(k);
-        end
-      end
-    end
-  end
-
-  // -------------------------------------------------------------------------
-  // Mux and registered grant output
-  // When transaction completes (valid_trx & slv_gnt), force gnt_next=0
-  // so the registered output de-asserts next cycle instead of holding.
-  // -------------------------------------------------------------------------
-  logic [NUM_MASTERS-1:0] gnt_next;
-  assign gnt_next = (valid_trx & slv_gnt) ? '0 :
-                    (ARB_MODE != 0        ? rr_gnt_q : fp_gnt);
-
-  always_ff @(posedge clk) begin : p_gnt_reg
-    if (!rst_n)
       gnt <= '0;
-    else
-      gnt <= gnt_next;
+    end else if (release_gnt) begin
+      gnt <= '0;
+    end else if (take) begin
+      gnt <= pick;
+    end
   end
 
 endmodule : bus_matrix_arb

@@ -1,209 +1,116 @@
--- tb_bus_matrix_ahb.vhd -- AHB bus_matrix VHDL-2008 testbench.
+-- tb_bus_matrix_ahb.vhd — AHB-Lite bus_matrix directed testbench (VHDL-2008).
 --
--- Tests fabric write + readback via master 0 to slave 0.
--- Address map configured via DUT generics (no admin port).
--- S0: base=0x10000000, mask=0xF0000000
--- S1: base=0x20000000, mask=0xF0000000
---
--- Prints "PASS tb_bus_matrix_ahb" on success.
+-- DUT: bus_matrix_ahb with its default generics (bus_matrix_pkg).
+--   Masters: u_m0, u_m1 — bus_matrix_tb_ahb_master (one transfer per command)
+--   Slaves:  gen_slv(j) — shared claude_ahb_if bridge + bus_matrix_tb_mem
+-- The test sequence mirrors the SV testbench (verification/tests/test_*.sv):
+-- test_reset, test_route, test_strobe, test_decode_err, test_contention, test_arb.
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use std.textio.all;
 use std.env.all;
+
+use work.ip_test_pkg.all;
+use work.bus_matrix_pkg.all;
 
 entity tb_bus_matrix_ahb is
 end entity tb_bus_matrix_ahb;
 
 architecture sim of tb_bus_matrix_ahb is
 
-  constant CLK_PERIOD : time := 10 ns;
-  constant AHB_IDLE   : std_ulogic_vector(1 downto 0) := "00";
-  constant AHB_NONSEQ : std_ulogic_vector(1 downto 0) := "10";
+  constant CLK_PERIOD : time     := 10 ns;
+  constant N_MST      : positive := BM_NUM_MASTERS;
+  constant N_SLV      : positive := BM_NUM_SLAVES;
+  constant MEM_AW     : positive := 10;  -- 1024 words = 4 KB per slave
 
-  constant NM : positive := 2;
-  constant NS : positive := 2;
-  constant DW : positive := 32;
-  constant AW : positive := 32;
+  subtype word_t is std_ulogic_vector(31 downto 0);
+  type word_arr_t is array (natural range <>) of word_t;
+  type strb_arr_t is array (natural range <>) of std_ulogic_vector(3 downto 0);
+
+  constant ZERO : word_t := (others => '0');
+  -- Addresses that match no slave in the default map
+  constant UNMAPPED : word_arr_t(0 to 3) := (
+    x"10000000",  -- gap between Boot ROM and SRAM
+    x"00010000",  -- just past the 64 KB Boot ROM
+    x"20020000",  -- just past the 128 KB SRAM
+    x"F0000000"   -- top of the address space
+  );
 
   signal clk   : std_ulogic := '0';
   signal rst_n : std_ulogic := '0';
+  signal rst   : std_ulogic;
 
-  -- Master 0 fabric port
-  signal m0_HSEL   : std_ulogic                     := '0';
-  signal m0_HADDR  : std_ulogic_vector(31 downto 0) := (others => '0');
-  signal m0_HTRANS : std_ulogic_vector(1 downto 0)  := AHB_IDLE;
-  signal m0_HWRITE : std_ulogic                     := '0';
-  signal m0_HWDATA : std_ulogic_vector(31 downto 0) := (others => '0');
-  signal m0_HWSTRB : std_ulogic_vector(3 downto 0)  := x"F";
-  signal m0_HREADY : std_ulogic;
-  signal m0_HRDATA : std_ulogic_vector(31 downto 0);
-  signal m0_HRESP  : std_ulogic;
+  -- DUT ports (flat-packed)
+  signal M_HSEL     : std_ulogic_vector(N_MST - 1 downto 0);
+  signal M_HADDR    : std_ulogic_vector(N_MST * 32 - 1 downto 0);
+  signal M_HTRANS   : std_ulogic_vector(N_MST * 2 - 1 downto 0);
+  signal M_HWRITE   : std_ulogic_vector(N_MST - 1 downto 0);
+  signal M_HWDATA   : std_ulogic_vector(N_MST * 32 - 1 downto 0);
+  signal M_HWSTRB   : std_ulogic_vector(N_MST * 4 - 1 downto 0);
+  signal M_HREADY   : std_ulogic_vector(N_MST - 1 downto 0);
+  signal M_HRDATA   : std_ulogic_vector(N_MST * 32 - 1 downto 0);
+  signal M_HRESP    : std_ulogic_vector(N_MST - 1 downto 0);
+  signal S_HSEL     : std_ulogic_vector(N_SLV - 1 downto 0);
+  signal S_HADDR    : std_ulogic_vector(N_SLV * 32 - 1 downto 0);
+  signal S_HTRANS   : std_ulogic_vector(N_SLV * 2 - 1 downto 0);
+  signal S_HWRITE   : std_ulogic_vector(N_SLV - 1 downto 0);
+  signal S_HWDATA   : std_ulogic_vector(N_SLV * 32 - 1 downto 0);
+  signal S_HWSTRB   : std_ulogic_vector(N_SLV * 4 - 1 downto 0);
+  signal S_HREADY   : std_ulogic_vector(N_SLV - 1 downto 0);
+  signal S_HRDATA   : std_ulogic_vector(N_SLV * 32 - 1 downto 0);
+  signal S_HRESP    : std_ulogic_vector(N_SLV - 1 downto 0);
 
-  -- Master 1 (tied off)
-  signal m1_HSEL   : std_ulogic                     := '0';
-  signal m1_HADDR  : std_ulogic_vector(31 downto 0) := (others => '0');
-  signal m1_HTRANS : std_ulogic_vector(1 downto 0)  := AHB_IDLE;
-  signal m1_HWRITE : std_ulogic                     := '0';
-  signal m1_HWDATA : std_ulogic_vector(31 downto 0) := (others => '0');
-  signal m1_HWSTRB : std_ulogic_vector(3 downto 0)  := x"F";
+  -- Master command interfaces
+  signal cmd_req   : std_ulogic_vector(0 to N_MST - 1) := (others => '0');
+  signal cmd_ack   : std_ulogic_vector(0 to N_MST - 1);
+  signal cmd_we    : std_ulogic_vector(0 to N_MST - 1) := (others => '0');
+  signal cmd_addr  : word_arr_t(0 to N_MST - 1) := (others => ZERO);
+  signal cmd_wdata : word_arr_t(0 to N_MST - 1) := (others => ZERO);
+  signal cmd_strb  : strb_arr_t(0 to N_MST - 1) := (others => x"F");
+  signal rsp_rdata : word_arr_t(0 to N_MST - 1);
+  signal rsp_err   : std_ulogic_vector(0 to N_MST - 1);
 
-  -- Flat-packed DUT master ports
-  signal M_HSEL   : std_ulogic_vector(NM-1 downto 0)      := (others => '0');
-  signal M_HADDR  : std_ulogic_vector(NM*AW-1 downto 0)   := (others => '0');
-  signal M_HTRANS : std_ulogic_vector(NM*2-1 downto 0)    := (others => '0');
-  signal M_HWRITE : std_ulogic_vector(NM-1 downto 0)      := (others => '0');
-  signal M_HWDATA : std_ulogic_vector(NM*DW-1 downto 0)   := (others => '0');
-  signal M_HWSTRB : std_ulogic_vector(NM*4-1 downto 0)    := (others => '0');
-  signal M_HREADY : std_ulogic_vector(NM-1 downto 0);
-  signal M_HRDATA : std_ulogic_vector(NM*DW-1 downto 0);
-  signal M_HRESP  : std_ulogic_vector(NM-1 downto 0);
+  -- Slave 1 write log (arbitration test)
+  signal log_clear   : std_ulogic := '0';
+  signal s1_wr_count : natural;
+  signal s1_wr_log0  : std_ulogic_vector(MEM_AW - 1 downto 0);
+  signal s1_wr_log1  : std_ulogic_vector(MEM_AW - 1 downto 0);
 
-  -- Flat-packed DUT slave ports
-  signal S_HSEL   : std_ulogic_vector(NS-1 downto 0);
-  signal S_HADDR  : std_ulogic_vector(NS*AW-1 downto 0);
-  signal S_HTRANS : std_ulogic_vector(NS*2-1 downto 0);
-  signal S_HWRITE : std_ulogic_vector(NS-1 downto 0);
-  signal S_HWDATA : std_ulogic_vector(NS*DW-1 downto 0);
-  signal S_HWSTRB : std_ulogic_vector(NS*4-1 downto 0);
-  signal S_HREADY : std_ulogic_vector(NS-1 downto 0)      := (others => '1');
-  signal S_HRDATA : std_ulogic_vector(NS*DW-1 downto 0)   := (others => '0');
-  signal S_HRESP  : std_ulogic_vector(NS-1 downto 0)      := (others => '0');
+  signal sim_done : boolean := false;
 
-  -- Slave 0 extracted signals
-  signal s0_HSEL   : std_ulogic;
-  signal s0_HADDR  : std_ulogic_vector(31 downto 0);
-  signal s0_HTRANS : std_ulogic_vector(1 downto 0);
-  signal s0_HWRITE : std_ulogic;
-  signal s0_HWDATA : std_ulogic_vector(31 downto 0);
-  signal s0_HWSTRB : std_ulogic_vector(3 downto 0);
-  signal s0_HRDATA : std_ulogic_vector(31 downto 0);
-
-  -- Slave 0 memory (64 words)
-  type mem_t is array (0 to 63) of std_ulogic_vector(31 downto 0);
-  signal s0_mem : mem_t := (others => (others => '0'));
-
-  signal test_failed : boolean := false;
-
-  -- Build S_BASE: S0=0x10000000, S1=0x20000000
-  function make_s_base return std_ulogic_vector is
-    variable v : std_ulogic_vector(32*32-1 downto 0) := (others => '0');
+  -- Byte address of offset off inside slave j's region
+  function slv_addr (j : natural; off : std_ulogic_vector(11 downto 0)) return word_t is
   begin
-    v(31 downto 0)  := x"10000000";
-    v(63 downto 32) := x"20000000";
-    return v;
-  end function;
+    return BM_S_BASE_USED(j * 32 + 31 downto j * 32) or (x"00000" & off);
+  end function slv_addr;
 
-  function make_s_mask return std_ulogic_vector is
-    variable v : std_ulogic_vector(32*32-1 downto 0) := (others => '0');
+  function word (k : natural) return word_t is
   begin
-    v(31 downto 0)  := x"F0000000";
-    v(63 downto 32) := x"F0000000";
-    return v;
-  end function;
+    return std_ulogic_vector(to_unsigned(k, 32));
+  end function word;
 
-  -- DUT component
-  component bus_matrix_ahb is
-    generic (
-      NUM_MASTERS : positive;
-      NUM_SLAVES  : positive;
-      DATA_W      : positive;
-      ADDR_W      : positive;
-      ARB_MODE    : natural;
-      M_PRIORITY  : std_ulogic_vector(16*4-1 downto 0);
-      S_BASE      : std_ulogic_vector(32*32-1 downto 0);
-      S_MASK      : std_ulogic_vector(32*32-1 downto 0)
-    );
-    port (
-      clk       : in  std_ulogic;
-      rst_n     : in  std_ulogic;
-      M_HSEL    : in  std_ulogic_vector(NUM_MASTERS-1 downto 0);
-      M_HADDR   : in  std_ulogic_vector(NUM_MASTERS*ADDR_W-1 downto 0);
-      M_HTRANS  : in  std_ulogic_vector(NUM_MASTERS*2-1 downto 0);
-      M_HWRITE  : in  std_ulogic_vector(NUM_MASTERS-1 downto 0);
-      M_HWDATA  : in  std_ulogic_vector(NUM_MASTERS*DATA_W-1 downto 0);
-      M_HWSTRB  : in  std_ulogic_vector(NUM_MASTERS*4-1 downto 0);
-      M_HREADY  : out std_ulogic_vector(NUM_MASTERS-1 downto 0);
-      M_HRDATA  : out std_ulogic_vector(NUM_MASTERS*DATA_W-1 downto 0);
-      M_HRESP   : out std_ulogic_vector(NUM_MASTERS-1 downto 0);
-      S_HSEL    : out std_ulogic_vector(NUM_SLAVES-1 downto 0);
-      S_HADDR   : out std_ulogic_vector(NUM_SLAVES*ADDR_W-1 downto 0);
-      S_HTRANS  : out std_ulogic_vector(NUM_SLAVES*2-1 downto 0);
-      S_HWRITE  : out std_ulogic_vector(NUM_SLAVES-1 downto 0);
-      S_HWDATA  : out std_ulogic_vector(NUM_SLAVES*DATA_W-1 downto 0);
-      S_HWSTRB  : out std_ulogic_vector(NUM_SLAVES*4-1 downto 0);
-      S_HREADY  : in  std_ulogic_vector(NUM_SLAVES-1 downto 0);
-      S_HRDATA  : in  std_ulogic_vector(NUM_SLAVES*DATA_W-1 downto 0);
-      S_HRESP   : in  std_ulogic_vector(NUM_SLAVES-1 downto 0)
-    );
-  end component bus_matrix_ahb;
-
-  procedure check_eq (
-    actual   : in std_ulogic_vector(31 downto 0);
-    expected : in std_ulogic_vector(31 downto 0);
-    msg      : in string;
-    signal failed_sig : out boolean
-  ) is
-    variable l : line;
+  function tag (j : natural) return word_t is  -- j << 8
   begin
-    if actual /= expected then
-      write(l, string'("FAIL: ") & msg &
-            " expected=0x" & to_hstring(expected) &
-            " got=0x" & to_hstring(actual));
-      writeline(output, l);
-      failed_sig <= true;
-    else
-      write(l, string'("  OK: ") & msg & " = 0x" & to_hstring(actual));
-      writeline(output, l);
-    end if;
-  end procedure check_eq;
+    return std_ulogic_vector(to_unsigned(j * 256, 32));
+  end function tag;
+
+  function off (base : std_ulogic_vector(11 downto 0); k : natural) return std_ulogic_vector is
+  begin
+    return std_ulogic_vector(unsigned(base) + to_unsigned(4 * k, 12));
+  end function off;
+
+  function flag (b : std_ulogic) return word_t is
+  begin
+    return (31 downto 1 => '0') & b;
+  end function flag;
 
 begin
 
   clk <= not clk after CLK_PERIOD / 2;
+  rst <= not rst_n;
 
-  -- Flat-pack masters
-  M_HSEL   <= m1_HSEL & m0_HSEL;
-  M_HADDR  <= m1_HADDR & m0_HADDR;
-  M_HTRANS <= m1_HTRANS & m0_HTRANS;
-  M_HWRITE <= m1_HWRITE & m0_HWRITE;
-  M_HWDATA <= m1_HWDATA & m0_HWDATA;
-  M_HWSTRB <= m1_HWSTRB & m0_HWSTRB;
-
-  m0_HREADY <= M_HREADY(0);
-  m0_HRDATA <= M_HRDATA(31 downto 0);
-  m0_HRESP  <= M_HRESP(0);
-
-  -- Extract slave 0
-  s0_HSEL   <= S_HSEL(0);
-  s0_HADDR  <= S_HADDR(31 downto 0);
-  s0_HTRANS <= S_HTRANS(1 downto 0);
-  s0_HWRITE <= S_HWRITE(0);
-  s0_HWDATA <= S_HWDATA(31 downto 0);
-  s0_HWSTRB <= S_HWSTRB(3 downto 0);
-
-  -- Slave 0 drives back
-  S_HREADY(0)           <= '1';
-  S_HRDATA(31 downto 0) <= s0_HRDATA;
-  S_HRESP(0)            <= '0';
-  -- Slave 1 always ready, no data
-  S_HREADY(1)            <= '1';
-  S_HRDATA(63 downto 32) <= (others => '0');
-  S_HRESP(1)             <= '0';
-
-  -- DUT
-  u_dut : bus_matrix_ahb
-    generic map (
-      NUM_MASTERS => NM,
-      NUM_SLAVES  => NS,
-      DATA_W      => DW,
-      ADDR_W      => AW,
-      ARB_MODE    => 0,
-      M_PRIORITY  => (others => '0'),
-      S_BASE      => make_s_base,
-      S_MASK      => make_s_mask
-    )
+  u_dut : entity work.bus_matrix_ahb(rtl)
     port map (
       clk      => clk,
       rst_n    => rst_n,
@@ -227,128 +134,300 @@ begin
       S_HRESP  => S_HRESP
     );
 
-  -- Slave 0 BFM: combinational read, registered write
-  p_slave0_read : process (s0_HADDR, s0_mem) is
-    variable addr_idx : integer;
-  begin
-    addr_idx := to_integer(unsigned(s0_HADDR(7 downto 2)));
-    if addr_idx > 63 then addr_idx := 0; end if;
-    s0_HRDATA <= s0_mem(addr_idx);
-  end process p_slave0_read;
+  gen_mst : for gi in 0 to N_MST - 1 generate
+    u_m : entity work.bus_matrix_tb_ahb_master(sim)
+      port map (
+        clk       => clk,
+        cmd_req   => cmd_req(gi),
+        cmd_we    => cmd_we(gi),
+        cmd_addr  => cmd_addr(gi),
+        cmd_wdata => cmd_wdata(gi),
+        cmd_strb  => cmd_strb(gi),
+        cmd_ack   => cmd_ack(gi),
+        rsp_rdata => rsp_rdata(gi),
+        rsp_err   => rsp_err(gi),
+        HSEL      => M_HSEL(gi),
+        HADDR     => M_HADDR(gi * 32 + 31 downto gi * 32),
+        HTRANS    => M_HTRANS(gi * 2 + 1 downto gi * 2),
+        HWRITE    => M_HWRITE(gi),
+        HWDATA    => M_HWDATA(gi * 32 + 31 downto gi * 32),
+        HWSTRB    => M_HWSTRB(gi * 4 + 3 downto gi * 4),
+        HREADY    => M_HREADY(gi),
+        HRDATA    => M_HRDATA(gi * 32 + 31 downto gi * 32),
+        HRESP     => M_HRESP(gi)
+      );
+  end generate gen_mst;
 
-  p_slave0_write : process (clk) is
-    variable addr_idx : integer;
+  gen_slv : for gj in 0 to N_SLV - 1 generate
+    signal wr_en     : std_ulogic;
+    signal wr_addr   : std_ulogic_vector(MEM_AW - 1 downto 0);
+    signal wr_data   : std_ulogic_vector(31 downto 0);
+    signal wr_strb   : std_ulogic_vector(3 downto 0);
+    signal rd_en     : std_ulogic;
+    signal rd_addr   : std_ulogic_vector(MEM_AW - 1 downto 0);
+    signal rd_data   : std_ulogic_vector(31 downto 0);
+    signal wr_count  : natural;
+    signal wr_log0   : std_ulogic_vector(MEM_AW - 1 downto 0);
+    signal wr_log1   : std_ulogic_vector(MEM_AW - 1 downto 0);
   begin
-    if rising_edge(clk) then
-      if rst_n = '0' then
-        s0_mem <= (others => (others => '0'));
-      elsif s0_HSEL = '1' and s0_HTRANS = AHB_NONSEQ and s0_HWRITE = '1' then
-        addr_idx := to_integer(unsigned(s0_HADDR(7 downto 2)));
-        if addr_idx <= 63 then
-          if s0_HWSTRB(0) = '1' then s0_mem(addr_idx)(7 downto 0)   <= s0_HWDATA(7 downto 0); end if;
-          if s0_HWSTRB(1) = '1' then s0_mem(addr_idx)(15 downto 8)  <= s0_HWDATA(15 downto 8); end if;
-          if s0_HWSTRB(2) = '1' then s0_mem(addr_idx)(23 downto 16) <= s0_HWDATA(23 downto 16); end if;
-          if s0_HWSTRB(3) = '1' then s0_mem(addr_idx)(31 downto 24) <= s0_HWDATA(31 downto 24); end if;
-        end if;
+    u_if : entity work.claude_ahb_if(rtl)
+      generic map (
+        DATA_W => 32,
+        ADDR_W => MEM_AW
+      )
+      port map (
+        HCLK    => clk,
+        HRESETn => rst_n,
+        HSEL    => S_HSEL(gj),
+        HADDR   => S_HADDR(gj * 32 + 11 downto gj * 32),
+        HTRANS  => S_HTRANS(gj * 2 + 1 downto gj * 2),
+        HWRITE  => S_HWRITE(gj),
+        HWDATA  => S_HWDATA(gj * 32 + 31 downto gj * 32),
+        HWSTRB  => S_HWSTRB(gj * 4 + 3 downto gj * 4),
+        HREADY  => S_HREADY(gj),
+        HRDATA  => S_HRDATA(gj * 32 + 31 downto gj * 32),
+        HRESP   => S_HRESP(gj),
+        wr_en   => wr_en,
+        wr_addr => wr_addr,
+        wr_data => wr_data,
+        wr_strb => wr_strb,
+        rd_en   => rd_en,
+        rd_addr => rd_addr,
+        rd_data => rd_data
+      );
+
+    u_mem : entity work.bus_matrix_tb_mem(sim)
+      generic map (
+        ADDR_W => MEM_AW
+      )
+      port map (
+        clk       => clk,
+        wr_en     => wr_en,
+        wr_addr   => wr_addr,
+        wr_data   => wr_data,
+        wr_strb   => wr_strb,
+        rd_en     => rd_en,
+        rd_addr   => rd_addr,
+        rd_data   => rd_data,
+        log_clear => log_clear,
+        wr_count  => wr_count,
+        wr_log0   => wr_log0,
+        wr_log1   => wr_log1
+      );
+
+    g_s1 : if gj = 1 generate
+      s1_wr_count <= wr_count;
+      s1_wr_log0  <= wr_log0;
+      s1_wr_log1  <= wr_log1;
+    end generate g_s1;
+  end generate gen_slv;
+
+  p_timeout : process is
+  begin
+    wait for 2 ms;
+    if not sim_done then
+      report "FAIL tb_bus_matrix_ahb: simulation timeout" severity failure;
+    end if;
+    wait;
+  end process p_timeout;
+
+  p_stim : process is
+    variable rdata    : word_t;
+    variable rdata1   : word_t;
+    variable err      : std_ulogic;
+    variable err1     : std_ulogic;
+    variable first_w  : std_ulogic_vector(11 downto 0);
+    variable second_w : std_ulogic_vector(11 downto 0);
+
+    -- Start a transfer on master m (returns at once)
+    procedure issue (m : natural; we : std_ulogic; addr : word_t; wdata : word_t;
+                     strb : std_ulogic_vector(3 downto 0)) is
+    begin
+      cmd_we(m)    <= we;
+      cmd_addr(m)  <= addr;
+      cmd_wdata(m) <= wdata;
+      cmd_strb(m)  <= strb;
+      cmd_req(m)   <= not cmd_req(m);
+      wait for 0 ns;
+    end procedure issue;
+
+    -- Wait for master m's transfer to finish
+    procedure complete (m : natural; rd : out word_t; e : out std_ulogic) is
+    begin
+      if cmd_ack(m) /= cmd_req(m) then
+        wait until cmd_ack(m) = cmd_req(m);
       end if;
-    end if;
-  end process p_slave0_write;
+      rd := rsp_rdata(m);
+      e  := rsp_err(m);
+    end procedure complete;
 
-  -- Stimulus
-  p_stimulus : process is
-    variable rdata : std_ulogic_vector(31 downto 0);
-    variable l     : line;
+    procedure xfer (m : natural; we : std_ulogic; addr : word_t; wdata : word_t;
+                    strb : std_ulogic_vector(3 downto 0); rd : out word_t; e : out std_ulogic) is
+    begin
+      issue(m, we, addr, wdata, strb);
+      complete(m, rd, e);
+    end procedure xfer;
   begin
-    m0_HSEL <= '0'; m0_HADDR <= (others=>'0'); m0_HTRANS <= AHB_IDLE;
-    m0_HWRITE <= '0'; m0_HWDATA <= (others=>'0'); m0_HWSTRB <= x"F";
-    m1_HSEL <= '0'; m1_HADDR <= (others=>'0'); m1_HTRANS <= AHB_IDLE;
-    m1_HWRITE <= '0'; m1_HWDATA <= (others=>'0'); m1_HWSTRB <= x"F";
-
-    -- Reset
     rst_n <= '0';
-    for i in 1 to 6 loop wait until rising_edge(clk); end loop;
-    rst_n <= '1';
-    wait until rising_edge(clk);
-    wait until rising_edge(clk);
-
-    -- TEST 1: Fabric write via master 0 to slave 0 at 0x10000100
-    write(l, string'("--- Test 1: Fabric write via M0 to S0 ---"));
-    writeline(output, l);
-
-    wait until rising_edge(clk);
-    m0_HSEL   <= '1';
-    m0_HADDR  <= x"10000100";
-    m0_HTRANS <= AHB_NONSEQ;
-    m0_HWRITE <= '1';
-    m0_HWSTRB <= x"F";
-
-    wait until rising_edge(clk);
-    m0_HWDATA <= x"A5A5A5A5";
-    m0_HSEL   <= '0';
-    m0_HTRANS <= AHB_IDLE;
-
-    wait until rising_edge(clk);
-    if m0_HREADY /= '1' then
-      for i in 1 to 20 loop
-        wait until rising_edge(clk);
-        exit when m0_HREADY = '1';
-      end loop;
-    end if;
-
-    wait until rising_edge(clk);
-    wait until rising_edge(clk);
-
-    -- TEST 2: Fabric readback
-    write(l, string'("--- Test 2: Fabric readback via M0 from S0 ---"));
-    writeline(output, l);
-
-    wait until rising_edge(clk);
-    m0_HSEL   <= '1';
-    m0_HADDR  <= x"10000100";
-    m0_HTRANS <= AHB_NONSEQ;
-    m0_HWRITE <= '0';
-    m0_HWSTRB <= x"F";
-
-    wait until rising_edge(clk);
-    m0_HSEL   <= '0';
-    m0_HTRANS <= AHB_IDLE;
-
-    wait until rising_edge(clk);
-    for i in 1 to 20 loop
-      exit when m0_HREADY = '1';
+    for i in 0 to 7 loop
       wait until rising_edge(clk);
     end loop;
-
-    rdata := m0_HRDATA;
-    check_eq(rdata, x"A5A5A5A5", "Fabric R/W 0x10000100", test_failed);
-
-    -- Final result
-    wait until rising_edge(clk);
+    rst_n <= '1';
     wait until rising_edge(clk);
 
-    if test_failed then
-      write(l, string'("FAIL tb_bus_matrix_ahb"));
-      writeline(output, l);
-      finish(1);
-    else
-      write(l, string'(""));
-      writeline(output, l);
-      write(l, string'("PASS tb_bus_matrix_ahb"));
-      writeline(output, l);
-      finish(0);
-    end if;
+    -- -----------------------------------------------------------------------
+    -- test_reset: every slave reachable from both masters after reset
+    -- -----------------------------------------------------------------------
+    test_start("test_reset");
+    for j in 0 to N_SLV - 1 loop
+      xfer(0, '0', slv_addr(j, x"000"), ZERO, x"F", rdata, err);
+      check_eq(rdata, ZERO, "M0 read S" & integer'image(j) & " after reset");
+      check_eq(flag(err), ZERO, "M0 S" & integer'image(j) & " response OKAY");
+      xfer(1, '0', slv_addr(j, x"004"), ZERO, x"F", rdata, err);
+      check_eq(rdata, ZERO, "M1 read S" & integer'image(j) & " after reset");
+      check_eq(flag(err), ZERO, "M1 S" & integer'image(j) & " response OKAY");
+    end loop;
+    test_done("test_reset");
 
-    wait;
-  end process p_stimulus;
+    -- -----------------------------------------------------------------------
+    -- test_route: every master reaches every slave; no aliasing
+    -- -----------------------------------------------------------------------
+    test_start("test_route");
+    for j in 0 to N_SLV - 1 loop
+      xfer(0, '1', slv_addr(j, x"010"), x"A0000010" or tag(j), x"F", rdata, err);
+      xfer(1, '1', slv_addr(j, x"020"), x"50000020" or tag(j), x"F", rdata, err);
+    end loop;
+    for j in 0 to N_SLV - 1 loop
+      xfer(1, '0', slv_addr(j, x"010"), ZERO, x"F", rdata, err);
+      check_eq(rdata, x"A0000010" or tag(j), "M0 write -> S" & integer'image(j) & " -> M1 read");
+      xfer(0, '0', slv_addr(j, x"020"), ZERO, x"F", rdata, err);
+      check_eq(rdata, x"50000020" or tag(j), "M1 write -> S" & integer'image(j) & " -> M0 read");
+    end loop;
+    for j in 0 to N_SLV - 1 loop
+      xfer(0, '1', slv_addr(j, x"FFC"), x"C0DE0000" or word(j), x"F", rdata, err);
+    end loop;
+    for j in 0 to N_SLV - 1 loop
+      xfer(1, '0', slv_addr(j, x"FFC"), ZERO, x"F", rdata, err);
+      check_eq(rdata, x"C0DE0000" or word(j), "S" & integer'image(j) & " offset 0xFFC");
+    end loop;
+    test_done("test_route");
 
-  p_watchdog : process is
-    variable l : line;
-  begin
-    wait for 500 us;
-    write(l, string'("FATAL_ERROR: simulation timeout in tb_bus_matrix_ahb"));
-    writeline(output, l);
-    finish(1);
+    -- -----------------------------------------------------------------------
+    -- test_strobe: byte lanes routed independently
+    -- -----------------------------------------------------------------------
+    test_start("test_strobe");
+    xfer(0, '1', slv_addr(1, x"100"), ZERO, x"F", rdata, err);
+    xfer(0, '1', slv_addr(1, x"100"), x"111111AA", "0001", rdata, err);
+    xfer(1, '1', slv_addr(1, x"100"), x"2222BB22", "0010", rdata, err);
+    xfer(0, '1', slv_addr(1, x"100"), x"33CC3333", "0100", rdata, err);
+    xfer(1, '1', slv_addr(1, x"100"), x"DD444444", "1000", rdata, err);
+    xfer(0, '0', slv_addr(1, x"100"), ZERO, x"F", rdata, err);
+    check_eq(rdata, x"DDCCBBAA", "one lane per write, both masters");
+    xfer(1, '1', slv_addr(1, x"100"), ZERO, "0000", rdata, err);
+    xfer(1, '0', slv_addr(1, x"100"), ZERO, x"F", rdata, err);
+    check_eq(rdata, x"DDCCBBAA", "all-zero strobe writes nothing");
+    test_done("test_strobe");
+
+    -- -----------------------------------------------------------------------
+    -- test_decode_err: unmapped addresses get an error from the matrix
+    -- -----------------------------------------------------------------------
+    test_start("test_decode_err");
+    for k in 0 to 3 loop
+      xfer(0, '1', UNMAPPED(k), x"BAD00000" or word(k), x"F", rdata, err);
+      check_eq(flag(err), x"00000001", "M0 write 0x" & to_hstring(UNMAPPED(k)) & " -> error");
+      xfer(1, '0', UNMAPPED(k), ZERO, x"F", rdata, err);
+      check_eq(flag(err), x"00000001", "M1 read  0x" & to_hstring(UNMAPPED(k)) & " -> error");
+    end loop;
+    xfer(0, '0', UNMAPPED(0), ZERO, x"F", rdata, err);
+    xfer(0, '0', UNMAPPED(3), ZERO, x"F", rdata, err);
+    check_eq(flag(err), x"00000001", "second consecutive error");
+    xfer(0, '1', slv_addr(2, x"040"), x"600D600D", x"F", rdata, err);
+    check_eq(flag(err), ZERO, "good write after errors");
+    xfer(0, '0', slv_addr(2, x"040"), ZERO, x"F", rdata, err);
+    check_eq(rdata, x"600D600D", "good read after errors");
+    check_eq(flag(err), ZERO, "good read response OKAY");
+    for j in 0 to N_SLV - 1 loop
+      xfer(1, '0', slv_addr(j, x"000"), ZERO, x"F", rdata, err);
+      check_eq(rdata, ZERO, "S" & integer'image(j) & " untouched by errors");
+    end loop;
+    test_done("test_decode_err");
+
+    -- -----------------------------------------------------------------------
+    -- test_contention: both masters at once, same slave then different slaves
+    -- -----------------------------------------------------------------------
+    test_start("test_contention");
+    for k in 0 to 7 loop
+      issue(0, '1', slv_addr(1, off(x"200", k)), x"0A000000" or word(k), x"F");
+      issue(1, '1', slv_addr(1, off(x"300", k)), x"0B000000" or word(k), x"F");
+      complete(0, rdata, err);
+      complete(1, rdata1, err1);
+    end loop;
+    for k in 0 to 7 loop
+      issue(0, '0', slv_addr(1, off(x"300", k)), ZERO, x"F");
+      issue(1, '0', slv_addr(1, off(x"200", k)), ZERO, x"F");
+      complete(0, rdata, err);
+      complete(1, rdata1, err1);
+      check_eq(rdata,  x"0B000000" or word(k), "M0 reads M1 word " & integer'image(k));
+      check_eq(rdata1, x"0A000000" or word(k), "M1 reads M0 word " & integer'image(k));
+    end loop;
+    for k in 0 to 3 loop
+      issue(0, '1', slv_addr(2, off(x"400", k)), x"0C000000" or word(k), x"F");
+      issue(1, '1', slv_addr(3, off(x"400", k)), x"0D000000" or word(k), x"F");
+      complete(0, rdata, err);
+      complete(1, rdata1, err1);
+    end loop;
+    for k in 0 to 3 loop
+      xfer(1, '0', slv_addr(2, off(x"400", k)), ZERO, x"F", rdata, err);
+      check_eq(rdata, x"0C000000" or word(k), "S2 word " & integer'image(k));
+      xfer(0, '0', slv_addr(3, off(x"400", k)), ZERO, x"F", rdata, err);
+      check_eq(rdata, x"0D000000" or word(k), "S3 word " & integer'image(k));
+    end loop;
+    test_done("test_contention");
+
+    -- -----------------------------------------------------------------------
+    -- test_arb: round robin, the master not served last on S1 wins a tie
+    -- -----------------------------------------------------------------------
+    test_start("test_arb");
+    for run in 0 to 3 loop
+      if run < 2 then
+        xfer(0, '1', slv_addr(1, x"700"), x"00000700", x"F", rdata, err);
+        first_w  := x"180";  -- M1 (0x600 >> 2)
+        second_w := x"140";  -- M0 (0x500 >> 2)
+      else
+        xfer(1, '1', slv_addr(1, x"700"), x"00000700", x"F", rdata, err);
+        first_w  := x"140";
+        second_w := x"180";
+      end if;
+      wait until rising_edge(clk);
+      log_clear <= '1';
+      wait for 1 ns;
+      log_clear <= '0';
+      if run mod 2 = 0 then
+        issue(0, '1', slv_addr(1, x"500"), x"00000500", x"F");
+        issue(1, '1', slv_addr(1, x"600"), x"00000600", x"F");
+      else
+        issue(1, '1', slv_addr(1, x"600"), x"00000600", x"F");
+        issue(0, '1', slv_addr(1, x"500"), x"00000500", x"F");
+      end if;
+      complete(0, rdata, err);
+      complete(1, rdata1, err1);
+      wait until rising_edge(clk);
+      wait for 1 ns;
+      check_eq(std_ulogic_vector(to_unsigned(s1_wr_count, 32)), x"00000002",
+               "run " & integer'image(run) & ": two writes");
+      check_eq(std_ulogic_vector(resize(unsigned(s1_wr_log0), 32)),
+               std_ulogic_vector(resize(unsigned(first_w), 32)),
+               "run " & integer'image(run) & ": winner first");
+      check_eq(std_ulogic_vector(resize(unsigned(s1_wr_log1), 32)),
+               std_ulogic_vector(resize(unsigned(second_w), 32)),
+               "run " & integer'image(run) & ": other second");
+    end loop;
+    test_done("test_arb");
+
+    sim_done <= true;
+    report "PASS tb_bus_matrix_ahb: all tests passed" severity note;
+    stop;
     wait;
-  end process p_watchdog;
+  end process p_stim;
 
 end architecture sim;

@@ -1,148 +1,493 @@
 #!/usr/bin/env python3
-"""lint_bus_matrix.py — Lint runner for bus_matrix IP.
+"""lint_bus_matrix.py — Lint runner for the bus_matrix IP block.
 
-Runs Verilator --lint-only on all SV RTL sources and GHDL -s (syntax check)
-on all VHDL RTL sources. Writes verification/lint/lint_results.log.
+Automatically detects the host environment and runs appropriate tools:
+  - On standard hosts: Verilator (SystemVerilog) and GHDL (VHDL-2008)
+  - On *.csun.edu: Synopsys SpyGlass (SystemVerilog only — see below)
+
+Results are written to:
+    ${CLAUDE_BUS_MATRIX_PATH}/verification/lint/lint_results.log
+
+Exit codes:
+    0  — all checks passed (zero un-waived warnings/errors)
+    1  — one or more warnings or errors found, or environment error
+
+Usage:
+    python3 lint_bus_matrix.py [--lang {sv,vhdl,all}]
+
+Prerequisites:
+    source IP/interface/bus_matrix/setup.sh   (sets CLAUDE_BUS_MATRIX_PATH)
+
+On *.csun.edu, Verilator and GHDL are not installed, so this script does not
+attempt to run them there. SpyGlass (spyglass_vc) lints the four SV variants
+instead. VHDL lint has no equivalent on csun.edu: this repo's VHDL RTL uses
+VHDL-2008 constructs, and the installed SpyGlass has no supported way to
+select VHDL-2008 semantics (confirmed by hands-on testing — see
+.agents/reference_spyglass_lint.md). Requesting --lang vhdl or --lang all on
+csun.edu logs VHDL as SKIPPED rather than failing or silently faking a pass.
 """
 
 import argparse
 import os
+import re
+import subprocess
 import sys
-from pathlib import Path
+from datetime import datetime
+from typing import List, Tuple
 
-# Import common base
-common_path = os.environ.get("IP_COMMON_PATH", "")
-if common_path:
-    sys.path.insert(0, os.path.join(common_path, "verification", "tools"))
-from ip_tool_base import require_env, run_command, write_results_log, get_verilator_version
+# ---------------------------------------------------------------------------
+# Host detection
+# ---------------------------------------------------------------------------
+import socket
 
 
-def lint_sv(ip_path):
-    """Run Verilator --lint-only on all SV RTL sources."""
-    rtl_dir = os.path.join(ip_path, "design", "rtl", "verilog")
-    common_srcs = [
-        os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-        os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-        os.path.join(rtl_dir, "bus_matrix_core.sv"),
-    ]
+def _hostname_fqdn() -> str:
+    """Return the host FQDN.
 
-    tops = {
-        "ahb": os.path.join(rtl_dir, "bus_matrix_ahb.sv"),
-        "axi": os.path.join(rtl_dir, "bus_matrix_axi.sv"),
-        "wb":  os.path.join(rtl_dir, "bus_matrix_wb.sv"),
-    }
+    socket.getfqdn() falls back to the short hostname when reverse DNS
+    doesn't resolve (observed on some *.csun.edu machines), so shell out to
+    `hostname -f` first — the same command setup.sh uses for host detection.
+    """
+    try:
+        out = subprocess.run(["hostname", "-f"], capture_output=True,
+                             text=True, timeout=5)
+        fqdn = out.stdout.strip()
+        if fqdn:
+            return fqdn
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return socket.getfqdn()
 
-    all_pass = True
-    details = []
 
-    for proto, top_file in tops.items():
-        top_mod = f"bus_matrix_{proto}"
-        cmd = [
-            "verilator", "--lint-only", "-Wall",
-            "--top-module", top_mod,
-            f"-I{rtl_dir}",
-        ] + common_srcs + [top_file]
+ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 
-        print(f"  [SV] verilator --lint-only {top_mod} ...")
-        rc, stdout, stderr = run_command(cmd)
-        output = (stdout + stderr).strip()
-        if rc != 0:
-            print(f"  [SV] {top_mod}: FAIL")
+# ---------------------------------------------------------------------------
+# Locate and import ip_tool_base from ${IP_COMMON_PATH}/verification/tools/
+# ---------------------------------------------------------------------------
+_IP_PATH = os.environ.get("CLAUDE_BUS_MATRIX_PATH", "")
+if _IP_PATH:
+    _COMMON_PATH = os.environ.get(
+        "IP_COMMON_PATH",
+        os.path.join(_IP_PATH, "..", "..", "common"),
+    )
+    _BASE_DIR = os.path.join(_COMMON_PATH, "verification", "tools")
+    if _BASE_DIR not in sys.path:
+        sys.path.insert(0, os.path.normpath(_BASE_DIR))
+
+try:
+    from ip_tool_base import (
+        require_env,
+        run_command,
+        write_results_log,
+        get_verilator_version,
+        get_ghdl_version,
+    )
+except ImportError:
+    # Fallback minimal implementations so the script fails gracefully when
+    # ip_tool_base is not yet available (e.g., during first bootstrap).
+    def require_env(var_name):  # type: ignore[misc]
+        value = os.environ.get(var_name, "")
+        if not value:
+            print(f"ERROR: {var_name} is not set.")
+            print("       Please run:  source IP/interface/bus_matrix/setup.sh")
+            sys.exit(1)
+        return value
+
+    def run_command(cmd, cwd=None, capture=True):  # type: ignore[misc]
+        if capture:
+            r = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+            return r.returncode, r.stdout, r.stderr
+        r = subprocess.run(cmd, cwd=cwd)
+        return r.returncode, "", ""
+
+    def write_results_log(log_path, passed, details=None):  # type: ignore[misc]
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        result_str = "PASS" if passed else "FAIL"
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines = [result_str, f"Generated: {timestamp}"]
+        if details:
+            lines.extend(details)
+        with open(log_path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+
+    def get_verilator_version(binary="verilator"):  # type: ignore[misc]
+        try:
+            r = subprocess.run([binary, "--version"], capture_output=True, text=True)
+            if r.returncode == 0:
+                return r.stdout.splitlines()[0].strip()
+        except FileNotFoundError:
+            pass
+        return "unknown"
+
+    def get_ghdl_version(binary="ghdl"):  # type: ignore[misc]
+        try:
+            r = subprocess.run([binary, "--version"], capture_output=True, text=True)
+            output = r.stdout or r.stderr
             if output:
-                print(output)
-            details.append(f"SV {top_mod}: FAIL")
-            all_pass = False
+                return output.splitlines()[0].strip()
+        except FileNotFoundError:
+            pass
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+SUPPORTED_LANGS = ["sv", "vhdl", "all"]
+
+VERILATOR_BIN = "/opt/oss-cad-suite/bin/verilator"
+GHDL_BIN      = "/opt/oss-cad-suite/bin/ghdl"
+
+# Common RTL files (always included, in dependency order)
+SV_COMMON_FILES = [
+    "design/rtl/verilog/bus_matrix_pkg.sv",
+    "design/rtl/verilog/bus_matrix_decoder.sv",
+    "design/rtl/verilog/bus_matrix_arb.sv",
+    "design/rtl/verilog/bus_matrix_core.sv",
+]
+
+PROTOS = ["apb", "ahb", "axi4l", "wb"]
+
+# (top_module_name, extra_sv_files) for each bus variant
+SV_VARIANTS: List[Tuple[str, List[str]]] = [
+    (f"bus_matrix_{p}", [f"design/rtl/verilog/bus_matrix_{p}_tgt.sv",
+                         f"design/rtl/verilog/bus_matrix_{p}_ini.sv",
+                         f"design/rtl/verilog/bus_matrix_{p}.sv"])
+    for p in PROTOS
+]
+
+# VHDL files in compilation order (packages before consumers)
+VHDL_FILES = [
+    "design/rtl/vhdl/bus_matrix_pkg.vhd",
+    "design/rtl/vhdl/bus_matrix_decoder.vhd",
+    "design/rtl/vhdl/bus_matrix_arb.vhd",
+    "design/rtl/vhdl/bus_matrix_core.vhd",
+] + [f"design/rtl/vhdl/bus_matrix_{p}{s}.vhd" for p in PROTOS for s in ("_tgt", "_ini", "")]
+
+# SpyGlass (csun.edu only) — SV top-level variants, one static .prj file each
+# under verification/lint/spyglass/. VHDL has no SpyGlass equivalent here
+# (see module docstring); GHDL is the VHDL tool and it isn't installed on
+# csun.edu, so VHDL lint is simply unavailable there.
+SPYGLASS_BIN  = "spyglass_vc"
+SPYGLASS_GOAL = "lint/lint_rtl"
+SPYGLASS_SV_TOPS = [f"bus_matrix_{p}" for p in PROTOS]
+
+
+# ---------------------------------------------------------------------------
+# SV lint via Verilator
+# ---------------------------------------------------------------------------
+
+def run_sv_lint(ip_path: str, common_path: str) -> Tuple[bool, List[str]]:
+    """Run Verilator --lint-only on all four SV top-level variants.
+
+    Returns:
+        (passed, detail_lines)
+    """
+    passed = True
+    details: List[str] = []
+    common_rtl_sv = os.path.join(common_path, "design", "rtl", "verilog")
+
+    def resolve_sv(f: str) -> str:
+        """Expand 'common:<name>' to an absolute path in common/design/rtl/verilog/."""
+        if f.startswith("common:"):
+            return os.path.join(common_rtl_sv, f[len("common:"):])
+        return os.path.join(ip_path, f)
+
+    verilator_ver = get_verilator_version(VERILATOR_BIN)
+    details.append(f"[SV] Verilator version: {verilator_ver}")
+
+    for top_module, extra_files in SV_VARIANTS:
+        src_files = [resolve_sv(f) for f in SV_COMMON_FILES + extra_files]
+        cmd = [
+            VERILATOR_BIN,
+            "--lint-only",
+            "-Wall",
+            "-Wno-DECLFILENAME",
+            f"-I{common_rtl_sv}",
+            f"--top-module", top_module,
+        ] + src_files
+
+        details.append(f"[SV] Linting {top_module} ...")
+        rc, stdout, stderr = run_command(cmd, cwd=ip_path)
+        output = (stdout + stderr).strip()
+
+        if rc != 0 or output:
+            # Verilator writes warnings/errors to stderr; non-zero exit = error.
+            # Presence of output lines starting with '%Warning' or '%Error'
+            # also indicates a problem.
+            has_issues = (rc != 0) or any(
+                line.lstrip().startswith(("%Warning", "%Error"))
+                for line in output.splitlines()
+            )
+            if has_issues:
+                passed = False
+                details.append(f"[SV] FAIL — {top_module}")
+                for line in output.splitlines():
+                    details.append(f"       {line}")
+            else:
+                # Informational output only (e.g., version banner)
+                details.append(f"[SV] PASS — {top_module}")
         else:
-            print(f"  [SV] {top_mod}: PASS")
-            details.append(f"SV {top_mod}: PASS")
+            details.append(f"[SV] PASS — {top_module}")
 
-    return all_pass, details
+    return passed, details
 
 
-def lint_vhdl(ip_path):
-    """Run GHDL -s (syntax check) on all VHDL RTL sources."""
-    rtl_dir = os.path.join(ip_path, "design", "rtl", "vhdl")
+# ---------------------------------------------------------------------------
+# VHDL lint via GHDL -a
+# ---------------------------------------------------------------------------
 
-    vhdl_files = [
-        "bus_matrix_decoder.vhd",
-        "bus_matrix_arb.vhd",
-        "bus_matrix_core.vhd",
-        "bus_matrix_ahb.vhd",
-        "bus_matrix_axi.vhd",
-        "bus_matrix_wb.vhd",
-    ]
+def run_vhdl_lint(ip_path: str) -> Tuple[bool, List[str]]:
+    """Run GHDL -a --std=08 on all VHDL RTL files in dependency order.
 
-    all_pass = True
-    details = []
+    A temporary workdir is used so that GHDL's library database does not
+    pollute the source tree.
 
-    for fn in vhdl_files:
-        fp = os.path.join(rtl_dir, fn)
-        if not os.path.isfile(fp):
-            print(f"  [VHDL] {fn}: NOT FOUND")
-            details.append(f"VHDL {fn}: NOT FOUND")
-            all_pass = False
+    Returns:
+        (passed, detail_lines)
+    """
+    passed = True
+    details: List[str] = []
+
+    ghdl_ver = get_ghdl_version(GHDL_BIN)
+    details.append(f"[VHDL] GHDL version: {ghdl_ver}")
+
+    # Use a scratch workdir inside verification/work/ so artefacts are gitignored
+    workdir = os.path.join(ip_path, "verification", "work", "ghdl_lint")
+    os.makedirs(workdir, exist_ok=True)
+
+    common_rtl_vhd = os.path.join(
+        os.environ.get("IP_COMMON_PATH", os.path.join(ip_path, "..", "..", "common")),
+        "design", "rtl", "vhdl"
+    )
+
+    def resolve_vhd(f: str) -> str:
+        if f.startswith("common:"):
+            return os.path.join(common_rtl_vhd, f[len("common:"):])
+        return os.path.join(ip_path, f)
+
+    for vhd_file in VHDL_FILES:
+        abs_path = resolve_vhd(vhd_file)
+        cmd = [GHDL_BIN, "-a", "--std=08", f"--workdir={workdir}", abs_path]
+
+        details.append(f"[VHDL] Analysing {vhd_file} ...")
+        rc, stdout, stderr = run_command(cmd, cwd=ip_path)
+        output = (stdout + stderr).strip()
+
+        if rc != 0:
+            passed = False
+            details.append(f"[VHDL] FAIL — {vhd_file}")
+            for line in output.splitlines():
+                details.append(f"       {line}")
+        else:
+            if output:
+                # Warnings: GHDL emits them to stderr but exits 0
+                has_warnings = any(
+                    "warning" in line.lower() or "error" in line.lower()
+                    for line in output.splitlines()
+                )
+                if has_warnings:
+                    passed = False
+                    details.append(f"[VHDL] FAIL (warnings) — {vhd_file}")
+                    for line in output.splitlines():
+                        details.append(f"       {line}")
+                else:
+                    details.append(f"[VHDL] PASS — {vhd_file}")
+            else:
+                details.append(f"[VHDL] PASS — {vhd_file}")
+
+    return passed, details
+
+
+# ---------------------------------------------------------------------------
+# SV lint via SpyGlass (csun.edu only)
+# ---------------------------------------------------------------------------
+
+# Rows in moresimple.rpt that are translator/tool-environment noise, not RTL
+# findings — present on every run regardless of design content, so they're
+# excluded from pass/fail the same way run_sv_lint() ignores Verilator's
+# informational version-banner output.
+#   - COM_OPT009 / COM_OPT010: we intentionally don't set search_path or
+#     link_library (RTL-only lint, no gate libraries, full paths given
+#     directly in read_file); the tool warns about this every run.
+#   - PrjToTclSummary "Skipped option": the classic-SpyGlass-compat project
+#     translator always reports skipping 'template_info', 'overloadrules',
+#     and 'template' — none of which this project ever sets.
+_SPYGLASS_BENIGN_RULES = {"COM_OPT009", "COM_OPT010"}
+
+_SPYGLASS_ROW_RE = re.compile(
+    r'^\[\d+\]\s+(\S+)\s+\S+\s+(fatal|error|warning|info)\s+\S+\s+\S+\s+\S+\s+(.*)$',
+    re.IGNORECASE,
+)
+
+
+def _spyglass_moresimple_path(spyglass_dir: str, top: str) -> str:
+    return os.path.join(
+        spyglass_dir, "vcst_rtdb", "spyglass", top, top, "lint", "lint_rtl",
+        "spyglass_reports", "moresimple.rpt",
+    )
+
+
+def _parse_spyglass_moresimple(moresimple_path: str) -> Tuple[List[str], List[str]]:
+    """Split moresimple.rpt rows into (real_findings, benign_noise) as formatted lines."""
+    real: List[str] = []
+    benign: List[str] = []
+    with open(moresimple_path) as fh:
+        for line in fh:
+            m = _SPYGLASS_ROW_RE.match(line.rstrip("\n"))
+            if not m:
+                continue
+            rule, severity, message = m.group(1), m.group(2).lower(), m.group(3).strip()
+            formatted = f"{severity:<8} {rule:<24} {message}"
+            if rule in _SPYGLASS_BENIGN_RULES:
+                benign.append(formatted)
+            elif rule == "PrjToTclSummary" and "Skipped option" in message:
+                benign.append(formatted)
+            else:
+                real.append(formatted)
+    return real, benign
+
+
+def run_spyglass_lint(ip_path: str) -> Tuple[bool, List[str]]:
+    """Run SpyGlass lint/lint_rtl on all four SV top-level variants (csun.edu only).
+
+    Each variant has a static .prj file under verification/lint/spyglass/
+    with relative read_file paths, so spyglass_vc must be invoked with that
+    directory as cwd.
+
+    Returns:
+        (passed, detail_lines)
+    """
+    passed = True
+    details: List[str] = []
+    spyglass_dir = os.path.join(ip_path, "verification", "lint", "spyglass")
+
+    details.append(f"[SV] SpyGlass binary: {SPYGLASS_BIN}")
+    details.append(f"[SV] SpyGlass goal: {SPYGLASS_GOAL}")
+
+    for top in SPYGLASS_SV_TOPS:
+        prj = f"{top}.prj"
+        cmd = [SPYGLASS_BIN, "-project", prj, "-goal", SPYGLASS_GOAL, "-batch", "-app", "lint"]
+
+        details.append(f"[SV] Linting {top} (SpyGlass) ...")
+        rc, stdout, stderr = run_command(cmd, cwd=spyglass_dir)
+        output = (stdout + stderr).strip()
+
+        moresimple = _spyglass_moresimple_path(spyglass_dir, top)
+        if not os.path.isfile(moresimple):
+            passed = False
+            details.append(f"[SV] FAIL — {top}: no SpyGlass report produced (rc={rc})")
+            for line in output.splitlines()[-30:]:
+                details.append(f"       {line}")
             continue
 
-        cmd = ["ghdl", "-s", "--std=08", "-frelaxed", fp]
-        print(f"  [VHDL] ghdl -s {fn} ...")
-        rc, stdout, stderr = run_command(cmd)
-        output = (stdout + stderr).strip()
-        if rc != 0:
-            print(f"  [VHDL] {fn}: FAIL")
-            if output:
-                print(output)
-            details.append(f"VHDL {fn}: FAIL")
-            all_pass = False
+        real, benign = _parse_spyglass_moresimple(moresimple)
+        details.append(f"[SV] {top}: {len(real)} real finding(s), {len(benign)} benign (filtered)")
+
+        if real:
+            passed = False
+            details.append(f"[SV] FAIL — {top}")
+            for line in real:
+                details.append(f"       {line}")
+            details.append(f"       Full report: {moresimple}")
         else:
-            print(f"  [VHDL] {fn}: PASS")
-            details.append(f"VHDL {fn}: PASS")
+            details.append(f"[SV] PASS — {top}")
 
-    return all_pass, details
+    return passed, details
 
 
-def main():
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    # Guard: require CLAUDE_BUS_MATRIX_PATH
     ip_path = require_env("CLAUDE_BUS_MATRIX_PATH")
-    ip_path = str(Path(ip_path).resolve())
+    common_path = os.environ.get(
+        "IP_COMMON_PATH",
+        os.path.normpath(os.path.join(ip_path, "..", "..", "common")),
+    )
 
-    parser = argparse.ArgumentParser(description="Lint bus_matrix RTL sources")
+    parser = argparse.ArgumentParser(
+        description="Run lint checks on the bus_matrix IP block RTL sources.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
     parser.add_argument(
         "--lang",
-        choices=["sv", "vhdl", "all"],
+        choices=SUPPORTED_LANGS,
         default="all",
-        help="HDL language to lint (default: all)",
+        help="HDL language(s) to lint (default: %(default)s)",
     )
     args = parser.parse_args()
 
-    results_log = os.path.join(ip_path, "verification", "lint", "lint_results.log")
-    overall_pass = True
-    all_details = []
+    lint_dir = os.path.join(ip_path, "verification", "lint")
+    os.makedirs(lint_dir, exist_ok=True)
+    results_log = os.path.join(lint_dir, "lint_results.log")
 
-    ver = get_verilator_version()
-    all_details.append(f"Verilator: {ver}")
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"lint_bus_matrix.py — bus_matrix IP lint runner")
+    print(f"  Host              = {_hostname_fqdn()}{' (csun.edu)' if ON_CSUN else ' (standard host)'}")
+    print(f"  CLAUDE_BUS_MATRIX_PATH = {ip_path}")
+    print(f"  IP_COMMON_PATH    = {common_path}")
+    print(f"  --lang            = {args.lang}")
+    print(f"  timestamp         = {timestamp}")
+    print()
+
+    all_passed = True
+    all_details: List[str] = [f"lint_bus_matrix.py run: {timestamp}", f"--lang={args.lang}",
+                               f"host={_hostname_fqdn()}", f"on_csun={ON_CSUN}"]
 
     if args.lang in ("sv", "all"):
-        print("\n=== SV Lint (Verilator) ===")
-        passed, details = lint_sv(ip_path)
-        overall_pass = overall_pass and passed
-        all_details.extend(details)
+        if ON_CSUN:
+            sv_passed, sv_details = run_spyglass_lint(ip_path)
+        else:
+            sv_passed, sv_details = run_sv_lint(ip_path, common_path)
+        all_details.extend(sv_details)
+        if not sv_passed:
+            all_passed = False
+            print("[SV]  FAIL — see details below")
+        else:
+            print("[SV]  PASS")
+        for line in sv_details:
+            print(f"  {line}")
+        print()
 
     if args.lang in ("vhdl", "all"):
-        print("\n=== VHDL Lint (GHDL syntax check) ===")
-        passed, details = lint_vhdl(ip_path)
-        overall_pass = overall_pass and passed
-        all_details.extend(details)
+        if ON_CSUN:
+            skip_details = [
+                "[VHDL] SKIPPED — no VHDL lint available on csun.edu.",
+                "[VHDL] GHDL is not installed on csun.edu, and the installed",
+                "[VHDL] SpyGlass has no supported way to select VHDL-2008",
+                "[VHDL] semantics (this repo's VHDL RTL uses VHDL-2008",
+                "[VHDL] constructs). See .agents/reference_spyglass_lint.md.",
+            ]
+            all_details.extend(skip_details)
+            print("[VHDL] SKIPPED (not available on csun.edu)")
+            for line in skip_details:
+                print(f"  {line}")
+            print()
+        else:
+            vhdl_passed, vhdl_details = run_vhdl_lint(ip_path)
+            all_details.extend(vhdl_details)
+            if not vhdl_passed:
+                all_passed = False
+                print("[VHDL] FAIL — see details below")
+            else:
+                print("[VHDL] PASS")
+            for line in vhdl_details:
+                print(f"  {line}")
+            print()
 
-    write_results_log(results_log, overall_pass, all_details)
+    # Write results log
+    write_results_log(results_log, all_passed, all_details)
+    result_str = "PASS" if all_passed else "FAIL"
+    print(f"Result: {result_str}")
+    print(f"Results log: {results_log}")
 
-    print("\n" + "=" * 50)
-    if overall_pass:
-        print("LINT PASSED")
-    else:
-        print("LINT FAILED")
-    print("=" * 50)
-    print(f"Results: {results_log}")
-
-    sys.exit(0 if overall_pass else 1)
+    sys.exit(0 if all_passed else 1)
 
 
 if __name__ == "__main__":

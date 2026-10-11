@@ -1,0 +1,32 @@
+==============================================================================
+Design Compiler Synthesis Report — bus_matrix IP
+Target PDK    : SAED32 (32nm)
+Configuration : 2 masters, 4 slaves, round robin (bus_matrix_pkg defaults)
+Constraints   : 100 MHz clk; 3.0 ns input and output delay on every port
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-10-10
+==============================================================================
+
+STATUS: PASS — synthesis completed.
+
+Variant                    Cells   FFs         Area  WNS (ns)  Timing
+------------------------------------------------------------------------------
+bus_matrix_apb               704    18  1680.400148     +3.68  MET
+bus_matrix_ahb               875    88  2366.080676     +3.58  MET
+bus_matrix_axi4l            1781   316  4957.841214     +6.19  MET
+bus_matrix_wb                674    14  1605.681810     +3.70  MET
+bus_matrix_apb_vhdl          714    18  1693.107348     +3.68  MET
+bus_matrix_ahb_vhdl          954    88  2421.484063     +3.58  MET
+bus_matrix_axi4l_vhdl       1792   316  4973.343999     +6.19  MET
+bus_matrix_wb_vhdl           675    14  1610.510547     +3.69  MET
+
+Area is in the library's units (um^2 for SAED32/14 and SKY130).
+WNS is the worst slack among the 10 paths in each <variant>_timing.rpt.
+
+Per-variant area and timing reports:
+  synthesis/designcompiler/reports/saed32/
+Netlists, SDF and SDC:
+  synthesis/designcompiler/netlists/saed32/
+Full log:
+  synthesis/designcompiler/dc_saed32_run.log
+==============================================================================

@@ -34,6 +34,21 @@ Hierarchical references into VHDL are not supported (`hdl_xmr` is also
 unsupported in VHDL), so keep every property on the bound block's ports.
 Report names for VHDL instances come back upper-cased
 (`TIMER_APB.U_FV.u_bus...`), so waiver globs are matched case-insensitively.
+When the bound checker contains generate blocks, the VHDL hierarchy also gets
+an extra level (`BUS_MATRIX_APB.U_FV.u_fv.g_slv[0]...` vs SV
+`bus_matrix_apb.u_fv.g_slv[0]...`): write waiver globs as `<top>.u_fv*.<rest>`
+so one line matches both languages.
+
+**VHDL generics are not visible to an SV bind.** A checker bound into a VHDL
+entity sees its generics as 0 (e.g. `NUM_MASTERS`), so pass the configuration
+as literals: generate a `<ip>_fv_cfg.svh` from the RTL package before each
+run (bus_matrix: `formal_bus_matrix.py` writes `bus_matrix_fv_cfg.svh` from
+`bus_matrix_pkg.sv`).
+
+**`claude_vcf.VcfJob` clock/reset overrides.** Jobs default to the timer's
+per-protocol clock/reset names (`PCLK`/`PRESETn`, ...). An IP with one
+`clk`/`rst_n` on every variant passes them per job (see
+`formal_bus_matrix.py`).
 
 **Debugging:** `fvtrace -property <name> -file x.fsdb` writes a
 counterexample, and `get_props -usage assert -status falsified` lists the

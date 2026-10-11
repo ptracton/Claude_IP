@@ -24,15 +24,16 @@ class bus_matrix_axi_driver extends uvm_driver #(bus_matrix_axi_seq_item);
 
   task run_phase(uvm_phase phase);
     bus_matrix_axi_seq_item item;
+    // Idle all outputs from time 0: AXI requires VALID low during reset, and
+    // the DUT samples the channels on the first edge after reset release.
+    vif.AWVALID = 1'b0; vif.AWADDR = '0;
+    vif.WVALID  = 1'b0; vif.WDATA  = '0; vif.WSTRB = '0;
+    vif.BREADY  = 1'b0;
+    vif.ARVALID = 1'b0; vif.ARADDR = '0;
+    vif.RREADY  = 1'b0;
     // Wait for reset de-assertion
     @(posedge vif.rst_n);
     @(posedge vif.clk);
-    // Idle all outputs via clocking block
-    vif.driver_cb.AWVALID <= 1'b0; vif.driver_cb.AWADDR <= '0;
-    vif.driver_cb.WVALID  <= 1'b0; vif.driver_cb.WDATA  <= '0; vif.driver_cb.WSTRB <= '0;
-    vif.driver_cb.BREADY  <= 1'b0;
-    vif.driver_cb.ARVALID <= 1'b0; vif.driver_cb.ARADDR <= '0;
-    vif.driver_cb.RREADY  <= 1'b0;
 
     forever begin
       seq_item_port.get_next_item(item);

@@ -1,6 +1,6 @@
-# synth_bus_matrix_wb.tcl — Quartus Prime Analysis & Synthesis for bus_matrix_wb.
+# synth_bus_matrix_wb.tcl — Quartus Prime Analysis & Synthesis for bus_matrix_wb (Wishbone B4).
 #
-# Target: Cyclone V SE (5CSEMA4U23C6)
+# Target: Cyclone V SE (5CSEMA4U23C6). Default configuration (bus_matrix_pkg).
 #
 # Usage:
 #   cd IP/interface/bus_matrix
@@ -24,11 +24,14 @@ if {[project_exists $WORK_DIR/$TOP]} {
     project_new -overwrite -part $DEVICE $WORK_DIR/$TOP
 }
 
-# Source files
+# Source files (package first)
 foreach sv_file [list \
+    $DESIGN_DIR/bus_matrix_pkg.sv \
     $DESIGN_DIR/bus_matrix_decoder.sv \
     $DESIGN_DIR/bus_matrix_arb.sv \
     $DESIGN_DIR/bus_matrix_core.sv \
+    $DESIGN_DIR/bus_matrix_wb_tgt.sv \
+    $DESIGN_DIR/bus_matrix_wb_ini.sv \
     $DESIGN_DIR/bus_matrix_wb.sv \
 ] {
     set_global_assignment -name SYSTEMVERILOG_FILE $sv_file
@@ -43,7 +46,7 @@ set_global_assignment -name DEVICE $DEVICE
 set sdc_file "$WORK_DIR/${TOP}.sdc"
 if {![file exists $sdc_file]} {
     set fh [open $sdc_file w]
-    puts $fh "create_clock -period 10.000 -name PCLK \[get_ports clk\]"
+    puts $fh "create_clock -period 10.000 -name clk \[get_ports clk\]"
     close $fh
 }
 set_global_assignment -name SDC_FILE $sdc_file

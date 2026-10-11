@@ -116,6 +116,13 @@ Each SV testbench:
   `${IP_COMMON_PATH}/verification/tasks/`.
 - Calls the shared test tasks from `verification/tests/`.
 - Calls `$finish(1)` on any assertion failure.
+- **Starts with `` `timescale 1ns / 1ps ``** — every SV testbench-side file (TB
+  top, BFM wrappers, memory models), not just the top. `-timescale=` on the
+  command line only covers files compiled *before* the first `` `timescale ``
+  directive; in the gate-level build the TB follows the standard-cell models,
+  so a TB file without its own directive inherits a cell model's (SAED32 has
+  `1ps/1ps`) and the TB clock runs 1000x too fast (bus_matrix, 2026-10-10:
+  every SAED32 post-syn run "timed out" at 10 ns).
 
 ### 2. Write VHDL testbenches — one per top-level
 
@@ -224,6 +231,18 @@ For any protocol not yet in common, create in `verification/tasks/`:
 
 Each task library provides: `write_reg`, `read_reg`, `assert_eq`, `apply_reset`,
 `burst_write`, `burst_read`.
+
+The common BFMs are handshake-correct (they wait for READY/ACK, honour wait
+states and never drop VALID before the handshake) and are configured by
+defines set before the `` `include ``:
+- `` `CLAUDE_BFM_ADDR_W `` — address width driven (default 12, a register
+  file); an interconnect such as bus_matrix sets 32.
+- `` `CLAUDE_BFM_TIMEOUT `` — cycles to wait for a response before
+  `$finish(1)` (default 1000).
+- `bfm_err` — set by every transfer to the error response it ended with
+  (PSLVERR, HRESP, BRESP/RRESP[1], ERR), so tests can check error responses.
+Wrap the include in a small `IP_NAME_<proto>_bfm` module when a TB needs more
+than one master.
 
 ### 4. Write directed test files
 

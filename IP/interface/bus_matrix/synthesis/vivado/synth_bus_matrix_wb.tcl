@@ -1,6 +1,7 @@
-# synth_bus_matrix_wb.tcl — Vivado OOC synthesis for bus_matrix_wb.
+# synth_bus_matrix_wb.tcl — Vivado OOC synthesis for bus_matrix_wb (Wishbone B4).
 #
-# Target: Zynq-7010 (xc7z010clg400-1)
+# Target: Zynq-7010 (xc7z010clg400-1), 100 MHz. Default configuration
+# (bus_matrix_pkg).
 #
 # Usage:
 #   cd IP/interface/bus_matrix
@@ -18,16 +19,23 @@ file mkdir $OUT_DIR
 create_project -in_memory -part $PART
 set_property target_language Verilog [current_project]
 
-# Read SV RTL sources
-read_verilog -sv $DESIGN_DIR/bus_matrix_decoder.sv
-read_verilog -sv $DESIGN_DIR/bus_matrix_arb.sv
-read_verilog -sv $DESIGN_DIR/bus_matrix_core.sv
-read_verilog -sv $DESIGN_DIR/bus_matrix_wb.sv
+# Read SV RTL sources (package first)
+foreach f [list \
+    $DESIGN_DIR/bus_matrix_pkg.sv \
+    $DESIGN_DIR/bus_matrix_decoder.sv \
+    $DESIGN_DIR/bus_matrix_arb.sv \
+    $DESIGN_DIR/bus_matrix_core.sv \
+    $DESIGN_DIR/bus_matrix_wb_tgt.sv \
+    $DESIGN_DIR/bus_matrix_wb_ini.sv \
+    $DESIGN_DIR/bus_matrix_wb.sv \
+] {
+    read_verilog -sv $f
+}
 
 # Write OOC clock constraint to a temp XDC file
 set xdc_file "$OUT_DIR/${TOP}_ooc.xdc"
 set fh [open $xdc_file w]
-puts $fh "create_clock -period 10.000 -name CLK \[get_ports clk\]"
+puts $fh "create_clock -period 10.000 -name clk \[get_ports clk\]"
 close $fh
 read_xdc $xdc_file
 

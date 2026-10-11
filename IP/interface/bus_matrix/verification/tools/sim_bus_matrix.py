@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
-"""sim_bus_matrix.py — Simulation runner for bus_matrix IP.
+"""sim_bus_matrix.py — Simulation runner for the bus_matrix IP block.
 
-Supports Icarus Verilog (SV), GHDL (VHDL), Vivado xsim (SV), ModelSim,
+Supports Icarus Verilog (SV), GHDL (VHDL), ModelSim/Questa, Vivado xsim,
 Synopsys VCS MX (SV+VHDL), and Cadence Xcelium (SV+VHDL).
 
-On *.csun.edu only VCS and Xcelium are available; Icarus, GHDL, ModelSim,
-and xsim are rejected with a clear error on that host.
+On *.csun.edu only VCS and Xcelium are available; Icarus, GHDL,
+ModelSim, and xsim are rejected with a clear error on that host.
 
-Writes verification/work/<sim>/<proto>_<lang>/results.log with PASS or FAIL.
+Results are written to:
+    ${CLAUDE_BUS_MATRIX_PATH}/verification/work/<sim>/<proto>_<lang>/results.log
+
+Usage examples:
+    python3 sim_bus_matrix.py --sim icarus   --proto apb --lang sv
+    python3 sim_bus_matrix.py --sim ghdl     --proto all --lang vhdl
+    python3 sim_bus_matrix.py --sim vcs      --proto all --lang all
+    python3 sim_bus_matrix.py --sim xcelium  --proto all --lang all
+    python3 sim_bus_matrix.py --proto all --lang all   (runs icarus+ghdl on standard hosts;
+                                                   vcs+xcelium on csun.edu)
+
+csun.edu only — gate-level simulation of the Design Compiler netlists
+(SAED90/32/14, SKY130) and PrimePower power analysis on top of it:
+    python3 sim_bus_matrix.py --sim vcs --postsyn --pdk all --proto all
+    python3 sim_bus_matrix.py --power --pdk sky130 --proto apb   (implies --postsyn)
 """
 
 import argparse
@@ -15,8 +29,6 @@ import os
 import socket
 import subprocess
 import sys
-import time
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Host detection
@@ -44,512 +56,1403 @@ ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
 # Simulators that are not available on csun.edu
 _CSUN_BLOCKED = {"icarus", "ghdl", "modelsim", "xsim"}
 
+# ---------------------------------------------------------------------------
+# Environment guard
+# ---------------------------------------------------------------------------
+def get_ip_path() -> str:
+    """Return the bus_matrix IP root directory.
 
-def run_cmd(cmd, cwd=None, logfile=None, timeout=None):
-    """Run a shell command, tee output to logfile, return (returncode, stdout+stderr)."""
-    print(f"  CMD: {' '.join(cmd)}")
+    Prefers CLAUDE_BUS_MATRIX_PATH if set.  Falls back to computing the path from
+    the location of this script (verification/tools/sim_bus_matrix.py → ../../).
+    """
+    path = os.environ.get("CLAUDE_BUS_MATRIX_PATH")
+    if path:
+        return path
+    # Auto-detect: this file lives at <bus_matrix_root>/verification/tools/sim_bus_matrix.py
+    detected = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    )
+    print(f"INFO: CLAUDE_BUS_MATRIX_PATH not set — using auto-detected path: {detected}")
+    print("      Run 'source setup.sh' to suppress this message.")
+    return detected
+
+
+# ---------------------------------------------------------------------------
+# Post-synthesis PDK configs (Design Compiler netlists + SAED/SKY130 cell libraries)
+# ---------------------------------------------------------------------------
+_SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
+_SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
+_SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
+
+# sky130 PDK tooling is shared across IPs in IP/common (see
+# synthesis/run_primetime_sta.py, which imports it the same way).
+_IP_COMMON_PATH = os.environ.get("IP_COMMON_PATH") or os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "..", "..", "..", "..", "common")
+)
+sys.path.insert(0, os.path.join(_IP_COMMON_PATH, "synthesis", "designcompiler"))
+import build_sky130_libs  # noqa: E402
+_SKY130_VERILOG = f"{build_sky130_libs.SKY130_PDK}/libs.ref/sky130_fd_sc_hd/verilog"
+
+POSTSYN_PDK_CONFIGS = {
+    "saed90": {
+        "label":     "SAED90 (90 nm)",
+        "cell_libs": [
+            f"{_SAED90_PDK}/Digital_Standard_cell_Library/verilog/saed90nm.v",
+        ],
+        "db_libs": [
+            f"{_SAED90_PDK}/Digital_Standard_cell_Library/synopsys/models/saed90nm_typ.db",
+        ],
+    },
+    "saed32": {
+        "label":     "SAED32 (32 nm)",
+        "cell_libs": [
+            f"{_SAED32_EDK}/lib/stdcell_rvt/verilog/saed32nm.v",
+        ],
+        "db_libs": [
+            f"{_SAED32_EDK}/lib/stdcell_rvt/db_nldm/saed32rvt_tt1p05v25c.db",
+        ],
+    },
+    "saed14": {
+        "label":     "SAED14 (14 nm)",
+        # Each subtree's main .v is a timing-check wrapper whose cells
+        # instantiate a "_func"-suffixed primitive (e.g. SAEDRVT14_EO2_2
+        # wraps SAEDRVT14_EO2_2_func); the _func UDP bodies live in a
+        # separate companion *_udp.v file, not the main one. Omitting the
+        # UDP files fails post-syn compile with "Unresolved modules" for
+        # literally every synthesized cell, since even the simplest gates
+        # (AND/OR/FF) hit this split — SAED90/32 ship one self-contained
+        # model per cell instead, so they don't need a _udp.v counterpart.
+        "cell_libs": [
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/base/saed14rvt_base.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/base/saed14rvt_base_udp.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/cg/saed14rvt_cg_udp.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/dlvl/saed14rvt_dlvl_udp.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso.v",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/iso/saed14rvt_iso_udp.v",
+        ],
+        "db_libs": [
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/base/saed14rvt_base_tt0p8v25c.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/cg/saed14rvt_cg_tt0p8v25c.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/dlvl/saed14rvt_dlvl_tt0p8v25c_i0p8v.db",
+            f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm/iso/saed14rvt_iso_tt0p8v25c.db",
+        ],
+    },
+    "sky130": {
+        "label":     "SKY130 (130 nm)",
+        # The cell file selects its variant by define: no USE_POWER_PINS (DC
+        # netlists have no VPWR/VGND pins) and no FUNCTIONAL (keep the
+        # specify-block timing models so the SDF annotates). VCS rejects the
+        # PDK's Verilog as shipped in two ways, worked around without
+        # modifying the PDK:
+        #  - primitives.v declares its UDPs with non-ANSI port lists under
+        #    `default_nettype none, which VCS treats as undeclared
+        #    identifiers. A copy with `default_nettype wire is compiled.
+        #  - sky130_fd_sc_hd.v contains a cell (lpflow_bleeder_1) whose
+        #    timing model references an undeclared VPWR. Passing the file
+        #    with -v (library) only elaborates the cells the netlist uses.
+        #    UDPs are not resolved from -v files, hence primitives.v above.
+        "cell_libs": [],
+        "cell_libs_nettype_wire": [f"{_SKY130_VERILOG}/primitives.v"],
+        "cell_libs_v": [f"{_SKY130_VERILOG}/sky130_fd_sc_hd.v"],
+        # Power uses the typical corner, like the SAED PDKs. sky130 ships no
+        # .db, so this is the shared lc_shell-compiled cache (built on demand
+        # by build_sky130_libs.ensure_sky130_dbs()).
+        "db_libs": [
+            str(build_sky130_libs.CACHE_DIR / "sky130_fd_sc_hd__tt_025C_1v80.db"),
+        ],
+    },
+}
+
+SUPPORTED_PDKS = list(POSTSYN_PDK_CONFIGS.keys())
+
+# PDKs whose gate-level simulation is expected to fail because of an
+# accepted, documented timing violation (see synthesis/known_issues.md).
+# The post-syn flow compiles with +notimingcheck, so a real violation shows
+# up as wrong functional results rather than a reported check.
+POSTSYN_KNOWN_FAILURES: set = set()
+
+# ---------------------------------------------------------------------------
+# Tool paths
+# ---------------------------------------------------------------------------
+OSS_CAD = "/opt/oss-cad-suite/bin"
+IVERILOG = os.path.join(OSS_CAD, "iverilog")
+VVP      = os.path.join(OSS_CAD, "vvp")
+GHDL     = os.path.join(OSS_CAD, "ghdl")
+
+# ModelSim/Questa — searched in PATH and common install locations
+def _find_tool(name: str) -> str:
+    """Return the first hit for *name* in PATH or well-known ModelSim installs."""
+    import shutil
+    hit = shutil.which(name)
+    if hit:
+        return hit
+    for prefix in ["/opt/modelsim/bin", "/opt/questa/bin",
+                   "/opt/intelFPGA/modelsim_ase/bin",
+                   "/opt/intelFPGA_lite/modelsim_ase/bin",
+                   "/tools/mentor/modelsim/bin"]:
+        candidate = os.path.join(prefix, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return name   # fall back to bare name; FileNotFoundError on exec
+
+VLIB = _find_tool("vlib")
+VCOM = _find_tool("vcom")
+VLOG = _find_tool("vlog")
+VSIM = _find_tool("vsim")
+
+# ---------------------------------------------------------------------------
+# Vivado xsim tool paths (for directed tests — no UVM)
+# ---------------------------------------------------------------------------
+
+def _find_vivado_bin() -> str:
+    """Return the Vivado bin directory or '' if not found."""
+    import shutil
+    if shutil.which("xvlog"):
+        return os.path.dirname(shutil.which("xvlog"))
+    for root in ["/opt/Xilinx/Vivado", "/tools/Xilinx/Vivado",
+                 "/opt/xilinx/Vivado"]:
+        if not os.path.isdir(root):
+            continue
+        versions = sorted(
+            [v for v in os.listdir(root)
+             if os.path.isdir(os.path.join(root, v))],
+            reverse=True,
+        )
+        for v in versions:
+            candidate = os.path.join(root, v, "bin")
+            if os.path.isfile(os.path.join(candidate, "xvlog")):
+                return candidate
+    return ""
+
+
+VIVADO_BIN = _find_vivado_bin()
+XVLOG = os.path.join(VIVADO_BIN, "xvlog") if VIVADO_BIN else "xvlog"
+XVHDL = os.path.join(VIVADO_BIN, "xvhdl") if VIVADO_BIN else "xvhdl"
+XELAB = os.path.join(VIVADO_BIN, "xelab") if VIVADO_BIN else "xelab"
+XSIM  = os.path.join(VIVADO_BIN, "xsim")  if VIVADO_BIN else "xsim"
+
+SUPPORTED_PROTOS = ["ahb", "apb", "axi4l", "wb"]
+SUPPORTED_LANGS  = ["sv", "vhdl"]
+
+
+# ---------------------------------------------------------------------------
+# File lists
+# ---------------------------------------------------------------------------
+
+def _common_path(ip_path: str) -> str:
+    return os.environ.get(
+        "IP_COMMON_PATH",
+        os.path.join(ip_path, "..", "..", "common")
+    )
+
+
+def sv_tb_files(proto: str, ip_path: str) -> list:
+    """Testbench-side SV files: the shared bus bridge used as the slave model,
+    the master BFM wrapper, the slave memory and the testbench top."""
+    common_rtl = os.path.join(_common_path(ip_path), "design", "rtl", "verilog")
+    tb_dir = os.path.join(ip_path, "verification", "testbench")
+    return [
+        os.path.join(common_rtl, f"claude_{proto}_if.sv"),
+        os.path.join(tb_dir, f"bus_matrix_{proto}_bfm.sv"),
+        os.path.join(tb_dir, "bus_matrix_tb_mem.sv"),
+        os.path.join(tb_dir, f"tb_bus_matrix_{proto}.sv"),
+    ]
+
+
+def sv_files(proto: str, ip_path: str) -> list:
+    """Return the ordered list of SV source files for the given protocol."""
+    rtl = os.path.join(ip_path, "design", "rtl", "verilog")
+    files = [os.path.join(rtl, f) for f in [
+        "bus_matrix_pkg.sv",
+        "bus_matrix_decoder.sv",
+        "bus_matrix_arb.sv",
+        "bus_matrix_core.sv",
+        f"bus_matrix_{proto}_tgt.sv",
+        f"bus_matrix_{proto}_ini.sv",
+        f"bus_matrix_{proto}.sv",
+    ]]
+    return files + sv_tb_files(proto, ip_path)
+
+
+def vhdl_files(proto: str, ip_path: str) -> list:
+    """Return the ordered list of VHDL source files for the given protocol."""
+    rtl = os.path.join(ip_path, "design", "rtl", "vhdl")
+    tb_dir = os.path.join(ip_path, "verification", "testbench")
+    common = _common_path(ip_path)
+    files = [os.path.join(rtl, f) for f in [
+        "bus_matrix_pkg.vhd",
+        "bus_matrix_decoder.vhd",
+        "bus_matrix_arb.vhd",
+        "bus_matrix_core.vhd",
+        f"bus_matrix_{proto}_tgt.vhd",
+        f"bus_matrix_{proto}_ini.vhd",
+        f"bus_matrix_{proto}.vhd",
+    ]]
+    files += [
+        os.path.join(common, "design", "rtl", "vhdl", f"claude_{proto}_if.vhd"),
+        # Test helper package (common) must be analyzed before the testbench
+        os.path.join(common, "verification", "tests", "ip_test_pkg.vhd"),
+        os.path.join(tb_dir, "bus_matrix_tb_mem.vhd"),
+        os.path.join(tb_dir, f"bus_matrix_tb_{proto}_master.vhd"),
+        os.path.join(tb_dir, f"tb_bus_matrix_{proto}.vhd"),
+    ]
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Include directories for Icarus
+# ---------------------------------------------------------------------------
+
+def sv_include_dirs(ip_path: str) -> list:
+    """Return include-directory flags for iverilog."""
+    common_path = os.environ.get(
+        "IP_COMMON_PATH",
+        os.path.join(ip_path, "..", "..", "common")
+    )
+    return [
+        os.path.join(common_path, "verification", "tasks"),
+        os.path.join(common_path, "verification", "tests"),
+        os.path.join(ip_path, "verification", "tests"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Runners
+# ---------------------------------------------------------------------------
+
+def run_icarus(proto: str, ip_path: str, work_dir: str) -> bool:
+    """Compile and run SV testbench with Icarus Verilog. Returns True on PASS."""
+    os.makedirs(work_dir, exist_ok=True)
+    vvp_out  = os.path.join(work_dir, f"tb_bus_matrix_{proto}.vvp")
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+
+    files = sv_files(proto, ip_path)
+    incdirs = sv_include_dirs(ip_path)
+    incflags = []
+    for d in incdirs:
+        incflags += ["-I", d]
+
+    compile_cmd = (
+        [IVERILOG, "-g2012", "-Wall", "-Wno-timescale"]
+        + incflags
+        + ["-o", vvp_out]
+        + files
+    )
+
+    print(f"  [icarus/{proto}_sv] Compiling ...")
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
+        cp = subprocess.run(
+            compile_cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=120
         )
     except FileNotFoundError:
-        output = f"ERROR: {cmd[0]} not found on PATH\n"
-        if logfile:
-            with open(logfile, "a") as fh:
-                fh.write(output)
-        return 127, output
-    except subprocess.TimeoutExpired:
-        output = f"ERROR: {cmd[0]} timed out after {timeout}s\n"
-        if logfile:
-            with open(logfile, "a") as fh:
-                fh.write(output)
-        return 124, output
-    output = result.stdout
-    if logfile:
-        with open(logfile, "a") as fh:
-            fh.write(output)
-    return result.returncode, output
+        msg = f"ERROR: iverilog not found at {IVERILOG}"
+        print(msg)
+        _write_result(results, "FAIL", msg)
+        return False
+
+    compile_log = cp.stdout + cp.stderr
+    if cp.returncode != 0:
+        print(f"  [icarus/{proto}_sv] Compile FAILED:\n{compile_log}")
+        _write_result(results, "FAIL", compile_log)
+        return False
+
+    print(f"  [icarus/{proto}_sv] Running ...")
+    try:
+        rp = subprocess.run(
+            [VVP, vvp_out],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=120
+        )
+    except FileNotFoundError:
+        msg = f"ERROR: vvp not found at {VVP}"
+        print(msg)
+        _write_result(results, "FAIL", msg)
+        return False
+
+    sim_log = rp.stdout + rp.stderr
+    with open(log_path, "w") as fh:
+        fh.write(compile_log)
+        fh.write(sim_log)
+
+    print(f"  [icarus/{proto}_sv] Simulation output:\n{sim_log.strip()}")
+
+    # PASS if exit code 0, "PASS" appears in output, and no "FAIL" string.
+    # Icarus returns 0 even for $finish(1), so we must check for FAIL text.
+    passed = (rp.returncode == 0) and ("PASS" in sim_log) and ("FAIL" not in sim_log)
+    _write_result(results, "PASS" if passed else "FAIL", sim_log)
+    return passed
 
 
-def check_pass(output, proto):
-    """Return True if the output contains the expected PASS banner."""
-    pass_token = f"PASS tb_bus_matrix_{proto}"
-    fail_token  = "FAIL"
-    fatal_token = "FATAL_ERROR"
-    if pass_token in output:
-        # Ensure no FAIL or FATAL_ERROR appears before the PASS
-        pass_pos  = output.find(pass_token)
-        fail_pos  = output.find(fail_token)
-        fatal_pos = output.find(fatal_token)
-        if fail_pos != -1 and fail_pos < pass_pos:
+def run_ghdl(proto: str, ip_path: str, work_dir: str) -> bool:
+    """Analyze, elaborate, and simulate VHDL testbench with GHDL. Returns True on PASS."""
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+
+    files = vhdl_files(proto, ip_path)
+    tb_top = f"tb_bus_matrix_{proto}"
+
+    # Analysis pass
+    print(f"  [ghdl/{proto}_vhdl] Analyzing ...")
+    full_log = ""
+    for f in files:
+        cmd = [GHDL, "-a", "--std=08", "-frelaxed", f"--workdir={work_dir}", f]
+        try:
+            cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+        except FileNotFoundError:
+            msg = f"ERROR: ghdl not found at {GHDL}"
+            print(msg)
+            _write_result(results, "FAIL", msg)
             return False
-        if fatal_pos != -1 and fatal_pos < pass_pos:
+        out = cp.stdout + cp.stderr
+        full_log += out
+        if cp.returncode != 0:
+            print(f"  [ghdl/{proto}_vhdl] Analysis FAILED on {os.path.basename(f)}:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+    # Elaboration
+    print(f"  [ghdl/{proto}_vhdl] Elaborating {tb_top} ...")
+    elab_cmd = [GHDL, "-e", "--std=08", "-frelaxed", f"--workdir={work_dir}", tb_top]
+    cp = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                        timeout=60, cwd=work_dir)
+    out = cp.stdout + cp.stderr
+    full_log += out
+    if cp.returncode != 0:
+        print(f"  [ghdl/{proto}_vhdl] Elaboration FAILED:\n{out}")
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    # Simulation
+    print(f"  [ghdl/{proto}_vhdl] Simulating ...")
+    sim_cmd = [GHDL, "-r", "--std=08", "-frelaxed", f"--workdir={work_dir}",
+               tb_top, "--stop-time=1ms"]
+    rp = subprocess.run(sim_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                        timeout=120, cwd=work_dir)
+    out = rp.stdout + rp.stderr
+    full_log += out
+
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    print(f"  [ghdl/{proto}_vhdl] Output:\n{out.strip()}")
+
+    # GHDL exits non-zero on severity-failure. Also check for "FAIL" text
+    # from assert-style checks printed via report/write.
+    passed = (rp.returncode == 0) and ("PASS" in out) and ("FAIL" not in out)
+    _write_result(results, "PASS" if passed else "FAIL", out)
+    return passed
+
+
+def run_modelsim(proto: str, lang: str, ip_path: str, work_dir: str) -> bool:
+    """Compile and simulate with ModelSim/Questa. Returns True on PASS.
+
+    All commands run with cwd=work_dir so the logical library name "work"
+    resolves to work_dir/work without needing vmap.
+
+    Flow:
+      1. vlib work                  — create physical library directory
+      2. vcom -2008 -work work      — analyse VHDL files in dependency order
+         vlog -sv -work work        — OR analyse SV files
+      3. write sim.do               — batch do-file: run -all; quit -f
+      4. vsim -c work.tb_top        — batch simulate; transcript → stdout
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    do_path  = os.path.join(work_dir, "sim.do")
+    tb_top   = f"tb_bus_matrix_{proto}"
+    full_log = ""
+
+    # Write the do-file (avoids shell quoting issues with inline -do strings).
+    # "run -all" runs until all VHDL processes reach a permanent wait (deadlock),
+    # which is how our testbenches terminate.  ModelSim then exits naturally when
+    # the do-file finishes — "quit -f" is intentionally omitted because it hangs
+    # when stdin is not a real terminal (subprocess with DEVNULL).
+    with open(do_path, "w") as fh:
+        fh.write("run -all\n")
+
+    def _run(cmd, timeout=60):
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                              timeout=timeout, cwd=work_dir, errors="replace")
+
+    # -- Step 1: vlib --------------------------------------------------------
+    print(f"  [modelsim/{proto}_{lang}] Creating library ...")
+    try:
+        cp = _run([VLIB, "work"], timeout=30)
+    except FileNotFoundError:
+        msg = f"vlib not found ({VLIB}). Is ModelSim/Questa in PATH?"
+        print(f"  [modelsim/{proto}_{lang}] WARNING: {msg}")
+        _skip_result(results, msg)
+        return True  # SKIP — tool absent is not a test failure
+    full_log += cp.stdout + cp.stderr
+    if cp.returncode != 0:
+        print(f"  [modelsim/{proto}_{lang}] vlib FAILED:\n{cp.stdout + cp.stderr}")
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    # -- Step 2: compile sources --------------------------------------------
+    if lang == "vhdl":
+        files            = vhdl_files(proto, ip_path)
+        compile_cmd_base = [VCOM, "-2008", "-work", "work"]
+    else:
+        files    = sv_files(proto, ip_path)
+        incdirs  = sv_include_dirs(ip_path)
+        incflags = ["+incdir+" + d for d in incdirs]
+        compile_cmd_base = [VLOG, "-sv", "-work", "work"] + incflags
+
+    print(f"  [modelsim/{proto}_{lang}] Compiling {len(files)} file(s) ...")
+    try:
+        if lang == "vhdl":
+            # vcom must analyse VHDL files one at a time (dependency order)
+            for f in files:
+                cp = _run(compile_cmd_base + [f])
+                full_log += cp.stdout + cp.stderr
+                if cp.returncode != 0:
+                    print(f"  [modelsim/{proto}_{lang}] vcom FAILED on "
+                          f"{os.path.basename(f)}:\n{cp.stdout + cp.stderr}")
+                    _write_result(results, "FAIL", full_log)
+                    return False
+        else:
+            # vlog compiles all SV files in one pass
+            cp = _run(compile_cmd_base + files)
+            full_log += cp.stdout + cp.stderr
+            if cp.returncode != 0:
+                print(f"  [modelsim/{proto}_{lang}] vlog FAILED:\n"
+                      f"{cp.stdout + cp.stderr}")
+                _write_result(results, "FAIL", full_log)
+                return False
+    except FileNotFoundError as exc:
+        msg = f"ERROR: compiler not found — {exc}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # -- Step 3: simulate ---------------------------------------------------
+    print(f"  [modelsim/{proto}_{lang}] Simulating {tb_top} ...")
+    # vsim -c reads stdin even after the do-file ends, so we cannot use
+    # subprocess.run() — it would block indefinitely.  Instead, use Popen
+    # and poll the log file for the testbench's final PASS/FAIL banner.
+    # Once the banner is seen (or the timeout expires), kill vsim and return.
+    sim_cmd = [VSIM, "-c", f"work.{tb_top}", "-do", do_path]
+    import time
+    try:
+        with open(log_path, "w") as sim_fh:
+            proc = subprocess.Popen(sim_cmd, stdout=sim_fh, stderr=sim_fh,
+                                    stdin=subprocess.DEVNULL, cwd=work_dir)
+    except FileNotFoundError as exc:
+        msg = f"ERROR: vsim not found — {exc}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    deadline = time.monotonic() + 300
+    sim_out  = ""
+    done     = False
+    pass_marker  = f"PASS tb_bus_matrix_{proto}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        # Read whatever the log has so far
+        try:
+            with open(log_path) as fh:
+                sim_out = fh.read()
+        except OSError:
+            pass
+        if pass_marker in sim_out or any(m in sim_out for m in fail_markers):
+            done = True
+            break
+        if proc.poll() is not None:   # vsim exited on its own
+            break
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+    # Final read after process is dead
+    try:
+        with open(log_path) as fh:
+            sim_out = fh.read()
+    except OSError:
+        pass
+    full_log += sim_out
+
+    if not done and time.monotonic() >= deadline:
+        print(f"  [modelsim/{proto}_{lang}] ERROR: timeout — no pass/fail seen in 300 s")
+
+    print(f"  [modelsim/{proto}_{lang}] Simulation output:\n{sim_out.strip()}")
+
+    passed = (pass_marker in sim_out) and not any(m in sim_out for m in fail_markers)
+    _write_result(results, "PASS" if passed else "FAIL", sim_out)
+    return passed
+
+
+def _write_result(path: str, status: str, detail: str) -> None:
+    """Write a results.log file."""
+    with open(path, "w") as fh:
+        fh.write(f"{status}\n")
+        fh.write(detail)
+    print(f"  -> {path} : {status}")
+
+
+def _skip_result(path: str, msg: str) -> None:
+    """Write a results.log with SKIP status (tool not installed)."""
+    with open(path, "w") as fh:
+        fh.write(f"SKIP\n{msg}\n")
+    print(f"  -> {path} : SKIP")
+
+
+def run_xsim(proto: str, lang: str, ip_path: str, work_dir: str) -> bool:
+    """Compile and simulate a directed testbench with Vivado xsim.
+
+    Three-step flow:
+      1. xvlog --sv (SV) or xvhdl --2008 per file (VHDL)
+      2. xelab --snapshot <snap>
+      3. xsim  <snap> --runall   (Popen + DEVNULL — xsim hangs on TTY stdin)
+
+    Returns True on PASS or SKIP (tool absent); False on compile/sim FAIL.
+    """
+    import time as _time
+
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    tb_top   = f"tb_bus_matrix_{proto}"
+    snapshot = f"{tb_top}_sim"
+    full_log = ""
+
+    if not VIVADO_BIN:
+        msg = "Vivado (xvlog/xelab/xsim) not found — skipping."
+        print(f"  [xsim/{proto}_{lang}] WARNING: {msg}")
+        _skip_result(results, msg)
+        return True  # SKIP
+
+    def _run(cmd, label, timeout=180):
+        nonlocal full_log
+        print(f"  [xsim/{proto}_{lang}] {label} ...")
+        try:
+            cp = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                timeout=timeout, cwd=work_dir,
+            )
+        except FileNotFoundError as exc:
+            msg = f"ERROR: tool not found — {exc}"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        out = cp.stdout + cp.stderr
+        full_log += out
+        if cp.returncode != 0:
+            print(f"  [xsim/{proto}_{lang}] {label} FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
             return False
         return True
-    return False
 
-
-def run_icarus_sv(ip_path, common_path, proto, run_dir):
-    """Run Icarus Verilog SV simulation for the given protocol."""
-    rtl_dir   = os.path.join(ip_path, "design", "rtl", "verilog")
-    tb_dir    = os.path.join(ip_path, "verification", "testbench")
-    tests_dir = os.path.join(ip_path, "verification", "tests")
-    tasks_dir = os.path.join(common_path, "verification", "tasks")
-    ctests_dir = os.path.join(common_path, "verification", "tests")
-
-    out_bin = os.path.join(run_dir, f"tb_bus_matrix_{proto}.vvp")
-    log_file = os.path.join(run_dir, "compile.log")
-
-    # Collect RTL sources in dependency order
-    rtl_srcs = [
-        os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-        os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-        os.path.join(rtl_dir, "bus_matrix_core.sv"),
-    ]
-
-    # Protocol-specific interface source
-    if proto == "ahb":
-        rtl_srcs.append(os.path.join(rtl_dir, "bus_matrix_ahb.sv"))
-        bfm_srcs = [
-            os.path.join(tb_dir, "bus_matrix_ahb_master.sv"),
-            os.path.join(tb_dir, "bus_matrix_ahb_slave.sv"),
-        ]
-        tb_src = os.path.join(tb_dir, "tb_bus_matrix_ahb.sv")
-    elif proto == "axi":
-        rtl_srcs.append(os.path.join(rtl_dir, "bus_matrix_axi.sv"))
-        bfm_srcs = [
-            os.path.join(tb_dir, "bus_matrix_axi_master.sv"),
-            os.path.join(tb_dir, "bus_matrix_axi_slave.sv"),
-        ]
-        tb_src = os.path.join(tb_dir, "tb_bus_matrix_axi.sv")
-    else:  # wb
-        rtl_srcs.append(os.path.join(rtl_dir, "bus_matrix_wb.sv"))
-        bfm_srcs = [
-            os.path.join(tb_dir, "bus_matrix_wb_master.sv"),
-            os.path.join(tb_dir, "bus_matrix_wb_slave.sv"),
-        ]
-        tb_src = os.path.join(tb_dir, "tb_bus_matrix_wb.sv")
-
-    compile_cmd = [
-        "iverilog",
-        "-g2012",
-        f"-I{tasks_dir}",
-        f"-I{ctests_dir}",
-        f"-I{tests_dir}",
-        f"-I{tb_dir}",
-        "-o", out_bin,
-    ]
-
-    compile_cmd.extend(rtl_srcs + bfm_srcs + [tb_src])
-
-    # Clear log
-    open(log_file, "w").close()
-    rc, out = run_cmd(compile_cmd, cwd=run_dir, logfile=log_file)
-    if rc != 0:
-        return False, f"Compile FAILED:\n{out}"
-
-    # Run simulation
-    sim_log = os.path.join(run_dir, "sim.log")
-    open(sim_log, "w").close()
-    rc, out = run_cmd(["vvp", out_bin], cwd=run_dir, logfile=sim_log)
-    return check_pass(out, proto), out
-
-
-def run_ghdl_vhdl(ip_path, common_path, proto, run_dir):
-    """Run GHDL VHDL simulation for the given protocol."""
-    rtl_vhdl_dir = os.path.join(ip_path, "design", "rtl", "vhdl")
-    tb_dir       = os.path.join(ip_path, "verification", "testbench")
-    common_rtl_vhdl = os.path.join(common_path, "design", "rtl", "vhdl")
-    common_tests_vhdl = os.path.join(common_path, "verification", "tests")
-
-    log_file = os.path.join(run_dir, "ghdl.log")
-    open(log_file, "w").close()
-
-    # VHDL source files in compile order
-    vhdl_srcs = []
-
-    # Common ip_test_pkg
-    pkg_file = os.path.join(common_tests_vhdl, "ip_test_pkg.vhd")
-    if os.path.isfile(pkg_file):
-        vhdl_srcs.append(pkg_file)
-
-    # RTL VHDL sources (no interface or regfile needed — config via generics)
-    rtl_order = [
-        "bus_matrix_decoder.vhd",
-        "bus_matrix_arb.vhd",
-        "bus_matrix_core.vhd",
-        f"bus_matrix_{proto}.vhd",
-    ]
-
-    for fn in rtl_order:
-        fp = os.path.join(rtl_vhdl_dir, fn)
-        if os.path.isfile(fp):
-            vhdl_srcs.append(fp)
-
-    tb_file = os.path.join(tb_dir, f"tb_bus_matrix_{proto}.vhd")
-    if os.path.isfile(tb_file):
-        vhdl_srcs.append(tb_file)
-    else:
-        return False, f"VHDL testbench not found: {tb_file}"
-
-    # Analyze all sources
-    all_out = ""
-    for src in vhdl_srcs:
-        rc, out = run_cmd(
-            ["ghdl", "-a", "--std=08", "-frelaxed", src],
-            cwd=run_dir,
-            logfile=log_file,
-        )
-        all_out += out
-        if rc != 0:
-            return False, f"GHDL analyze FAILED for {src}:\n{out}"
-
-    # Elaborate
-    tb_name = f"tb_bus_matrix_{proto}"
-    rc, out = run_cmd(
-        ["ghdl", "-e", "--std=08", "-frelaxed", tb_name],
-        cwd=run_dir,
-        logfile=log_file,
-    )
-    all_out += out
-    if rc != 0:
-        return False, f"GHDL elaborate FAILED:\n{out}"
-
-    # Run
-    rc, out = run_cmd(
-        ["ghdl", "-r", "--std=08", "-frelaxed", tb_name, "--stop-time=1ms"],
-        cwd=run_dir,
-        logfile=log_file,
-    )
-    all_out += out
-    return check_pass(all_out, proto), all_out
-
-
-def run_modelsim(ip_path, common_path, proto, lang, run_dir):
-    """Run ModelSim simulation using .do files."""
-    import shutil
-    vsim = shutil.which("vsim")
-    if not vsim:
-        return True, "Skipped: vsim not found on PATH"
-
-    modelsim_dir = os.path.join(ip_path, "verification", "modelsim")
-
+    # ------------------------------------------------------------------
+    # Step 1: compile
+    # ------------------------------------------------------------------
     if lang == "sv":
-        do_file = os.path.join(modelsim_dir, f"sim_bus_matrix_{proto}.do")
-    else:
-        # VHDL .do files — check if they exist
-        do_file = os.path.join(modelsim_dir, f"sim_bus_matrix_{proto}_vhdl.do")
-
-    if not os.path.isfile(do_file):
-        return True, f"Skipped: {do_file} not found"
-
-    log_file = os.path.join(run_dir, "modelsim.log")
-    open(log_file, "w").close()
-    rc, out = run_cmd(
-        ["vsim", "-batch", "-do", do_file],
-        cwd=modelsim_dir,
-        logfile=log_file,
-    )
-    return check_pass(out, proto), out
-
-
-def run_xsim_sv(ip_path, common_path, proto, run_dir):
-    """Run Vivado xsim SV simulation for the given protocol."""
-    rtl_dir   = os.path.join(ip_path, "design", "rtl", "verilog")
-    tb_dir    = os.path.join(ip_path, "verification", "testbench")
-    tests_dir = os.path.join(ip_path, "verification", "tests")
-    tasks_dir = os.path.join(common_path, "verification", "tasks")
-    ctests_dir = os.path.join(common_path, "verification", "tests")
-
-    top_mod = f"tb_bus_matrix_{proto}"
-
-    # RTL sources in dependency order
-    rtl_srcs = [
-        os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-        os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-        os.path.join(rtl_dir, "bus_matrix_core.sv"),
-        os.path.join(rtl_dir, f"bus_matrix_{proto}.sv"),
-    ]
-
-    # BFM sources
-    bfm_srcs = [
-        os.path.join(tb_dir, f"bus_matrix_{proto}_master.sv"),
-        os.path.join(tb_dir, f"bus_matrix_{proto}_slave.sv"),
-    ]
-
-    tb_src = os.path.join(tb_dir, f"{top_mod}.sv")
-    all_srcs = rtl_srcs + bfm_srcs + [tb_src]
-
-    log_file = os.path.join(run_dir, "xvlog.log")
-    open(log_file, "w").close()
-
-    # Step 1: xvlog — compile all SV sources
-    xvlog_cmd = [
-        "xvlog", "--sv",
-        "--include", tasks_dir,
-        "--include", ctests_dir,
-        "--include", tests_dir,
-        "--include", tb_dir,
-    ] + all_srcs
-
-    rc, out = run_cmd(xvlog_cmd, cwd=run_dir, logfile=log_file)
-    if rc != 0:
-        return False, f"xvlog FAILED:\n{out}"
-
-    # Step 2: xelab — elaborate
-    elab_log = os.path.join(run_dir, "xelab.log")
-    open(elab_log, "w").close()
-    elab_cmd = [
-        "xelab", top_mod,
-        "-s", f"{top_mod}_sim",
-        "--timescale", "1ns/1ps",
-        "--debug", "off",
-    ]
-
-    rc, out = run_cmd(elab_cmd, cwd=run_dir, logfile=elab_log)
-    if rc != 0:
-        return False, f"xelab FAILED:\n{out}"
-
-    # Step 3: xsim — run simulation
-    sim_log = os.path.join(run_dir, "xsim.log")
-    open(sim_log, "w").close()
-
-    # Write a tcl command file to run all and quit
-    tcl_file = os.path.join(run_dir, "run.tcl")
-    with open(tcl_file, "w") as fh:
-        fh.write("run all\nquit\n")
-
-    sim_cmd = [
-        "xsim", f"{top_mod}_sim",
-        "--tclbatch", tcl_file,
-    ]
-
-    rc, out = run_cmd(sim_cmd, cwd=run_dir, logfile=sim_log)
-    return check_pass(out, proto), out
-
-
-def _vhdl_srcs(ip_path, common_path, proto):
-    """Return the ordered list of VHDL source files for the given protocol."""
-    rtl_vhdl_dir = os.path.join(ip_path, "design", "rtl", "vhdl")
-    tb_dir = os.path.join(ip_path, "verification", "testbench")
-    common_tests_vhdl = os.path.join(common_path, "verification", "tests")
-
-    srcs = []
-    pkg_file = os.path.join(common_tests_vhdl, "ip_test_pkg.vhd")
-    if os.path.isfile(pkg_file):
-        srcs.append(pkg_file)
-
-    rtl_order = [
-        "bus_matrix_decoder.vhd",
-        "bus_matrix_arb.vhd",
-        "bus_matrix_core.vhd",
-        f"bus_matrix_{proto}.vhd",
-    ]
-    for fn in rtl_order:
-        fp = os.path.join(rtl_vhdl_dir, fn)
-        if os.path.isfile(fp):
-            srcs.append(fp)
-
-    return srcs, os.path.join(tb_dir, f"tb_bus_matrix_{proto}.vhd")
-
-
-def run_vcs(ip_path, common_path, proto, lang, run_dir):
-    """Compile and simulate with Synopsys VCS MX. Returns (passed, output).
-
-    SV flow  (2 steps): vcs -full64 -sverilog ... <sv-files> -o simv ; ./simv
-    VHDL flow (3 steps): vhdlan -full64 -vhdl08 <vhd-files> ;
-                          vcs -full64 <tb_top> -o simv (elaborate) ; ./simv
-    """
-    rtl_dir = os.path.join(ip_path, "design", "rtl", "verilog")
-    tb_dir  = os.path.join(ip_path, "verification", "testbench")
-    tests_dir = os.path.join(ip_path, "verification", "tests")
-    tasks_dir = os.path.join(common_path, "verification", "tasks")
-    ctests_dir = os.path.join(common_path, "verification", "tests")
-
-    tb_top = f"tb_bus_matrix_{proto}"
-    simv = os.path.join(run_dir, f"simv_{proto}_{lang}")
-
-    if lang == "sv":
-        rtl_srcs = [
-            os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-            os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-            os.path.join(rtl_dir, "bus_matrix_core.sv"),
-            os.path.join(rtl_dir, f"bus_matrix_{proto}.sv"),
-        ]
-        bfm_srcs = [
-            os.path.join(tb_dir, f"bus_matrix_{proto}_master.sv"),
-            os.path.join(tb_dir, f"bus_matrix_{proto}_slave.sv"),
-        ]
-        tb_src = os.path.join(tb_dir, f"{tb_top}.sv")
-
-        incdirs = [tasks_dir, ctests_dir, tests_dir, tb_dir]
-        incflag = "+incdir+" + "+".join(incdirs)
-
-        log_file = os.path.join(run_dir, "compile.log")
-        open(log_file, "w").close()
+        incdirs = sv_include_dirs(ip_path)
+        inc_flags = []
+        for d in incdirs:
+            inc_flags += ["-i", d]
         compile_cmd = (
-            ["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps", "-debug_acc+all", incflag]
-            + rtl_srcs + bfm_srcs + [tb_src]
+            [XVLOG, "--sv",
+             "--log", os.path.join(work_dir, "xvlog.log")]
+            + inc_flags
+            + sv_files(proto, ip_path)
+        )
+        if not _run(compile_cmd, "xvlog"):
+            return False
+    else:
+        xvhdl_log = os.path.join(work_dir, "xvhdl.log")
+        for f in vhdl_files(proto, ip_path):
+            cmd = [XVHDL, "--2008", "--log", xvhdl_log, f]
+            if not _run(cmd, f"xvhdl {os.path.basename(f)}"):
+                return False
+
+    # ------------------------------------------------------------------
+    # Step 2: elaborate
+    # ------------------------------------------------------------------
+    elab_cmd = [
+        XELAB,
+        "--snapshot", snapshot,
+        "--timescale", "1ns/1ps",
+        "--debug", "typical",
+        "--log", os.path.join(work_dir, "xelab.log"),
+        tb_top,
+    ]
+    if not _run(elab_cmd, "xelab"):
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 3: simulate (Popen + DEVNULL — xsim hangs reading TTY stdin)
+    # ------------------------------------------------------------------
+    xsim_log = os.path.join(work_dir, "xsim_out.log")
+    sim_cmd = [XSIM, snapshot, "--runall", "--log", xsim_log]
+
+    print(f"  [xsim/{proto}_{lang}] Simulating ...")
+    try:
+        proc = subprocess.Popen(
+            sim_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            cwd=work_dir,
+        )
+    except FileNotFoundError as exc:
+        msg = f"ERROR: xsim not found — {exc}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    pass_marker  = f"PASS tb_bus_matrix_{proto}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+    deadline = _time.monotonic() + 300
+    sim_out  = ""
+    done     = False
+
+    while _time.monotonic() < deadline:
+        _time.sleep(1)
+        try:
+            with open(xsim_log, errors="replace") as fh:
+                sim_out = fh.read()
+        except OSError:
+            pass
+        if pass_marker in sim_out or any(m in sim_out for m in fail_markers):
+            done = True
+            break
+        if proc.poll() is not None:
+            break
+
+    # Give xsim up to 15 s to exit cleanly (e.g. after std.env.stop).
+    # If it doesn't exit on its own, force-kill it.
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+    # Final read after process is confirmed dead
+    try:
+        with open(xsim_log, errors="replace") as fh:
+            sim_out = fh.read()
+    except OSError:
+        pass
+    full_log += sim_out
+
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    if not done:
+        print(f"  [xsim/{proto}_{lang}] ERROR: timeout — no PASS/FAIL seen in 300 s")
+
+    print(f"  [xsim/{proto}_{lang}] Output:\n{sim_out.strip()}")
+
+    # A FATAL_ERROR that appears after the PASS banner is caused by our
+    # process termination (xsimk orphaned), not a real simulation failure.
+    # Only treat fail markers as failures when they precede the PASS banner.
+    pass_pos = sim_out.find(pass_marker)
+    if pass_pos >= 0:
+        pre_pass = sim_out[:pass_pos]
+        passed = not any(m in pre_pass for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# VCS MX runner (csun.edu only)
+# ---------------------------------------------------------------------------
+
+def run_vcs(proto: str, lang: str, ip_path: str, work_dir: str) -> bool:
+    """Compile and simulate with Synopsys VCS MX. Returns True on PASS.
+
+    SV flow  (2 steps):
+      1. vcs -full64 -sverilog -timescale=1ns/1ps +incdir+... <sv-files> -o simv
+      2. ./simv
+
+    VHDL flow (3 steps — vcs treats .vhd files as Verilog without vhdlan):
+      1. vhdlan -full64 <vhd-files>          (analyze VHDL into work library)
+      2. vcs -full64 -e <tb-top> -o simv     (elaborate)
+      3. ./simv
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    simv     = os.path.join(work_dir, f"simv_{proto}_{lang}")
+    tb_top   = f"tb_bus_matrix_{proto}"
+    full_log = ""
+
+    if lang == "sv":
+        # ── SV: single vcs compilation step ───────────────────────────────
+        incdirs = sv_include_dirs(ip_path)
+        incflag = "+incdir+" + "+".join(incdirs)
+        # -timescale sets the default for files that lack a `timescale directive;
+        # VCS requires all modules to agree on timescale when any one specifies it.
+        compile_cmd = (
+            ["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps",
+             "-debug_acc+all", incflag]
+            + sv_files(proto, ip_path)
             + ["-o", simv]
         )
-        rc, out = run_cmd(compile_cmd, cwd=run_dir, logfile=log_file, timeout=180)
-        if rc != 0:
-            return False, f"vcs compile FAILED:\n{out}"
-    else:  # vhdl
-        vhdl_srcs, tb_file = _vhdl_srcs(ip_path, common_path, proto)
-        if not os.path.isfile(tb_file):
-            return False, f"VHDL testbench not found: {tb_file}"
-        vhdl_srcs = vhdl_srcs + [tb_file]
+        print(f"  [vcs/{proto}_{lang}] Compiling ...")
+        try:
+            cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log = cp.stdout + cp.stderr
+        if cp.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] Compile FAILED:\n{full_log}")
+            _write_result(results, "FAIL", full_log)
+            return False
 
-        log_file = os.path.join(run_dir, "vhdlan.log")
-        open(log_file, "w").close()
-        vhdlan_cmd = ["vhdlan", "-full64", "-vhdl08"] + vhdl_srcs
-        rc, out = run_cmd(vhdlan_cmd, cwd=run_dir, logfile=log_file, timeout=180)
-        if rc != 0:
-            return False, f"vhdlan FAILED:\n{out}"
+    else:
+        # ── VHDL: vhdlan (analyze) then vcs -e (elaborate) ───────────────
+        src = vhdl_files(proto, ip_path)
 
-        elab_log = os.path.join(run_dir, "elab.log")
-        open(elab_log, "w").close()
+        # Step 1: vhdlan — VHDL analysis into work library
+        # -vhdl08: enable VHDL-2008 (required for conditional variable assignments,
+        #          "when...else" in sequential context, etc.)
+        vhdlan_cmd = ["vhdlan", "-full64", "-vhdl08"] + src
+        print(f"  [vcs/{proto}_{lang}] Analyzing VHDL (vhdlan) ...")
+        try:
+            ap = subprocess.run(vhdlan_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vhdlan not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log += ap.stdout + ap.stderr
+        if ap.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] vhdlan FAILED:\n{full_log}")
+            _write_result(results, "FAIL", full_log)
+            return False
+
+        # Step 2: vcs — elaborate (design unit is a positional arg, not -e)
         elab_cmd = ["vcs", "-full64", "-debug_acc+all", tb_top, "-o", simv]
-        rc, out = run_cmd(elab_cmd, cwd=run_dir, logfile=elab_log, timeout=180)
-        if rc != 0:
-            return False, f"vcs elaborate FAILED:\n{out}"
+        print(f"  [vcs/{proto}_{lang}] Elaborating (vcs -e) ...")
+        try:
+            ep = subprocess.run(elab_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                universal_newlines=True, timeout=180, cwd=work_dir)
+        except FileNotFoundError:
+            msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        full_log += ep.stdout + ep.stderr
+        if ep.returncode != 0:
+            print(f"  [vcs/{proto}_{lang}] Elaborate FAILED:\n{ep.stdout + ep.stderr}")
+            _write_result(results, "FAIL", full_log)
+            return False
 
-    sim_log = os.path.join(run_dir, "sim.log")
-    open(sim_log, "w").close()
-    rc, out = run_cmd([simv], cwd=run_dir, logfile=sim_log, timeout=120)
-    return check_pass(out, proto), out
+    # ── Simulate ──────────────────────────────────────────────────────────
+    print(f"  [vcs/{proto}_{lang}] Simulating {tb_top} (waveforms → vcdplus.vpd) ...")
+    try:
+        rp = subprocess.run(
+            [simv],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120, cwd=work_dir)
+    except FileNotFoundError:
+        msg = f"ERROR: compiled binary not found at {simv}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    sim_out = rp.stdout + rp.stderr
+    full_log += sim_out
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    print(f"  [vcs/{proto}_{lang}] Output:\n{sim_out.strip()}")
+
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
 
 
-def run_xcelium(ip_path, common_path, proto, lang, run_dir):
-    """Compile, elaborate, and simulate with Cadence Xcelium. Returns (passed, output).
+# ---------------------------------------------------------------------------
+# Post-synthesis VCS runner (csun.edu only — requires DC netlists + PDK cell models)
+# ---------------------------------------------------------------------------
 
-    SV flow  (1 step): xrun -64 -access +rwc -timescale 1ns/1ps -sv +incdir+... <files> -top <tb_top>
-    VHDL flow (3 steps): xmvhdl -V200X <vhd-files> ; xmelab <tb_top> ; xmsim <tb_top>
+def run_vcs_postsyn(proto: str, pdk: str, ip_path: str, work_dir: str) -> bool:
+    """Gate-level simulation with VCS using a DC netlist and SDF back-annotation.
 
-    VHDL has no PLI hook like SV's $shm_open/$shm_probe, so the SHM waveform
-    database is opened via an inline xmsim command script instead (dumped to
-    waves.shm/ in the sim work directory).
+    The gate-level netlist (always Verilog) and SDF are taken from:
+        synthesis/designcompiler/netlists/<pdk>/bus_matrix_<proto>.v / .sdf
+
+    The SV testbench is reused unchanged; --lang is ignored (the netlist is
+    always Verilog regardless of which RTL language was synthesised).
+
+    SDF back-annotation uses the typical corner.  +notimingcheck suppresses
+    setup/hold violations so functional correctness can be evaluated without
+    the testbench needing a PVT-matched clock period.
     """
-    rtl_dir = os.path.join(ip_path, "design", "rtl", "verilog")
-    tb_dir  = os.path.join(ip_path, "verification", "testbench")
-    tests_dir = os.path.join(ip_path, "verification", "tests")
-    tasks_dir = os.path.join(common_path, "verification", "tasks")
-    ctests_dir = os.path.join(common_path, "verification", "tests")
+    os.makedirs(work_dir, exist_ok=True)
+    log_path = os.path.join(work_dir, "sim.log")
+    results  = os.path.join(work_dir, "results.log")
+    tb_top   = f"tb_bus_matrix_{proto}"
+    simv     = os.path.join(work_dir, f"simv_{proto}_{pdk}_postsyn")
+    tag      = f"postsyn-vcs/{proto}/{pdk}"
+    full_log = ""
 
-    tb_top = f"tb_bus_matrix_{proto}"
+    netlist_dir = os.path.join(
+        ip_path, "synthesis", "designcompiler", "netlists", pdk
+    )
+    netlist  = os.path.join(netlist_dir, f"bus_matrix_{proto}.v")
+    sdf_file = os.path.join(netlist_dir, f"bus_matrix_{proto}.sdf")
+
+    # ── Pre-flight checks ────────────────────────────────────────────────
+    if not os.path.isfile(netlist):
+        msg = (f"ERROR: netlist not found at {netlist}\n"
+               f"       Run synthesis/run_vendor_synth.py "
+               f"--dc{pdk.replace('saed', '')} first.")
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    cfg       = POSTSYN_PDK_CONFIGS[pdk]
+    fix_libs  = cfg.get("cell_libs_nettype_wire", [])
+    v_libs    = cfg.get("cell_libs_v", [])
+    missing   = [f for f in cfg["cell_libs"] + fix_libs + v_libs
+                 if not os.path.isfile(f)]
+    if missing:
+        msg = "ERROR: cell library models not found:\n" + "\n".join(missing)
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # Copies of models whose `default_nettype none VCS cannot compile.
+    fixed_libs = []
+    for src in fix_libs:
+        dst = os.path.join(work_dir, "nettype_wire_" + os.path.basename(src))
+        with open(src) as fh:
+            text = fh.read()
+        with open(dst, "w") as fh:
+            fh.write(text.replace("`default_nettype none", "`default_nettype wire"))
+        fixed_libs.append(dst)
+
+    # ── Source file list ─────────────────────────────────────────────────
+    rtl    = os.path.join(ip_path, "design", "rtl", "verilog")
+    incdirs = sv_include_dirs(ip_path)
+    incflag = "+incdir+" + "+".join(incdirs)
+
+    src_files = (
+        [os.path.join(rtl, "bus_matrix_pkg.sv")]  # package used by testbench
+        + cfg["cell_libs"]                          # standard-cell models
+        + fixed_libs                                # patched copies (sky130 UDPs)
+        + [netlist]                                 # DC gate-level netlist
+        + sv_tb_files(proto, ip_path)               # SV testbench (always SV)
+    )
+
+    # ── Compile ───────────────────────────────────────────────────────────
+    compile_cmd = [
+        "vcs", "-full64", "-sverilog", "-timescale=1ns/1ps",
+        "-debug_acc+all",
+        "+notimingcheck",      # suppress setup/hold violations; verify function only
+        "+neg_tchk",           # tolerate negative timing values in SDF
+        "+vcs+initreg+random", # enable initreg so +vcs+initreg+0 works at runtime
+        incflag,
+    ]
+    if os.path.isfile(sdf_file):
+        compile_cmd += ["-sdf", f"typ:{tb_top}.u_dut:{sdf_file}"]
+        print(f"  [{tag}] Compiling with SDF back-annotation ({pdk}) ...")
+    else:
+        print(f"  [{tag}] Compiling (no SDF found — functional only) ...")
+
+    compile_cmd += src_files
+    for lib in v_libs:
+        compile_cmd += ["-v", lib]
+    compile_cmd += ["-o", simv]
+
+    try:
+        cp = subprocess.run(compile_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=240, cwd=work_dir)
+    except FileNotFoundError:
+        msg = "ERROR: vcs not found — is Synopsys VCS MX in PATH?"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    full_log = cp.stdout + cp.stderr
+    if cp.returncode != 0:
+        print(f"  [{tag}] Compile FAILED:\n{full_log}")
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    # ── Simulate ──────────────────────────────────────────────────────────
+    # +vcs+initreg+0 initialises all gate-level flip-flops to 0 at time 0,
+    # preventing X-propagation before the testbench reset is applied.
+    print(f"  [{tag}] Simulating {tb_top} (waveforms → vcdplus.vpd) ...")
+    try:
+        rp = subprocess.run(
+            [simv, "+vcs+initreg+0"], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120, cwd=work_dir,
+        )
+    except FileNotFoundError:
+        msg = f"ERROR: compiled binary not found at {simv}"
+        print(f"  {msg}")
+        _write_result(results, "FAIL", full_log + "\n" + msg)
+        return False
+
+    sim_out = rp.stdout + rp.stderr
+    full_log += sim_out
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
+
+    print(f"  [{tag}] Output:\n{sim_out.strip()}")
+
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# PrimePower (PTPX) power analysis (csun.edu only — requires pt_shell + PDK .db)
+# ---------------------------------------------------------------------------
+
+def _print_power_report(tag: str, overall_rpt: str, hier_rpt: str,
+                        cells_rpt: str, nets_rpt: str) -> None:
+    """Print overall, per-block, top-10 cell, and top-10 net power to stdout."""
+    print(f"\n  [{tag}] {'=' * 55}")
+    print(f"  [{tag}] Power Analysis Report")
+    print(f"  [{tag}] {'=' * 55}")
+    for title, path in [
+        ("Overall Power", overall_rpt),
+        ("Power by Hierarchy", hier_rpt),
+        ("Top 10 Cells by Total Power", cells_rpt),
+        ("Top 10 Nets by Switching Power", nets_rpt),
+    ]:
+        print(f"\n  [{tag}] --- {title} ---")
+        if os.path.isfile(path):
+            with open(path) as fh:
+                for line in fh:
+                    print(f"    {line.rstrip()}")
+        else:
+            print(f"    (report not generated — see pt_shell.log)")
+
+
+def run_power_analysis(proto: str, pdk: str, ip_path: str,
+                       postsyn_work_dir: str) -> bool:
+    """Run PrimePower (PTPX) power analysis on the post-synthesis simulation.
+
+    Flow:
+      1. Convert VPD → SAIF with vcd2saif (scope = tb_bus_matrix_{proto}/u_dut)
+      2. Write a PTPX Tcl script that reads the netlist, SDC, SAIF, and liberty DB
+      3. Run pt_shell -f run_power.tcl
+      4. Print overall power, top-10 cells, top-10 nets from generated reports
+
+    Outputs land in <postsyn_work_dir>/power/:
+      power.saif            — switching-activity from simulation
+      run_power.tcl         — generated PTPX script
+      pt_shell.log          — raw pt_shell transcript
+      power_annotation.rpt  — SAIF annotation coverage (should be ~100%)
+      power_overall.rpt     — report_power, by power group (mW)
+      power_hierarchy.rpt   — report_power -hierarchy (u_core, per-port adapters)
+      power_top_cells.rpt   — top 10 leaf cells by total power
+      power_top_nets.rpt    — top 10 nets by switching power
+    """
+    power_dir = os.path.join(postsyn_work_dir, "power")
+    os.makedirs(power_dir, exist_ok=True)
+
+    tag     = f"power/{proto}/{pdk}"
+    results = os.path.join(power_dir, "results.log")
+
+    # ── Pre-flight ────────────────────────────────────────────────────────
+    vpd_file = os.path.join(postsyn_work_dir, "vcdplus.vpd")
+    if not os.path.isfile(vpd_file):
+        msg = f"ERROR: {vpd_file} not found — run --postsyn first."
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    netlist_dir = os.path.join(
+        ip_path, "synthesis", "designcompiler", "netlists", pdk
+    )
+    netlist = os.path.join(netlist_dir, f"bus_matrix_{proto}.v")
+    if not os.path.isfile(netlist):
+        msg = f"ERROR: netlist not found at {netlist}"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    cfg      = POSTSYN_PDK_CONFIGS[pdk]
+    db_libs  = cfg.get("db_libs", [])
+    if pdk == "sky130" and build_sky130_libs.ensure_sky130_dbs() is None:
+        msg = "ERROR: could not build the sky130 .db cache (see lc_run.log)"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+    missing  = [f for f in db_libs if not os.path.isfile(f)]
+    if missing:
+        msg = "ERROR: liberty DB files not found:\n" + "\n".join(missing)
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # ── Generate SAIF from VPD ────────────────────────────────────────────
+    tb_top    = f"tb_bus_matrix_{proto}"
+    design    = f"bus_matrix_{proto}"
+    scope     = f"{tb_top}/u_dut"
+    saif_file = os.path.join(power_dir, "power.saif")
+
+    print(f"  [{tag}] Converting VPD → SAIF (instance={scope}) ...")
+    if os.path.isfile(saif_file):
+        os.remove(saif_file)
+    try:
+        cp = subprocess.run(
+            ["vcd2saif", "-input", vpd_file, "-output", saif_file,
+             "-instance", scope],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=120,
+        )
+        # vcd2saif exits 0 even on bad arguments — check for the output file.
+        if cp.returncode != 0 or not os.path.isfile(saif_file):
+            msg = f"ERROR: vcd2saif failed:\n{cp.stdout}{cp.stderr}"
+            print(f"  [{tag}] {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+    except FileNotFoundError:
+        msg = "ERROR: vcd2saif not found — is Synopsys VCS MX in PATH?"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    # ── Write PTPX Tcl script ─────────────────────────────────────────────
+    overall_rpt = os.path.join(power_dir, "power_overall.rpt")
+    cells_rpt   = os.path.join(power_dir, "power_top_cells.rpt")
+    nets_rpt    = os.path.join(power_dir, "power_top_nets.rpt")
+    hier_rpt    = os.path.join(power_dir, "power_hierarchy.rpt")
+    annot_rpt   = os.path.join(power_dir, "power_annotation.rpt")
+    tcl_script  = os.path.join(power_dir, "run_power.tcl")
+    for stale in (overall_rpt, hier_rpt, cells_rpt, nets_rpt, annot_rpt):
+        if os.path.isfile(stale):
+            os.remove(stale)
+
+    # DC writes the SDC next to the netlist; it defines the clock PTPX needs.
+    sdc_file = os.path.join(netlist_dir, f"bus_matrix_{proto}.sdc")
+    if not os.path.isfile(sdc_file):
+        msg = f"ERROR: SDC not found at {sdc_file}"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    db_str = " ".join(db_libs)
+    tcl_lines = [
+        "# PTPX power analysis — auto-generated by sim_bus_matrix.py",
+        "set_app_var power_enable_analysis true",
+        "set_app_var power_analysis_mode averaged",
+        "",
+        f"set target_library [list {db_str}]",
+        "set link_library [concat {*} $target_library]",
+        "",
+        f"read_verilog {netlist}",
+        f"current_design {design}",
+        "link_design",
+        f"read_sdc {sdc_file}",
+        "",
+        f"read_saif {saif_file} -strip_path {scope}",
+        "",
+        "update_power",
+        "",
+        f"redirect {annot_rpt} {{ report_switching_activity -list_not_annotated }}",
+        f"redirect {overall_rpt} {{ report_power -nosplit -unit mW }}",
+        f"redirect {hier_rpt} {{ report_power -nosplit -unit mW -hierarchy -levels 2 }}",
+        f"redirect {cells_rpt} {{ report_power -nosplit -unit mW -cell_power -leaf \\",
+        "    -nworst 10 -sort_by total_power }",
+        f"redirect {nets_rpt} {{ report_power -nosplit -unit mW -net_power -leaf \\",
+        "    -nworst 10 -sort_by net_switching_power }",
+        "",
+        "exit",
+    ]
+    with open(tcl_script, "w") as fh:
+        fh.write("\n".join(tcl_lines) + "\n")
+
+    # ── Run pt_shell ──────────────────────────────────────────────────────
+    pt_log = os.path.join(power_dir, "pt_shell.log")
+    print(f"  [{tag}] Running PrimePower (pt_shell) ...")
+    try:
+        cp = subprocess.run(
+            ["pt_shell", "-f", tcl_script],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True, timeout=300, cwd=power_dir,
+        )
+        full_log = cp.stdout + cp.stderr
+    except FileNotFoundError:
+        msg = "ERROR: pt_shell not found — is Synopsys PrimeTime in PATH?"
+        print(f"  [{tag}] {msg}")
+        _write_result(results, "FAIL", msg)
+        return False
+
+    with open(pt_log, "w") as fh:
+        fh.write(full_log)
+
+    # pt_shell exits 0 even when the script aborts on an error, so judge the
+    # run by its log and its reports. PT-063 (Library Compiler path unset) is
+    # printed at every startup and is harmless — we only read compiled .db files.
+    errors = [ln for ln in full_log.splitlines()
+              if ln.startswith("Error:") and "(PT-063)" not in ln]
+    missing_rpts = [r for r in (overall_rpt, hier_rpt, cells_rpt, nets_rpt)
+                    if not os.path.isfile(r) or os.path.getsize(r) == 0]
+    if cp.returncode != 0 or errors or missing_rpts:
+        print(f"  [{tag}] pt_shell FAILED (see {pt_log})")
+        for ln in errors:
+            print(f"    {ln}")
+        _print_power_report(tag, overall_rpt, hier_rpt, cells_rpt, nets_rpt)
+        _write_result(results, "FAIL", full_log)
+        return False
+
+    _print_power_report(tag, overall_rpt, hier_rpt, cells_rpt, nets_rpt)
+    _write_result(results, "PASS", full_log)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Xcelium runner (csun.edu only)
+# ---------------------------------------------------------------------------
+
+def run_xcelium(proto: str, lang: str, ip_path: str, work_dir: str) -> bool:
+    """Compile, elaborate, and simulate with Cadence Xcelium. Returns True on PASS.
+
+    SV flow  (1 step via xrun):
+      xrun -64 -access +rwc -timescale 1ns/1ps -sv +incdir+... <sv-files> -top <tb_top>
+
+    VHDL flow (3 steps — xrun does not expose xmvhdl's -v2k8 flag directly):
+      1. xmvhdl -64 -work work -v2k8 <vhd-files>   (analyze VHDL-2008)
+      2. xmelab -64 -access +rwc -log elab.log <tb_top>  (elaborate)
+      3. xmsim  -64 -log sim.log <tb_top>           (simulate)
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    log_path  = os.path.join(work_dir, "sim.log")
+    results   = os.path.join(work_dir, "results.log")
+    tb_top    = f"tb_bus_matrix_{proto}"
+    full_log  = ""
+
+    def _run(cmd, label, timeout=180):
+        """Run a subprocess; return (stdout+stderr, returncode) or raise on tool-not-found."""
+        try:
+            p = subprocess.run(cmd, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               universal_newlines=True, timeout=timeout, cwd=work_dir)
+            return p.stdout + p.stderr, p.returncode
+        except FileNotFoundError:
+            raise RuntimeError("ERROR: {} not found — is Cadence Xcelium in PATH?".format(cmd[0]))
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("ERROR: {} timed out after {}s".format(label, timeout))
 
     if lang == "sv":
-        rtl_srcs = [
-            os.path.join(rtl_dir, "bus_matrix_decoder.sv"),
-            os.path.join(rtl_dir, "bus_matrix_arb.sv"),
-            os.path.join(rtl_dir, "bus_matrix_core.sv"),
-            os.path.join(rtl_dir, f"bus_matrix_{proto}.sv"),
-        ]
-        bfm_srcs = [
-            os.path.join(tb_dir, f"bus_matrix_{proto}_master.sv"),
-            os.path.join(tb_dir, f"bus_matrix_{proto}_slave.sv"),
-        ]
-        tb_src = os.path.join(tb_dir, f"{tb_top}.sv")
-
-        incdirs = [tasks_dir, ctests_dir, tests_dir, tb_dir]
+        # ── SV: single xrun step ──────────────────────────────────────────
+        incdirs = sv_include_dirs(ip_path)
         incflag = "+incdir+" + "+".join(incdirs)
+        xrun_cmd = [
+            "xrun", "-64", "-access", "+rwc",
+            # Set default timescale for modules that lack a `timescale directive;
+            # xmelab requires all modules to agree on timescale when any one specifies it.
+            "-timescale", "1ns/1ps",
+            "-log", log_path,
+            "-work", "work",
+            "-sv", incflag,
+        ] + sv_files(proto, ip_path) + ["-top", tb_top]
 
-        log_file = os.path.join(run_dir, "sim.log")
-        open(log_file, "w").close()
-        xrun_cmd = (
-            ["xrun", "-64", "-access", "+rwc", "-timescale", "1ns/1ps",
-             "-work", "work", "-sv", incflag]
-            + rtl_srcs + bfm_srcs + [tb_src]
-            + ["-top", tb_top]
-        )
-        rc, out = run_cmd(xrun_cmd, cwd=run_dir, logfile=log_file, timeout=180)
+        print(f"  [xcelium/{proto}_{lang}] Running xrun ...")
+        try:
+            out, rc = _run(xrun_cmd, "xrun")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+
+        try:
+            with open(log_path, errors="replace") as fh:
+                full_log = fh.read()
+        except OSError:
+            full_log = out
+
+    else:
+        # ── VHDL: xmvhdl → xmelab → xmsim ───────────────────────────────
+        src = vhdl_files(proto, ip_path)
+        elab_log = os.path.join(work_dir, "elab.log")
+
+        # Step 1: xmvhdl — VHDL-2008 analysis
+        # -V200X:        enable VHDL-200X (2008) + VHDL-93 features
+        # -INC_V200X_PKG: implicitly include *_additions packages (e.g.
+        #                  std_logic_1164_additions) so that to_hstring and
+        #                  other 2008 subprograms are visible without an
+        #                  explicit use clause in user code.
+        # -WORK must be uppercase for xmvhdl.
+        vhdl_cmd = ["xmvhdl", "-64", "-WORK", "work", "-V200X", "-INC_V200X_PKG"] + src
+        print(f"  [xcelium/{proto}_{lang}] Analyzing VHDL (xmvhdl -V200X) ...")
+        try:
+            out, rc = _run(vhdl_cmd, "xmvhdl")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", msg)
+            return False
+        full_log += out
         if rc != 0:
-            return False, f"xrun FAILED:\n{out}"
-        return check_pass(out, proto), out
-
-    else:  # vhdl
-        vhdl_srcs, tb_file = _vhdl_srcs(ip_path, common_path, proto)
-        if not os.path.isfile(tb_file):
-            return False, f"VHDL testbench not found: {tb_file}"
-        vhdl_srcs = vhdl_srcs + [tb_file]
-
-        # Step 1: xmvhdl — VHDL-2008 analysis (-WORK must be uppercase)
-        log_file = os.path.join(run_dir, "xmvhdl.log")
-        open(log_file, "w").close()
-        vhdl_cmd = ["xmvhdl", "-64", "-WORK", "work", "-V200X", "-INC_V200X_PKG"] + vhdl_srcs
-        rc, out = run_cmd(vhdl_cmd, cwd=run_dir, logfile=log_file, timeout=180)
-        if rc != 0:
-            return False, f"xmvhdl FAILED:\n{out}"
+            print(f"  [xcelium/{proto}_{lang}] xmvhdl FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
 
         # Step 2: xmelab — elaborate
-        elab_log = os.path.join(run_dir, "elab.log")
-        open(elab_log, "w").close()
-        elab_cmd = ["xmelab", "-64", "-access", "+rwc", tb_top]
-        rc, out = run_cmd(elab_cmd, cwd=run_dir, logfile=elab_log, timeout=180)
+        elab_cmd = ["xmelab", "-64", "-access", "+rwc", "-log", elab_log, tb_top]
+        print(f"  [xcelium/{proto}_{lang}] Elaborating (xmelab) ...")
+        try:
+            out, rc = _run(elab_cmd, "xmelab")
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        try:
+            with open(elab_log, errors="replace") as fh:
+                full_log += fh.read()
+        except OSError:
+            full_log += out
         if rc != 0:
-            return False, f"xmelab FAILED:\n{out}"
+            print(f"  [xcelium/{proto}_{lang}] xmelab FAILED:\n{out}")
+            _write_result(results, "FAIL", full_log)
+            return False
 
-        # Step 3: xmsim — simulate, dumping waves.shm/ via an inline command script
-        sim_log = os.path.join(run_dir, "sim.log")
-        open(sim_log, "w").close()
+        # Step 3: xmsim — simulate
+        # VHDL has no PLI hook like SV's $shm_open/$shm_probe, so the SHM
+        # waveform database is opened via an inline xmsim command script
+        # instead (dumped to waves.shm/ in the sim work directory).
         shm_cmd = ("@database -open waves -shm -default; "
                    "probe -database waves -create / -all -depth all; "
                    "run; exit")
-        sim_cmd = ["xmsim", "-64", "-input", shm_cmd, tb_top]
-        rc, out = run_cmd(sim_cmd, cwd=run_dir, logfile=sim_log, timeout=120)
-        return check_pass(out, proto), out
+        sim_cmd = ["xmsim", "-64", "-log", log_path, "-input", shm_cmd, tb_top]
+        print(f"  [xcelium/{proto}_{lang}] Simulating (xmsim) ...")
+        try:
+            out, rc = _run(sim_cmd, "xmsim", timeout=120)
+        except RuntimeError as exc:
+            msg = str(exc)
+            print(f"  {msg}")
+            _write_result(results, "FAIL", full_log + "\n" + msg)
+            return False
+        try:
+            with open(log_path, errors="replace") as fh:
+                full_log += fh.read()
+        except OSError:
+            full_log += out
 
+    with open(log_path, "w") as fh:
+        fh.write(full_log)
 
-def main():
-    ip_path = os.environ.get("CLAUDE_BUS_MATRIX_PATH")
-    if not ip_path:
-        print("ERROR: CLAUDE_BUS_MATRIX_PATH is not set.")
-        print("       Please run:  source IP/interface/bus_matrix/setup.sh")
-        sys.exit(1)
-
-    ip_path = str(Path(ip_path).resolve())
-    common_path = os.environ.get(
-        "IP_COMMON_PATH",
-        str(Path(ip_path).parent.parent / "common"),
+    # Filter cosmetic CLE-10/ERR-3 lines that xmsim emits when std.env.stop is
+    # called; they are unavoidable with the 3-step xmvhdl/xmelab/xmsim flow and
+    # do not affect pass/fail determination (they appear after the PASS marker).
+    display_log = "\n".join(
+        ln for ln in full_log.splitlines()
+        if "CLE-10" not in ln and "ERR-3" not in ln
     )
-    common_path = str(Path(common_path).resolve())
+    print(f"  [xcelium/{proto}_{lang}] Output (tail):\n{display_log[-800:].strip()}")
 
-    parser = argparse.ArgumentParser(description="Run bus_matrix simulations")
-    parser.add_argument(
-        "--proto",
-        choices=["ahb", "axi", "wb", "all"],
-        default="all",
-        help="Bus protocol variant to simulate (default: all)",
-    )
-    parser.add_argument(
-        "--lang",
-        choices=["sv", "vhdl", "all"],
-        default="all",
-        help="HDL language to simulate (default: all)",
+    pass_marker  = f"PASS {tb_top}"
+    fail_markers = ["FAIL", "FATAL_ERROR", "ERROR"]
+    pass_pos = full_log.find(pass_marker)
+    if pass_pos >= 0:
+        passed = not any(m in full_log[:pass_pos] for m in fail_markers)
+    else:
+        passed = False
+    _write_result(results, "PASS" if passed else "FAIL", full_log)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    ip_path = get_ip_path()
+
+    parser = argparse.ArgumentParser(
+        description="Run simulation tests for the bus_matrix IP block."
     )
     parser.add_argument(
         "--sim",
-        choices=["icarus", "ghdl", "xsim", "modelsim", "vcs", "xcelium", "all"],
+        choices=["icarus", "ghdl", "modelsim", "xsim", "vcs", "xcelium", "all"],
         default=None,
         help="Simulator to use. On *.csun.edu only vcs and xcelium are "
-             "available. 'all' selects icarus+ghdl+xsim+modelsim on standard "
-             "hosts and vcs+xcelium on csun.edu. (default: icarus on "
-             "standard hosts, vcs on csun.edu)",
+             "available. 'all' selects icarus+ghdl on standard hosts and "
+             "vcs+xcelium on csun.edu. (default: icarus on standard hosts, vcs on csun.edu)",
+    )
+    parser.add_argument(
+        "--proto",
+        choices=SUPPORTED_PROTOS + ["all"],
+        default="apb",
+        help="Bus protocol (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=SUPPORTED_LANGS + ["all"],
+        default="sv",
+        help="HDL language (default: %(default)s)",
     )
     parser.add_argument(
         "--test",
         default=None,
         help="Name of a specific test (informational only; all tests run by default)",
     )
+    parser.add_argument(
+        "--postsyn",
+        action="store_true",
+        default=False,
+        help="Run post-synthesis simulation using DC gate-level netlists and SDF "
+             "back-annotation (csun.edu only, VCS only). Use --pdk to select the PDK.",
+    )
+    parser.add_argument(
+        "--pdk",
+        choices=SUPPORTED_PDKS + ["all"],
+        default="all",
+        help="PDK for post-synthesis simulation: saed90, saed32, saed14, sky130, or all "
+             "(default: %(default)s). Ignored unless --postsyn or --power is given.",
+    )
+    parser.add_argument(
+        "--power",
+        action="store_true",
+        default=False,
+        help="Run PrimePower (PTPX) power analysis after post-synthesis simulation. "
+             "Implies --postsyn. Reports overall power, top 10 worst cells, top 10 "
+             "worst nets. csun.edu only; requires pt_shell and the PDK liberty DB files.",
+    )
     args = parser.parse_args()
 
+    # Apply csun.edu restrictions before expanding 'all'
     sim_arg = args.sim
     if sim_arg is None:
         sim_arg = "vcs" if ON_CSUN else "icarus"
@@ -559,73 +1462,114 @@ def main():
         print("       Use --sim vcs or --sim xcelium on this host.")
         sys.exit(1)
 
-    protos = ["ahb", "axi", "wb"] if args.proto == "all" else [args.proto]
-    langs  = ["sv", "vhdl"]       if args.lang  == "all" else [args.lang]
+    # Expand 'all'
+    protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
+    langs  = SUPPORTED_LANGS  if args.lang  == "all" else [args.lang]
     if sim_arg == "all":
-        sims = ["vcs", "xcelium"] if ON_CSUN else ["icarus", "ghdl", "xsim", "modelsim"]
+        sims = ["vcs", "xcelium"] if ON_CSUN else ["icarus", "ghdl", "modelsim", "xsim"]
     else:
         sims = [sim_arg]
 
     work_base = os.path.join(ip_path, "verification", "work")
-    overall_pass = True
+
+    all_pass = True
+    results_summary = []
 
     for sim in sims:
         for proto in protos:
             for lang in langs:
-                run_dir = os.path.join(work_base, sim, f"{proto}_{lang}")
-                os.makedirs(run_dir, exist_ok=True)
-                result_log = os.path.join(run_dir, "results.log")
+                # Skip invalid combinations for single-language simulators
+                if sim == "icarus" and lang != "sv":
+                    continue
+                if sim == "ghdl" and lang != "vhdl":
+                    continue
+                work_dir = os.path.join(work_base, sim, f"{proto}_{lang}")
 
-                print(f"\n[{sim}/{proto}_{lang}] Running...")
-                t0 = time.time()
-
-                passed = False
-                detail = ""
-
-                if sim == "icarus" and lang == "sv":
-                    passed, detail = run_icarus_sv(ip_path, common_path, proto, run_dir)
-                elif sim == "ghdl" and lang == "vhdl":
-                    passed, detail = run_ghdl_vhdl(ip_path, common_path, proto, run_dir)
-                elif sim == "xsim" and lang == "sv":
-                    passed, detail = run_xsim_sv(ip_path, common_path, proto, run_dir)
+                if sim == "icarus":
+                    ok = run_icarus(proto, ip_path, work_dir)
+                elif sim == "ghdl":
+                    ok = run_ghdl(proto, ip_path, work_dir)
                 elif sim == "modelsim":
-                    passed, detail = run_modelsim(ip_path, common_path, proto, lang, run_dir)
+                    ok = run_modelsim(proto, lang, ip_path, work_dir)
+                elif sim == "xsim":
+                    ok = run_xsim(proto, lang, ip_path, work_dir)
                 elif sim == "vcs":
-                    passed, detail = run_vcs(ip_path, common_path, proto, lang, run_dir)
+                    ok = run_vcs(proto, lang, ip_path, work_dir)
                 elif sim == "xcelium":
-                    passed, detail = run_xcelium(ip_path, common_path, proto, lang, run_dir)
+                    ok = run_xcelium(proto, lang, ip_path, work_dir)
                 else:
-                    # Unsupported combination (e.g. icarus+vhdl, ghdl+sv, xsim+vhdl)
-                    detail = f"Skipped: {sim} does not support {lang}"
-                    passed = True  # skip counts as pass (not a failure)
+                    ok = False
 
-                elapsed = time.time() - t0
-                if detail.startswith("Skipped:"):
-                    status = "SKIP"
-                else:
-                    status = "PASS" if passed else "FAIL"
+                label = f"{sim}/{proto}_{lang}"
+                results_summary.append((label, "PASS" if ok else "FAIL"))
+                if not ok:
+                    all_pass = False
 
-                with open(result_log, "w") as fh:
-                    fh.write(f"{status}\n")
-                    fh.write(f"# sim={sim} proto={proto} lang={lang}\n")
-                    fh.write(f"# elapsed={elapsed:.1f}s\n")
-                    if detail:
-                        fh.write(f"# {detail[:200]}\n")
+    # ── Post-synthesis simulation (and optional power analysis) ───────────
+    if args.postsyn or args.power:
+        if not ON_CSUN:
+            print("WARNING: --postsyn/--power is only supported on *.csun.edu "
+                  "(requires VCS, the PDK libraries, and pt_shell). Skipping.")
+        else:
+            pdks = SUPPORTED_PDKS if args.pdk == "all" else [args.pdk]
+            for pdk in pdks:
+                for proto in protos:
+                    work_dir = os.path.join(work_base, "postsyn", pdk, proto)
+                    ok = run_vcs_postsyn(proto, pdk, ip_path, work_dir)
+                    label = f"postsyn-vcs/{proto}/{pdk}"
+                    if ok:
+                        status = "PASS"
+                    elif pdk in POSTSYN_KNOWN_FAILURES:
+                        status = "FAIL (known)"
+                        print(f"  [{label}] Known failure — {pdk} has an accepted "
+                              f"timing violation (not a tool/script bug); see "
+                              f"synthesis/known_issues.md.")
+                    else:
+                        status = "FAIL"
+                    results_summary.append((label, status))
+                    if not ok:
+                        all_pass = False
 
-                print(f"[{sim}/{proto}_{lang}] {status}  ({elapsed:.1f}s)")
-                print(f"  result: {result_log}")
+                    if args.power and not ok:
+                        # Switching activity from a failing gate-level sim
+                        # (e.g. X-filled registers) would yield plausible-looking
+                        # but meaningless power numbers, so don't produce any.
+                        print(f"  [power/{proto}/{pdk}] Skipped — post-syn "
+                              f"simulation did not pass.")
+                        results_summary.append((f"power/{proto}/{pdk}", "SKIP"))
+                    elif args.power:
+                        pow_ok = run_power_analysis(proto, pdk, ip_path, work_dir)
+                        results_summary.append(
+                            (f"power/{proto}/{pdk}", "PASS" if pow_ok else "FAIL")
+                        )
+                        if not pow_ok:
+                            all_pass = False
 
-                if not passed:
-                    overall_pass = False
+    # Print summary
+    GREEN  = "\033[32m"
+    YELLOW = "\033[33m"
+    RED    = "\033[31m"
+    RESET  = "\033[0m"
 
     print("\n" + "=" * 60)
-    if overall_pass:
-        print("ALL SIMULATIONS PASSED")
-    else:
-        print("ONE OR MORE SIMULATIONS FAILED")
+    print("Simulation Results Summary")
+    print("=" * 60)
+    for label, status in results_summary:
+        if status == "PASS":
+            color = GREEN
+        elif status in ("FAIL (known)", "SKIP"):
+            color = YELLOW
+        else:
+            color = RED
+        print(f"  {label:<35} {color}{status}{RESET}")
     print("=" * 60)
 
-    sys.exit(0 if overall_pass else 1)
+    if not all_pass:
+        print(f"One or more simulations {RED}FAILED{RESET}.")
+        sys.exit(1)
+    else:
+        print(f"All simulations {GREEN}PASSED{RESET}.")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

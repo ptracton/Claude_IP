@@ -1,15 +1,21 @@
-// tb_bus_matrix_wb.sv — Top-level Wishbone bus_matrix testbench.
+// tb_bus_matrix_wb.sv — Wishbone B4 bus_matrix directed testbench.
 //
-// Instantiates bus_matrix_wb DUT (NUM_MASTERS=2, NUM_SLAVES=2).
-// Address map is configured via DUT parameters (no admin port).
-// Slave map: S0 at 0x10000000/F0000000, S1 at 0x20000000/F0000000.
+// DUT: bus_matrix_wb with its default parameters (bus_matrix_pkg), so the
+// same testbench runs the RTL and the Design Compiler gate-level netlist.
+//   Masters: u_m0, u_m1 — bus_matrix_wb_bfm (shared tasks_wb.sv)
+//   Slaves:  gen_slv[j] — shared claude_wb_if bridge + bus_matrix_tb_mem
+// Tests are protocol-neutral (verification/tests/test_*.sv).
+
+`timescale 1ns / 1ps
 
 module tb_bus_matrix_wb;
 
-  localparam int NM = 2;
-  localparam int NS = 2;
-  localparam int DW = 32;
-  localparam int AW = 32;
+  localparam int NM     = bus_matrix_pkg::BM_NUM_MASTERS;
+  localparam int NS     = bus_matrix_pkg::BM_NUM_SLAVES;
+  localparam int DW     = 32;
+  localparam int AW     = 32;
+  localparam int SW     = DW / 8;
+  localparam int MEM_AW = 10; // 1024 words = 4 KB per slave
 
   // -------------------------------------------------------------------------
   // Clock and reset
@@ -21,138 +27,140 @@ module tb_bus_matrix_wb;
   always #5 clk = ~clk; // 100 MHz
 
   // -------------------------------------------------------------------------
-  // Matrix master ports (flat-packed, NM slots)
+  // DUT ports (flat-packed)
   // -------------------------------------------------------------------------
-  logic [NM-1:0]      M_CYC;
-  logic [NM-1:0]      M_STB;
-  logic [NM-1:0]      M_WE;
-  logic [NM*AW-1:0]   M_ADR;
-  logic [NM*DW-1:0]   M_DAT_I;
-  logic [NM*4-1:0]    M_SEL;
-  logic [NM*DW-1:0]   M_DAT_O;
-  logic [NM-1:0]      M_ACK;
-  logic [NM-1:0]      M_ERR;
+  wire [NM-1:0]         M_CYC;
+  wire [NM-1:0]         M_STB;
+  wire [NM-1:0]         M_WE;
+  wire [NM*AW-1:0]      M_ADR;
+  wire [NM*DW-1:0]      M_DAT_I;
+  wire [NM*SW-1:0]      M_SEL;
+  wire [NM*DW-1:0]      M_DAT_O;
+  wire [NM-1:0]         M_ACK;
+  wire [NM-1:0]         M_ERR;
+  wire [NS-1:0]         S_CYC;
+  wire [NS-1:0]         S_STB;
+  wire [NS-1:0]         S_WE;
+  wire [NS*AW-1:0]      S_ADR;
+  wire [NS*DW-1:0]      S_DAT_O;
+  wire [NS*SW-1:0]      S_SEL;
+  wire [NS*DW-1:0]      S_DAT_I;
+  wire [NS-1:0]         S_ACK;
+  wire [NS-1:0]         S_ERR;
 
-  // -------------------------------------------------------------------------
-  // Matrix slave ports (flat-packed, NS slots)
-  // -------------------------------------------------------------------------
-  logic [NS-1:0]      S_CYC;
-  logic [NS-1:0]      S_STB;
-  logic [NS-1:0]      S_WE;
-  logic [NS*AW-1:0]   S_ADR;
-  logic [NS*DW-1:0]   S_DAT_O;
-  logic [NS*4-1:0]    S_SEL;
-  logic [NS*DW-1:0]   S_DAT_I;
-  logic [NS-1:0]      S_ACK;
-  logic [NS-1:0]      S_ERR;
-
-  // -------------------------------------------------------------------------
-  // DUT: bus_matrix_wb — address map baked into parameters
-  // -------------------------------------------------------------------------
-  bus_matrix_wb #(
-    .NUM_MASTERS (NM),
-    .NUM_SLAVES  (NS),
-    .DATA_W      (DW),
-    .ADDR_W      (AW),
-    .ARB_MODE    (0),
-    .M_PRIORITY  (8'h00),
-    .S_BASE      (64'h2000_0000_1000_0000),
-    .S_MASK      (64'hF000_0000_F000_0000)
-  ) u_dut (
-    .clk    (clk),
-    .rst_n  (rst_n),
-    .M_CYC  (M_CYC),
-    .M_STB  (M_STB),
-    .M_WE   (M_WE),
-    .M_ADR  (M_ADR),
-    .M_DAT_I(M_DAT_I),
-    .M_SEL  (M_SEL),
-    .M_DAT_O(M_DAT_O),
-    .M_ACK  (M_ACK),
-    .M_ERR  (M_ERR),
-    .S_CYC  (S_CYC),
-    .S_STB  (S_STB),
-    .S_WE   (S_WE),
-    .S_ADR  (S_ADR),
-    .S_DAT_O(S_DAT_O),
-    .S_SEL  (S_SEL),
-    .S_DAT_I(S_DAT_I),
-    .S_ACK  (S_ACK),
-    .S_ERR  (S_ERR)
+  bus_matrix_wb u_dut (
+    .clk     (clk),
+    .rst_n   (rst_n),
+    .M_CYC   (M_CYC),
+    .M_STB   (M_STB),
+    .M_WE    (M_WE),
+    .M_ADR   (M_ADR),
+    .M_DAT_I (M_DAT_I),
+    .M_SEL   (M_SEL),
+    .M_DAT_O (M_DAT_O),
+    .M_ACK   (M_ACK),
+    .M_ERR   (M_ERR),
+    .S_CYC   (S_CYC),
+    .S_STB   (S_STB),
+    .S_WE    (S_WE),
+    .S_ADR   (S_ADR),
+    .S_DAT_O (S_DAT_O),
+    .S_SEL   (S_SEL),
+    .S_DAT_I (S_DAT_I),
+    .S_ACK   (S_ACK),
+    .S_ERR   (S_ERR)
   );
 
   // -------------------------------------------------------------------------
-  // BFM control signals — master 0
+  // Masters
   // -------------------------------------------------------------------------
-  logic        m0_req;
-  logic [31:0] m0_req_addr;
-  logic        m0_req_write;
-  logic [31:0] m0_req_wdata;
-  logic [3:0]  m0_req_strb;
-  logic        m0_done;
-  logic [31:0] m0_rdata;
-  logic        m0_error;
+  bus_matrix_wb_bfm u_m0 (
+    .clk   (clk),
+    .CYC_I (M_CYC[0]),
+    .STB_I (M_STB[0]),
+    .WE_I  (M_WE[0]),
+    .ADR_I (M_ADR[0*AW+:AW]),
+    .DAT_I (M_DAT_I[0*DW+:DW]),
+    .SEL_I (M_SEL[0*SW+:SW]),
+    .DAT_O (M_DAT_O[0*DW+:DW]),
+    .ACK_O (M_ACK[0]),
+    .ERR_O (M_ERR[0])
+  );
 
-  // -------------------------------------------------------------------------
-  // BFM control signals — master 1
-  // -------------------------------------------------------------------------
-  logic        m1_req;
-  logic [31:0] m1_req_addr;
-  logic        m1_req_write;
-  logic [31:0] m1_req_wdata;
-  logic [3:0]  m1_req_strb;
-  logic        m1_done;
-  logic [31:0] m1_rdata;
-  logic        m1_error;
-
-  // -------------------------------------------------------------------------
-  // Master 0 BFM
-  // -------------------------------------------------------------------------
-  bus_matrix_wb_master #(.DATA_W(DW), .ADDR_W(AW)) u_m0 (
-    .clk(clk), .rst_n(rst_n),
-    .CYC(M_CYC[0]), .STB(M_STB[0]), .WE(M_WE[0]),
-    .ADR(M_ADR[31:0]), .DAT_O(M_DAT_I[31:0]), .SEL(M_SEL[3:0]),
-    .DAT_I(M_DAT_O[31:0]), .ACK(M_ACK[0]), .ERR(M_ERR[0]),
-    .req(m0_req), .req_addr(m0_req_addr), .req_write(m0_req_write),
-    .req_wdata(m0_req_wdata), .req_strb(m0_req_strb),
-    .done(m0_done), .rdata(m0_rdata), .error(m0_error)
+  bus_matrix_wb_bfm u_m1 (
+    .clk   (clk),
+    .CYC_I (M_CYC[1]),
+    .STB_I (M_STB[1]),
+    .WE_I  (M_WE[1]),
+    .ADR_I (M_ADR[1*AW+:AW]),
+    .DAT_I (M_DAT_I[1*DW+:DW]),
+    .SEL_I (M_SEL[1*SW+:SW]),
+    .DAT_O (M_DAT_O[1*DW+:DW]),
+    .ACK_O (M_ACK[1]),
+    .ERR_O (M_ERR[1])
   );
 
   // -------------------------------------------------------------------------
-  // Master 1 BFM
+  // Slaves: shared bus bridge + memory
   // -------------------------------------------------------------------------
-  bus_matrix_wb_master #(.DATA_W(DW), .ADDR_W(AW)) u_m1 (
-    .clk(clk), .rst_n(rst_n),
-    .CYC(M_CYC[1]), .STB(M_STB[1]), .WE(M_WE[1]),
-    .ADR(M_ADR[63:32]), .DAT_O(M_DAT_I[63:32]), .SEL(M_SEL[7:4]),
-    .DAT_I(M_DAT_O[63:32]), .ACK(M_ACK[1]), .ERR(M_ERR[1]),
-    .req(m1_req), .req_addr(m1_req_addr), .req_write(m1_req_write),
-    .req_wdata(m1_req_wdata), .req_strb(m1_req_strb),
-    .done(m1_done), .rdata(m1_rdata), .error(m1_error)
-  );
+  for (genvar gj = 0; gj < NS; gj++) begin : gen_slv
+    logic              wr_en;
+    logic [MEM_AW-1:0] wr_addr;
+    logic [DW-1:0]     wr_data;
+    logic [SW-1:0]     wr_strb;
+    logic              rd_en;
+    logic [MEM_AW-1:0] rd_addr;
+    logic [DW-1:0]     rd_data;
+
+    claude_wb_if #(
+      .DATA_W (DW),
+      .ADDR_W (MEM_AW)
+    ) u_if (
+      .CLK_I   (clk),
+      .RST_I   (~rst_n),
+      .CYC_I   (S_CYC[gj]),
+      .STB_I   (S_STB[gj]),
+      .WE_I    (S_WE[gj]),
+      .ADR_I   (S_ADR[gj*AW+:12]),
+      .DAT_I   (S_DAT_O[gj*DW+:DW]),
+      .SEL_I   (S_SEL[gj*SW+:SW]),
+      .DAT_O   (S_DAT_I[gj*DW+:DW]),
+      .ACK_O   (S_ACK[gj]),
+      .ERR_O   (S_ERR[gj]),
+      .wr_en   (wr_en),
+      .wr_addr (wr_addr),
+      .wr_data (wr_data),
+      .wr_strb (wr_strb),
+      .rd_en   (rd_en),
+      .rd_addr (rd_addr),
+      .rd_data (rd_data)
+    );
+
+    bus_matrix_tb_mem #(
+      .ADDR_W (MEM_AW)
+    ) u_mem (
+      .clk     (clk),
+      .wr_en   (wr_en),
+      .wr_addr (wr_addr),
+      .wr_data (wr_data),
+      .wr_strb (wr_strb),
+      .rd_en   (rd_en),
+      .rd_addr (rd_addr),
+      .rd_data (rd_data)
+    );
+  end
 
   // -------------------------------------------------------------------------
-  // Slave BFMs
-  // -------------------------------------------------------------------------
-  bus_matrix_wb_slave #(.DATA_W(DW), .ADDR_W(AW), .MEM_DEPTH(256), .SLAVE_IDX(0)) u_s0 (
-    .clk(clk), .rst_n(rst_n),
-    .CYC(S_CYC[0]), .STB(S_STB[0]), .WE(S_WE[0]),
-    .ADR(S_ADR[31:0]), .DAT_O(S_DAT_O[31:0]), .SEL(S_SEL[3:0]),
-    .DAT_I(S_DAT_I[31:0]), .ACK(S_ACK[0]), .ERR(S_ERR[0])
-  );
-
-  bus_matrix_wb_slave #(.DATA_W(DW), .ADDR_W(AW), .MEM_DEPTH(256), .SLAVE_IDX(1)) u_s1 (
-    .clk(clk), .rst_n(rst_n),
-    .CYC(S_CYC[1]), .STB(S_STB[1]), .WE(S_WE[1]),
-    .ADR(S_ADR[63:32]), .DAT_O(S_DAT_O[63:32]), .SEL(S_SEL[7:4]),
-    .DAT_I(S_DAT_I[63:32]), .ACK(S_ACK[1]), .ERR(S_ERR[1])
-  );
-
-  // -------------------------------------------------------------------------
-  // Includes
+  // Test helpers and directed tests
   // -------------------------------------------------------------------------
   `include "ip_test_pkg.sv"
-  `include "test_bus_matrix_ops.sv"
+  `include "test_helpers.sv"
+  `include "test_reset.sv"
+  `include "test_route.sv"
+  `include "test_strobe.sv"
+  `include "test_decode_err.sv"
+  `include "test_contention.sv"
+  `include "test_arb.sv"
 
   // -------------------------------------------------------------------------
   // Waveform dump
@@ -174,35 +182,32 @@ module tb_bus_matrix_wb;
 `endif
 
   // -------------------------------------------------------------------------
-  // Stimulus
+  // Simulation timeout watchdog
   // -------------------------------------------------------------------------
   initial begin
-    m0_req       = 1'b0;
-    m0_req_addr  = 32'h0;
-    m0_req_write = 1'b0;
-    m0_req_wdata = 32'h0;
-    m0_req_strb  = 4'hF;
-    m1_req       = 1'b0;
-    m1_req_addr  = 32'h0;
-    m1_req_write = 1'b0;
-    m1_req_wdata = 32'h0;
-    m1_req_strb  = 4'hF;
-
-    rst_n = 1'b0;
-    repeat(4) @(posedge clk);
-    rst_n = 1'b1;
-    repeat(2) @(posedge clk);
-
-    test_bus_matrix_ops();
-
-    $display("\nPASS tb_bus_matrix_wb");
-    $finish(0);
+    #2000000;
+    $display("FAIL tb_bus_matrix_wb: simulation timeout");
+    $finish(1);
   end
 
+  // -------------------------------------------------------------------------
+  // Test stimulus
+  // -------------------------------------------------------------------------
   initial begin
-    #100000;
-    $display("FATAL_ERROR: simulation timeout in tb_bus_matrix_wb");
-    $finish(1);
+    rst_n = 1'b0;
+    repeat (8) @(posedge clk);
+    rst_n <= 1'b1;
+    @(posedge clk);
+
+    test_reset;
+    test_route;
+    test_strobe;
+    test_decode_err;
+    test_contention;
+    test_arb;
+
+    $display("PASS tb_bus_matrix_wb: all tests passed");
+    $finish;
   end
 
 endmodule : tb_bus_matrix_wb

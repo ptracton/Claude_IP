@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 
-PROTOS = ["ahb", "axi", "wb"]
+PROTOS = ["apb", "ahb", "axi4l", "wb"]
 
 SCRIPT_DIR = Path(__file__).parent
 IP_DIR = SCRIPT_DIR.parent.parent
