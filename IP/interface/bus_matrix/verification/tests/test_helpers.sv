@@ -12,10 +12,13 @@ function automatic logic [31:0] slv_addr(input int j, input logic [11:0] off);
   return bus_matrix_pkg::BM_S_BASE[j*32+:32] | {20'h0_0000, off};
 endfunction
 
-// Addresses that match no slave in the default map.
-localparam logic [31:0] UNMAPPED_ADDR [4] = '{
-  32'h1000_0000,  // gap between Boot ROM and SRAM
-  32'h0001_0000,  // just past the 64 KB Boot ROM
-  32'h2002_0000,  // just past the 128 KB SRAM
-  32'hF000_0000   // top of the address space
-};
+// Addresses that match no slave in the default map. A function rather than
+// an unpacked-array localparam, which Icarus does not support.
+function automatic logic [31:0] unmapped_addr(input int k);
+  case (k)
+    0:       return 32'h1000_0000;  // gap between Boot ROM and SRAM
+    1:       return 32'h0001_0000;  // just past the 64 KB Boot ROM
+    2:       return 32'h2002_0000;  // just past the 128 KB SRAM
+    default: return 32'hF000_0000;  // top of the address space
+  endcase
+endfunction

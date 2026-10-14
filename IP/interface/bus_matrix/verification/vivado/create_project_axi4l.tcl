@@ -66,7 +66,7 @@ set sim_files [list \
     "${tb_dir}/bus_matrix_tb_mem.sv" \
     "${tb_dir}/tb_bus_matrix_axi4l.sv" \
 ]
-add_files -norecurse -sim_only $sim_files
+add_files -norecurse -fileset sim_1 $sim_files
 foreach f $sim_files {
     set_property file_type SystemVerilog [get_files [file tail $f]]
 }

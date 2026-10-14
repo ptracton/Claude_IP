@@ -157,3 +157,14 @@ Was checking timer RTL style (timer uses per-register always_ff, no loop accumul
   SLVERR page 0xE00-0xEFF); scoreboard predicts OKAY/decerr/slverr, keyed {slave, addr[11:2]};
   new map_seq/map_test (100 % coverage) + decerr_seq/decerr_test (guards); 5/5 PASS on VCS;
   mutation-checked (tgt drops errors; decoder leaks bit 16) — both caught, old tests miss them.
+- 2026-10-11 standard host (salvage) bring-up DONE, nothing committed. Every standard-host flow
+  passes: sims 24/24 (Icarus, GHDL, ModelSim SV+VHDL, xsim SV+VHDL), Verilator+GHDL lint,
+  SymbiYosys rr+fp, UVM 5/5 on xsim, Yosys 8/8, Vivado 4/4 (all MET), Quartus 4/4, ModelSim .do
+  and Vivado create_project GUI scripts, regression 147/147. Fixes: tests (unmapped_addr()
+  function; test_contention task-level k0/k1 because xsim crashes on decls in >1 fork);
+  RTL (explicit genvar + generate/endgenerate for Quartus Std; enum ?: -> if/else for Icarus;
+  verilator UNUSEDSIGNAL pragmas on HTRANS[0]/BRESP[0]/RRESP[0]); runners (yosys stat parse,
+  Vivado WNS parse, sby --prefix for multi-task, regression collects formal/results.log);
+  GUI (.do loads _wave.do via ${BM} not [info script]; create_project add_files -fileset sim_1;
+  xsim wave uses u_core/gnt). RTL edits postdate the csun runs: re-run VCS/Xcelium/SpyGlass/
+  VCF/DC there. Timer has the same [info script] and -sim_only bugs (not fixed).

@@ -17,6 +17,7 @@ Results written to:
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -157,14 +158,14 @@ def collect_results(ip_path: str) -> list:
                 for test, status in parse_per_test_results(rlog):
                     entries.append((f"sim/{sim}/{run_dir.name}/{test}", status))
 
-    # SymbiYosys results: work/formal/<job>/results.log
-    formal_work = work / "formal"
-    if formal_work.exists():
-        for job_dir in sorted(formal_work.iterdir()):
-            if not job_dir.is_dir():
-                continue
-            status = read_result_log(str(job_dir / "results.log"))
-            entries.append((f"formal/{job_dir.name}", status))
+    # SymbiYosys results (standard hosts): verification/formal/results.log,
+    # one "  <job>: PASS|FAIL" line per .sby file
+    sby_log = Path(ip_path) / "verification" / "formal" / "results.log"
+    if not ON_CSUN and sby_log.exists():
+        for line in sby_log.read_text().splitlines():
+            m = re.match(r"^  (\S+): (PASS|FAIL)$", line)
+            if m:
+                entries.append((f"formal/sby/{m.group(1)}", m.group(2)))
 
     # VC Formal results: work/vcf/<top>_<lang>/results.log  (one per job)
     vcf_work = work / "vcf"

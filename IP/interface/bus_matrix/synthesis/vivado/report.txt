@@ -3,6 +3,7 @@ Vivado Synthesis Report — bus_matrix (Zynq-7010 xc7z010clg400-1)
 
 Variant    LUTs     FFs      BRAM   DSP    WNS        Result
 ------------------------------------------------------------
-AHB        76       78       0      0      7.639      PASS
-AXI        156      212      0      0      7.296      PASS
-WB         76       6        0      0      8.204      PASS
+APB        463      18       0      0      7.071      PASS
+AHB        474      88       0      0      5.596      PASS
+AXI4L      555      320      0      0      5.198      PASS
+WB         459      14       0      0      7.537      PASS

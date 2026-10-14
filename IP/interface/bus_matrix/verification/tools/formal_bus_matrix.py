@@ -246,7 +246,7 @@ def run_sby_flow(ip_path, formal_dir):
         name = sby_path.stem
         print(f"[formal] Running {name} ...")
         result = subprocess.run(
-            [sby, "-f", "-d", os.path.join(work_dir, name), str(sby_path)],
+            [sby, "-f", "--prefix", os.path.join(work_dir, name), str(sby_path)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=formal_dir,
         )
         passed = result.returncode == 0

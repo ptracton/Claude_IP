@@ -3,6 +3,7 @@ Quartus Synthesis Report — bus_matrix (Cyclone V SE 5CSEMA4U23C6)
 
 Variant    Registers    Result
 -----------------------------------
-AHB        78           PASS
-AXI        210          PASS
-WB         6            PASS
+APB        18           PASS
+AHB        88           PASS
+AXI4L      322          PASS
+WB         14           PASS

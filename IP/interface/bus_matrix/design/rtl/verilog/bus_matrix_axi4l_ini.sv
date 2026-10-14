@@ -36,14 +36,20 @@ module bus_matrix_axi4l_ini #(
   output logic [DATA_W/8-1:0]   WSTRB,   // write byte strobes
   input  logic                  BVALID,  // write response valid
   output logic                  BREADY,  // write response ready
+  // Only BRESP[1] is used: SLVERR / DECERR -> error, OKAY / EXOKAY -> OK.
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [1:0]            BRESP,   // write response
+  /* verilator lint_on UNUSEDSIGNAL */
   output logic                  ARVALID, // read address valid
   input  logic                  ARREADY, // read address ready
   output logic [ADDR_W-1:0]     ARADDR,  // read byte address
   input  logic                  RVALID,  // read data valid
   output logic                  RREADY,  // read data ready
   input  logic [DATA_W-1:0]     RDATA,   // read data
+  // Only RRESP[1] is used: SLVERR / DECERR -> error, OKAY / EXOKAY -> OK.
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [1:0]            RRESP    // read response
+  /* verilator lint_on UNUSEDSIGNAL */
 );
 
   typedef enum logic [1:0] {
@@ -80,7 +86,8 @@ module bus_matrix_axi4l_ini #(
   always_comb begin : p_next
     state_d = state_q;
     unique case (state_q)
-      IniIdle:  if (core_req) state_d = core_we ? IniWrite : IniRead;
+      IniIdle:  if (core_req && core_we) state_d = IniWrite;
+                else if (core_req)    state_d = IniRead;
       IniWrite: if (BVALID)   state_d = IniIdle;
       IniRead:  if (RVALID)   state_d = IniIdle;
       default:                state_d = IniIdle;

@@ -24,7 +24,10 @@ module bus_matrix_ahb_tgt #(
   // AHB-Lite slave interface (towards the external master)
   input  logic                  HSEL,   // slave select
   input  logic [ADDR_W-1:0]     HADDR,  // byte address
+  // Only HTRANS[1] is used: NONSEQ and SEQ are handled the same.
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [1:0]            HTRANS, // transfer type
+  /* verilator lint_on UNUSEDSIGNAL */
   input  logic                  HWRITE, // 1 = write
   input  logic [DATA_W-1:0]     HWDATA, // write data (data phase)
   input  logic [DATA_W/8-1:0]   HWSTRB, // byte strobes (data phase)
@@ -75,8 +78,10 @@ module bus_matrix_ahb_tgt #(
     state_d = state_q;
     if (state_q == TgtBusy && core_done && core_err) begin
       state_d = TgtErr2;
+    end else if (HREADY && aphase) begin
+      state_d = TgtBusy;
     end else if (HREADY) begin
-      state_d = aphase ? TgtBusy : TgtIdle;
+      state_d = TgtIdle;
     end
   end
 

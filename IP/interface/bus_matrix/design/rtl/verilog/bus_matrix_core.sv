@@ -56,18 +56,21 @@ module bus_matrix_core #(
   logic [NUM_SLAVES-1:0]  dec_sel [NUM_MASTERS];
   logic [NUM_MASTERS-1:0] dec_err;
 
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_decoder
-    bus_matrix_decoder #(
-      .NUM_SLAVES (NUM_SLAVES),
-      .ADDR_W     (ADDR_W),
-      .S_BASE     (S_BASE),
-      .S_MASK     (S_MASK)
-    ) u_dec (
-      .addr       (mst_addr[gi*ADDR_W+:ADDR_W]),
-      .slave_sel  (dec_sel[gi]),
-      .decode_err (dec_err[gi])
-    );
-  end
+  genvar gi, gj;
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_decoder
+      bus_matrix_decoder #(
+        .NUM_SLAVES (NUM_SLAVES),
+        .ADDR_W     (ADDR_W),
+        .S_BASE     (S_BASE),
+        .S_MASK     (S_MASK)
+      ) u_dec (
+        .addr       (mst_addr[gi*ADDR_W+:ADDR_W]),
+        .slave_sel  (dec_sel[gi]),
+        .decode_err (dec_err[gi])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Per-slave request vectors: slv_mreq[j][i] = master i requests slave j
@@ -87,19 +90,21 @@ module bus_matrix_core #(
   // -------------------------------------------------------------------------
   logic [NUM_MASTERS-1:0] gnt [NUM_SLAVES];
 
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_arb
-    bus_matrix_arb #(
-      .NUM_MASTERS (NUM_MASTERS),
-      .ARB_MODE    (ARB_MODE),
-      .M_PRIORITY  (M_PRIORITY)
-    ) u_arb (
-      .clk   (clk),
-      .rst_n (rst_n),
-      .req   (slv_mreq[gj]),
-      .done  (slv_done[gj]),
-      .gnt   (gnt[gj])
-    );
-  end
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_arb
+      bus_matrix_arb #(
+        .NUM_MASTERS (NUM_MASTERS),
+        .ARB_MODE    (ARB_MODE),
+        .M_PRIORITY  (M_PRIORITY)
+      ) u_arb (
+        .clk   (clk),
+        .rst_n (rst_n),
+        .req   (slv_mreq[gj]),
+        .done  (slv_done[gj]),
+        .gnt   (gnt[gj])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Slave-side routing: AND-OR mux of the owner's request fields. The grant
@@ -108,27 +113,29 @@ module bus_matrix_core #(
   // -------------------------------------------------------------------------
   localparam int unsigned FLD_W = 1 + STRB_W + DATA_W + ADDR_W;
 
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_route
-    logic [FLD_W-1:0] fld_acc [NUM_MASTERS+1]; // fld_acc[i] = OR of masters < i
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_route
+      logic [FLD_W-1:0] fld_acc [NUM_MASTERS+1]; // fld_acc[i] = OR of masters < i
 
-    assign fld_acc[0] = '0;
-    for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_m
-      assign fld_acc[gi+1] = fld_acc[gi] |
-                             ({FLD_W{gnt[gj][gi]}} & {mst_we[gi],
-                                                      mst_be[gi*STRB_W+:STRB_W],
-                                                      mst_wdata[gi*DATA_W+:DATA_W],
-                                                      mst_addr[gi*ADDR_W+:ADDR_W]});
+      assign fld_acc[0] = '0;
+      for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_m
+        assign fld_acc[gi+1] = fld_acc[gi] |
+                               ({FLD_W{gnt[gj][gi]}} & {mst_we[gi],
+                                                        mst_be[gi*STRB_W+:STRB_W],
+                                                        mst_wdata[gi*DATA_W+:DATA_W],
+                                                        mst_addr[gi*ADDR_W+:ADDR_W]});
+      end
+
+      // Registered grant only: the owner holds its request until done and the
+      // grant clears on the done edge, so gating with the request is
+      // redundant and would put the address decoder in front of slv_req.
+      assign slv_req[gj] = |gnt[gj];
+      assign {slv_we[gj],
+              slv_be[gj*STRB_W+:STRB_W],
+              slv_wdata[gj*DATA_W+:DATA_W],
+              slv_addr[gj*ADDR_W+:ADDR_W]} = fld_acc[NUM_MASTERS];
     end
-
-    // Registered grant only: the owner holds its request until done and the
-    // grant clears on the done edge, so gating with the request is
-    // redundant and would put the address decoder in front of slv_req.
-    assign slv_req[gj] = |gnt[gj];
-    assign {slv_we[gj],
-            slv_be[gj*STRB_W+:STRB_W],
-            slv_wdata[gj*DATA_W+:DATA_W],
-            slv_addr[gj*ADDR_W+:ADDR_W]} = fld_acc[NUM_MASTERS];
-  end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Decode-error responder: one-cycle done + err, the cycle after a request
@@ -148,20 +155,22 @@ module bus_matrix_core #(
   // Master-side responses: master i takes the response of the slave it owns
   // (at most one), or its own decode-error response.
   // -------------------------------------------------------------------------
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_resp
-    logic [NUM_SLAVES-1:0] owns;                  // owns[j] = master i holds slave j
-    logic [DATA_W-1:0]     rdata_acc [NUM_SLAVES+1]; // rdata_acc[j] = OR of slaves < j
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_resp
+      logic [NUM_SLAVES-1:0] owns;                  // owns[j] = master i holds slave j
+      logic [DATA_W-1:0]     rdata_acc [NUM_SLAVES+1]; // rdata_acc[j] = OR of slaves < j
 
-    assign rdata_acc[0] = '0;
-    for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_s
-      assign owns[gj]        = gnt[gj][gi];
-      assign rdata_acc[gj+1] = rdata_acc[gj] |
-                               ({DATA_W{owns[gj]}} & slv_rdata[gj*DATA_W+:DATA_W]);
+      assign rdata_acc[0] = '0;
+      for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_s
+        assign owns[gj]        = gnt[gj][gi];
+        assign rdata_acc[gj+1] = rdata_acc[gj] |
+                                 ({DATA_W{owns[gj]}} & slv_rdata[gj*DATA_W+:DATA_W]);
+      end
+
+      assign mst_done[gi]                = derr_q[gi] | (|(owns & slv_done));
+      assign mst_err[gi]                 = derr_q[gi] | (|(owns & slv_err));
+      assign mst_rdata[gi*DATA_W+:DATA_W] = rdata_acc[NUM_SLAVES];
     end
-
-    assign mst_done[gi]                = derr_q[gi] | (|(owns & slv_done));
-    assign mst_err[gi]                 = derr_q[gi] | (|(owns & slv_err));
-    assign mst_rdata[gi*DATA_W+:DATA_W] = rdata_acc[NUM_SLAVES];
-  end
+  endgenerate
 
 endmodule : bus_matrix_core

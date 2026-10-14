@@ -43,7 +43,6 @@ add_wave -radix hex /tb_bus_matrix_apb/u_dut/u_core/slv_done
 add_wave -radix hex /tb_bus_matrix_apb/u_dut/u_core/slv_err
 
 add_wave_divider "Arbiters"
-add_wave {/tb_bus_matrix_apb/u_dut/u_core/gen_arb[0]/u_arb/gnt}
-add_wave {/tb_bus_matrix_apb/u_dut/u_core/gen_arb[1]/u_arb/gnt}
-add_wave {/tb_bus_matrix_apb/u_dut/u_core/gen_arb[2]/u_arb/gnt}
-add_wave {/tb_bus_matrix_apb/u_dut/u_core/gen_arb[3]/u_arb/gnt}
+# xsim names generate scopes "\gen_arb[j].u_arb ", so add the core's grant
+# array (one entry per slave) instead of each arbiter's gnt.
+add_wave {/tb_bus_matrix_apb/u_dut/u_core/gnt}

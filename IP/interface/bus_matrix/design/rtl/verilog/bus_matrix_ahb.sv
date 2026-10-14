@@ -71,62 +71,67 @@ module bus_matrix_ahb #(
   // -------------------------------------------------------------------------
   // Master ports
   // -------------------------------------------------------------------------
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
-    bus_matrix_ahb_tgt #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_tgt (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .HSEL       (M_HSEL[gi]),
-      .HADDR      (M_HADDR[gi*ADDR_W+:ADDR_W]),
-      .HTRANS     (M_HTRANS[gi*2+:2]),
-      .HWRITE     (M_HWRITE[gi]),
-      .HWDATA     (M_HWDATA[gi*DATA_W+:DATA_W]),
-      .HWSTRB     (M_HWSTRB[gi*STRB_W+:STRB_W]),
-      .HRDATA     (M_HRDATA[gi*DATA_W+:DATA_W]),
-      .HREADY     (M_HREADY[gi]),
-      .HRESP      (M_HRESP[gi]),
-      .core_req   (mst_req[gi]),
-      .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
-      .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
-      .core_we    (mst_we[gi]),
-      .core_be    (mst_be[gi*STRB_W+:STRB_W]),
-      .core_done  (mst_done[gi]),
-      .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
-      .core_err   (mst_err[gi])
-    );
-  end
+  genvar gi, gj;
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
+      bus_matrix_ahb_tgt #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_tgt (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .HSEL       (M_HSEL[gi]),
+        .HADDR      (M_HADDR[gi*ADDR_W+:ADDR_W]),
+        .HTRANS     (M_HTRANS[gi*2+:2]),
+        .HWRITE     (M_HWRITE[gi]),
+        .HWDATA     (M_HWDATA[gi*DATA_W+:DATA_W]),
+        .HWSTRB     (M_HWSTRB[gi*STRB_W+:STRB_W]),
+        .HRDATA     (M_HRDATA[gi*DATA_W+:DATA_W]),
+        .HREADY     (M_HREADY[gi]),
+        .HRESP      (M_HRESP[gi]),
+        .core_req   (mst_req[gi]),
+        .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
+        .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
+        .core_we    (mst_we[gi]),
+        .core_be    (mst_be[gi*STRB_W+:STRB_W]),
+        .core_done  (mst_done[gi]),
+        .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
+        .core_err   (mst_err[gi])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Slave ports
   // -------------------------------------------------------------------------
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
-    bus_matrix_ahb_ini #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_ini (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .core_req   (slv_req[gj]),
-      .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
-      .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
-      .core_we    (slv_we[gj]),
-      .core_be    (slv_be[gj*STRB_W+:STRB_W]),
-      .core_done  (slv_done[gj]),
-      .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
-      .core_err   (slv_err[gj]),
-      .HSEL       (S_HSEL[gj]),
-      .HADDR      (S_HADDR[gj*ADDR_W+:ADDR_W]),
-      .HTRANS     (S_HTRANS[gj*2+:2]),
-      .HWRITE     (S_HWRITE[gj]),
-      .HWDATA     (S_HWDATA[gj*DATA_W+:DATA_W]),
-      .HWSTRB     (S_HWSTRB[gj*STRB_W+:STRB_W]),
-      .HRDATA     (S_HRDATA[gj*DATA_W+:DATA_W]),
-      .HREADY     (S_HREADY[gj]),
-      .HRESP      (S_HRESP[gj])
-    );
-  end
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
+      bus_matrix_ahb_ini #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_ini (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .core_req   (slv_req[gj]),
+        .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
+        .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
+        .core_we    (slv_we[gj]),
+        .core_be    (slv_be[gj*STRB_W+:STRB_W]),
+        .core_done  (slv_done[gj]),
+        .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
+        .core_err   (slv_err[gj]),
+        .HSEL       (S_HSEL[gj]),
+        .HADDR      (S_HADDR[gj*ADDR_W+:ADDR_W]),
+        .HTRANS     (S_HTRANS[gj*2+:2]),
+        .HWRITE     (S_HWRITE[gj]),
+        .HWDATA     (S_HWDATA[gj*DATA_W+:DATA_W]),
+        .HWSTRB     (S_HWSTRB[gj*STRB_W+:STRB_W]),
+        .HRDATA     (S_HRDATA[gj*DATA_W+:DATA_W]),
+        .HREADY     (S_HREADY[gj]),
+        .HRESP      (S_HRESP[gj])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Crossbar core

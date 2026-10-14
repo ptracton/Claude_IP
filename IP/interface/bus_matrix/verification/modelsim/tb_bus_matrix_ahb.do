@@ -65,7 +65,7 @@ vsim -voptargs=+acc work.tb_bus_matrix_ahb
 # ---------------------------------------------------------------------------
 # Load waveform configuration and run
 # ---------------------------------------------------------------------------
-do [file join [file dirname [info script]] tb_bus_matrix_ahb_wave.do]
+do ${BM}/verification/modelsim/tb_bus_matrix_ahb_wave.do
 
 run -all
 

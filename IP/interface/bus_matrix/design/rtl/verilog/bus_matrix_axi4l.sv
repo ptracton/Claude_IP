@@ -89,78 +89,83 @@ module bus_matrix_axi4l #(
   // -------------------------------------------------------------------------
   // Master ports
   // -------------------------------------------------------------------------
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
-    bus_matrix_axi4l_tgt #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_tgt (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .AWVALID    (M_AWVALID[gi]),
-      .AWREADY    (M_AWREADY[gi]),
-      .AWADDR     (M_AWADDR[gi*ADDR_W+:ADDR_W]),
-      .WVALID     (M_WVALID[gi]),
-      .WREADY     (M_WREADY[gi]),
-      .WDATA      (M_WDATA[gi*DATA_W+:DATA_W]),
-      .WSTRB      (M_WSTRB[gi*STRB_W+:STRB_W]),
-      .BVALID     (M_BVALID[gi]),
-      .BREADY     (M_BREADY[gi]),
-      .BRESP      (M_BRESP[gi*2+:2]),
-      .ARVALID    (M_ARVALID[gi]),
-      .ARREADY    (M_ARREADY[gi]),
-      .ARADDR     (M_ARADDR[gi*ADDR_W+:ADDR_W]),
-      .RVALID     (M_RVALID[gi]),
-      .RREADY     (M_RREADY[gi]),
-      .RDATA      (M_RDATA[gi*DATA_W+:DATA_W]),
-      .RRESP      (M_RRESP[gi*2+:2]),
-      .core_req   (mst_req[gi]),
-      .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
-      .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
-      .core_we    (mst_we[gi]),
-      .core_be    (mst_be[gi*STRB_W+:STRB_W]),
-      .core_done  (mst_done[gi]),
-      .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
-      .core_err   (mst_err[gi])
-    );
-  end
+  genvar gi, gj;
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
+      bus_matrix_axi4l_tgt #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_tgt (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .AWVALID    (M_AWVALID[gi]),
+        .AWREADY    (M_AWREADY[gi]),
+        .AWADDR     (M_AWADDR[gi*ADDR_W+:ADDR_W]),
+        .WVALID     (M_WVALID[gi]),
+        .WREADY     (M_WREADY[gi]),
+        .WDATA      (M_WDATA[gi*DATA_W+:DATA_W]),
+        .WSTRB      (M_WSTRB[gi*STRB_W+:STRB_W]),
+        .BVALID     (M_BVALID[gi]),
+        .BREADY     (M_BREADY[gi]),
+        .BRESP      (M_BRESP[gi*2+:2]),
+        .ARVALID    (M_ARVALID[gi]),
+        .ARREADY    (M_ARREADY[gi]),
+        .ARADDR     (M_ARADDR[gi*ADDR_W+:ADDR_W]),
+        .RVALID     (M_RVALID[gi]),
+        .RREADY     (M_RREADY[gi]),
+        .RDATA      (M_RDATA[gi*DATA_W+:DATA_W]),
+        .RRESP      (M_RRESP[gi*2+:2]),
+        .core_req   (mst_req[gi]),
+        .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
+        .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
+        .core_we    (mst_we[gi]),
+        .core_be    (mst_be[gi*STRB_W+:STRB_W]),
+        .core_done  (mst_done[gi]),
+        .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
+        .core_err   (mst_err[gi])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Slave ports
   // -------------------------------------------------------------------------
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
-    bus_matrix_axi4l_ini #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_ini (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .core_req   (slv_req[gj]),
-      .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
-      .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
-      .core_we    (slv_we[gj]),
-      .core_be    (slv_be[gj*STRB_W+:STRB_W]),
-      .core_done  (slv_done[gj]),
-      .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
-      .core_err   (slv_err[gj]),
-      .AWVALID    (S_AWVALID[gj]),
-      .AWREADY    (S_AWREADY[gj]),
-      .AWADDR     (S_AWADDR[gj*ADDR_W+:ADDR_W]),
-      .WVALID     (S_WVALID[gj]),
-      .WREADY     (S_WREADY[gj]),
-      .WDATA      (S_WDATA[gj*DATA_W+:DATA_W]),
-      .WSTRB      (S_WSTRB[gj*STRB_W+:STRB_W]),
-      .BVALID     (S_BVALID[gj]),
-      .BREADY     (S_BREADY[gj]),
-      .BRESP      (S_BRESP[gj*2+:2]),
-      .ARVALID    (S_ARVALID[gj]),
-      .ARREADY    (S_ARREADY[gj]),
-      .ARADDR     (S_ARADDR[gj*ADDR_W+:ADDR_W]),
-      .RVALID     (S_RVALID[gj]),
-      .RREADY     (S_RREADY[gj]),
-      .RDATA      (S_RDATA[gj*DATA_W+:DATA_W]),
-      .RRESP      (S_RRESP[gj*2+:2])
-    );
-  end
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
+      bus_matrix_axi4l_ini #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_ini (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .core_req   (slv_req[gj]),
+        .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
+        .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
+        .core_we    (slv_we[gj]),
+        .core_be    (slv_be[gj*STRB_W+:STRB_W]),
+        .core_done  (slv_done[gj]),
+        .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
+        .core_err   (slv_err[gj]),
+        .AWVALID    (S_AWVALID[gj]),
+        .AWREADY    (S_AWREADY[gj]),
+        .AWADDR     (S_AWADDR[gj*ADDR_W+:ADDR_W]),
+        .WVALID     (S_WVALID[gj]),
+        .WREADY     (S_WREADY[gj]),
+        .WDATA      (S_WDATA[gj*DATA_W+:DATA_W]),
+        .WSTRB      (S_WSTRB[gj*STRB_W+:STRB_W]),
+        .BVALID     (S_BVALID[gj]),
+        .BREADY     (S_BREADY[gj]),
+        .BRESP      (S_BRESP[gj*2+:2]),
+        .ARVALID    (S_ARVALID[gj]),
+        .ARREADY    (S_ARREADY[gj]),
+        .ARADDR     (S_ARADDR[gj*ADDR_W+:ADDR_W]),
+        .RVALID     (S_RVALID[gj]),
+        .RREADY     (S_RREADY[gj]),
+        .RDATA      (S_RDATA[gj*DATA_W+:DATA_W]),
+        .RRESP      (S_RRESP[gj*2+:2])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Crossbar core

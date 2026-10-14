@@ -73,58 +73,63 @@ module bus_matrix_wb #(
   // -------------------------------------------------------------------------
   // Master ports
   // -------------------------------------------------------------------------
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
-    bus_matrix_wb_tgt #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_tgt (
-      .CYC        (M_CYC[gi]),
-      .STB        (M_STB[gi]),
-      .WE         (M_WE[gi]),
-      .ADR        (M_ADR[gi*ADDR_W+:ADDR_W]),
-      .DAT_W      (M_DAT_I[gi*DATA_W+:DATA_W]),
-      .SEL        (M_SEL[gi*STRB_W+:STRB_W]),
-      .DAT_R      (M_DAT_O[gi*DATA_W+:DATA_W]),
-      .ACK        (M_ACK[gi]),
-      .ERR        (M_ERR[gi]),
-      .core_req   (mst_req[gi]),
-      .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
-      .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
-      .core_we    (mst_we[gi]),
-      .core_be    (mst_be[gi*STRB_W+:STRB_W]),
-      .core_done  (mst_done[gi]),
-      .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
-      .core_err   (mst_err[gi])
-    );
-  end
+  genvar gi, gj;
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
+      bus_matrix_wb_tgt #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_tgt (
+        .CYC        (M_CYC[gi]),
+        .STB        (M_STB[gi]),
+        .WE         (M_WE[gi]),
+        .ADR        (M_ADR[gi*ADDR_W+:ADDR_W]),
+        .DAT_W      (M_DAT_I[gi*DATA_W+:DATA_W]),
+        .SEL        (M_SEL[gi*STRB_W+:STRB_W]),
+        .DAT_R      (M_DAT_O[gi*DATA_W+:DATA_W]),
+        .ACK        (M_ACK[gi]),
+        .ERR        (M_ERR[gi]),
+        .core_req   (mst_req[gi]),
+        .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
+        .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
+        .core_we    (mst_we[gi]),
+        .core_be    (mst_be[gi*STRB_W+:STRB_W]),
+        .core_done  (mst_done[gi]),
+        .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
+        .core_err   (mst_err[gi])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Slave ports
   // -------------------------------------------------------------------------
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
-    bus_matrix_wb_ini #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_ini (
-      .core_req   (slv_req[gj]),
-      .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
-      .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
-      .core_we    (slv_we[gj]),
-      .core_be    (slv_be[gj*STRB_W+:STRB_W]),
-      .core_done  (slv_done[gj]),
-      .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
-      .core_err   (slv_err[gj]),
-      .CYC        (S_CYC[gj]),
-      .STB        (S_STB[gj]),
-      .WE         (S_WE[gj]),
-      .ADR        (S_ADR[gj*ADDR_W+:ADDR_W]),
-      .DAT_W      (S_DAT_O[gj*DATA_W+:DATA_W]),
-      .SEL        (S_SEL[gj*STRB_W+:STRB_W]),
-      .DAT_R      (S_DAT_I[gj*DATA_W+:DATA_W]),
-      .ACK        (S_ACK[gj]),
-      .ERR        (S_ERR[gj])
-    );
-  end
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
+      bus_matrix_wb_ini #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_ini (
+        .core_req   (slv_req[gj]),
+        .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
+        .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
+        .core_we    (slv_we[gj]),
+        .core_be    (slv_be[gj*STRB_W+:STRB_W]),
+        .core_done  (slv_done[gj]),
+        .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
+        .core_err   (slv_err[gj]),
+        .CYC        (S_CYC[gj]),
+        .STB        (S_STB[gj]),
+        .WE         (S_WE[gj]),
+        .ADR        (S_ADR[gj*ADDR_W+:ADDR_W]),
+        .DAT_W      (S_DAT_O[gj*DATA_W+:DATA_W]),
+        .SEL        (S_SEL[gj*STRB_W+:STRB_W]),
+        .DAT_R      (S_DAT_I[gj*DATA_W+:DATA_W]),
+        .ACK        (S_ACK[gj]),
+        .ERR        (S_ERR[gj])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Crossbar core

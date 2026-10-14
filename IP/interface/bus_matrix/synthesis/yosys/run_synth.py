@@ -34,16 +34,22 @@ def run_yosys(script_path, work_dir):
 
 
 def parse_stat(output):
-    """Extract total cells and DFF count from yosys stat output."""
-    cells = "N/A"
-    dffs = "N/A"
-    m = re.search(r"Number of cells:\s+(\d+)", output)
-    if m:
-        cells = m.group(1)
-    m = re.search(r"\$dff\s+(\d+)", output)
-    if m:
-        dffs = m.group(1)
-    return cells, dffs
+    """Extract total cells and flip-flop count from the last yosys stat block.
+
+    Cell lines are "<count>   $<cell>". $scopeinfo is debug info, not logic,
+    so it is not counted. Every cell type containing "DFF" is a flip-flop.
+    """
+    blocks = output.split("Printing statistics.")
+    if len(blocks) < 2:
+        return "N/A", "N/A"
+    cells = {}
+    for m in re.finditer(r"^\s+(\d+)\s+(\$\w+)\s*$", blocks[-1], re.M):
+        cells[m.group(2)] = cells.get(m.group(2), 0) + int(m.group(1))
+    cells.pop("$scopeinfo", None)
+    if not cells:
+        return "N/A", "N/A"
+    dffs = sum(n for c, n in cells.items() if "DFF" in c.upper())
+    return str(sum(cells.values())), str(dffs)
 
 
 def main():
@@ -71,6 +77,7 @@ def main():
         script_path = SCRIPT_DIR / script_name
         print(f"  [Yosys] {top} ({lang})...")
         rc, out = run_yosys(script_path, work_dir)
+        (work_dir / f"yosys_raw_{script_path.stem}.log").write_text(out)
         cells, dffs = parse_stat(out)
         status = "PASS" if rc == 0 else "FAIL"
         if rc != 0:

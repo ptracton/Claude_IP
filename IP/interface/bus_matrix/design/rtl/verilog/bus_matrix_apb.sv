@@ -73,60 +73,65 @@ module bus_matrix_apb #(
   // -------------------------------------------------------------------------
   // Master ports
   // -------------------------------------------------------------------------
-  for (genvar gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
-    bus_matrix_apb_tgt #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_tgt (
-      .PSEL       (M_PSEL[gi]),
-      .PENABLE    (M_PENABLE[gi]),
-      .PADDR      (M_PADDR[gi*ADDR_W+:ADDR_W]),
-      .PWRITE     (M_PWRITE[gi]),
-      .PWDATA     (M_PWDATA[gi*DATA_W+:DATA_W]),
-      .PSTRB      (M_PSTRB[gi*STRB_W+:STRB_W]),
-      .PRDATA     (M_PRDATA[gi*DATA_W+:DATA_W]),
-      .PREADY     (M_PREADY[gi]),
-      .PSLVERR    (M_PSLVERR[gi]),
-      .core_req   (mst_req[gi]),
-      .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
-      .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
-      .core_we    (mst_we[gi]),
-      .core_be    (mst_be[gi*STRB_W+:STRB_W]),
-      .core_done  (mst_done[gi]),
-      .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
-      .core_err   (mst_err[gi])
-    );
-  end
+  genvar gi, gj;
+  generate
+    for (gi = 0; gi < NUM_MASTERS; gi++) begin : gen_mst
+      bus_matrix_apb_tgt #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_tgt (
+        .PSEL       (M_PSEL[gi]),
+        .PENABLE    (M_PENABLE[gi]),
+        .PADDR      (M_PADDR[gi*ADDR_W+:ADDR_W]),
+        .PWRITE     (M_PWRITE[gi]),
+        .PWDATA     (M_PWDATA[gi*DATA_W+:DATA_W]),
+        .PSTRB      (M_PSTRB[gi*STRB_W+:STRB_W]),
+        .PRDATA     (M_PRDATA[gi*DATA_W+:DATA_W]),
+        .PREADY     (M_PREADY[gi]),
+        .PSLVERR    (M_PSLVERR[gi]),
+        .core_req   (mst_req[gi]),
+        .core_addr  (mst_addr[gi*ADDR_W+:ADDR_W]),
+        .core_wdata (mst_wdata[gi*DATA_W+:DATA_W]),
+        .core_we    (mst_we[gi]),
+        .core_be    (mst_be[gi*STRB_W+:STRB_W]),
+        .core_done  (mst_done[gi]),
+        .core_rdata (mst_rdata[gi*DATA_W+:DATA_W]),
+        .core_err   (mst_err[gi])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Slave ports
   // -------------------------------------------------------------------------
-  for (genvar gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
-    bus_matrix_apb_ini #(
-      .DATA_W (DATA_W),
-      .ADDR_W (ADDR_W)
-    ) u_ini (
-      .clk        (clk),
-      .rst_n      (rst_n),
-      .core_req   (slv_req[gj]),
-      .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
-      .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
-      .core_we    (slv_we[gj]),
-      .core_be    (slv_be[gj*STRB_W+:STRB_W]),
-      .core_done  (slv_done[gj]),
-      .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
-      .core_err   (slv_err[gj]),
-      .PSEL       (S_PSEL[gj]),
-      .PENABLE    (S_PENABLE[gj]),
-      .PADDR      (S_PADDR[gj*ADDR_W+:ADDR_W]),
-      .PWRITE     (S_PWRITE[gj]),
-      .PWDATA     (S_PWDATA[gj*DATA_W+:DATA_W]),
-      .PSTRB      (S_PSTRB[gj*STRB_W+:STRB_W]),
-      .PRDATA     (S_PRDATA[gj*DATA_W+:DATA_W]),
-      .PREADY     (S_PREADY[gj]),
-      .PSLVERR    (S_PSLVERR[gj])
-    );
-  end
+  generate
+    for (gj = 0; gj < NUM_SLAVES; gj++) begin : gen_slv
+      bus_matrix_apb_ini #(
+        .DATA_W (DATA_W),
+        .ADDR_W (ADDR_W)
+      ) u_ini (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .core_req   (slv_req[gj]),
+        .core_addr  (slv_addr[gj*ADDR_W+:ADDR_W]),
+        .core_wdata (slv_wdata[gj*DATA_W+:DATA_W]),
+        .core_we    (slv_we[gj]),
+        .core_be    (slv_be[gj*STRB_W+:STRB_W]),
+        .core_done  (slv_done[gj]),
+        .core_rdata (slv_rdata[gj*DATA_W+:DATA_W]),
+        .core_err   (slv_err[gj]),
+        .PSEL       (S_PSEL[gj]),
+        .PENABLE    (S_PENABLE[gj]),
+        .PADDR      (S_PADDR[gj*ADDR_W+:ADDR_W]),
+        .PWRITE     (S_PWRITE[gj]),
+        .PWDATA     (S_PWDATA[gj*DATA_W+:DATA_W]),
+        .PSTRB      (S_PSTRB[gj*STRB_W+:STRB_W]),
+        .PRDATA     (S_PRDATA[gj*DATA_W+:DATA_W]),
+        .PREADY     (S_PREADY[gj]),
+        .PSLVERR    (S_PSLVERR[gj])
+      );
+    end
+  endgenerate
 
   // -------------------------------------------------------------------------
   // Crossbar core

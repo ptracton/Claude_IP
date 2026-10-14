@@ -131,10 +131,27 @@ bridge plus a 4 KB memory per slave (`bus_matrix_tb_mem`).
 
 Results generated 2026-10-10 on a `*.csun.edu` host.
 
-**Icarus, GHDL, ModelSim and Vivado xsim have not been run since the
-2026-10-09 redesign.** They are not installed on csun.edu. `sim_bus_matrix.py`
-supports all six simulators. Icarus is supported because the shared tasks
-avoid `do`-`while`.
+Standard host (`salvage`), 2026-10-11:
+
+| Variant | Icarus 13.0 (SV) | GHDL 6.0.0-dev (VHDL) | ModelSim 2021.1 SV | ModelSim 2021.1 VHDL | xsim 2023.2 SV | xsim 2023.2 VHDL |
+|---------|------|------|------|------|------|------|
+| APB4      | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
+| AHB-Lite  | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
+| AXI4-Lite | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
+| Wishbone  | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
+
+Getting there took these tool-portability fixes (2026-10-11). **They were made
+after the csun.edu runs above, so re-run the csun.edu flows to confirm them.**
+- Tests: `UNMAPPED_ADDR` (an unpacked-array `localparam`, which Icarus does
+  not support) became the function `unmapped_addr()`. In `test_contention`,
+  the forked threads use task-level loop counters: declaring a variable inside
+  a forked block (including a `for (int k ...)`) crashes the xsim 2023.2
+  kernel when a task has more than one such fork.
+- RTL: Icarus rejects a `?:` between two enum literals assigned to an enum, so
+  `bus_matrix_ahb_tgt` and `bus_matrix_axi4l_ini` use `if`/`else` there. The
+  generate rewrite for Quartus is under Synthesis Results.
+
+Icarus is also supported because the shared tasks avoid `do`-`while`.
 
 ```bash
 python3 verification/tools/sim_bus_matrix.py --sim all --proto all --lang all   # host-appropriate simulators
@@ -147,8 +164,9 @@ VCS dumps waveforms to `vcdplus.vpd` and Xcelium to `waves.shm/`, in
 ## Interactive Simulation (GUI)
 
 Scripts for waveform-based simulation of the SV testbenches. They require
-`source IP/interface/bus_matrix/setup.sh`. They are **not yet tested** (no
-ModelSim or Vivado on csun.edu).
+`source IP/interface/bus_matrix/setup.sh`. All 4 protocols tested 2026-10-11
+(ModelSim 2021.1 via `vsim -c -do`, Vivado 2023.2 batch `launch_simulation`):
+they compile, load every wave signal, and pass the 82 checks.
 
 | Tool | Script | Notes |
 |------|--------|-------|
@@ -157,6 +175,8 @@ ModelSim or Vivado on csun.edu).
 
 Wave groups: Clock & Reset, Master ports, Slave ports, Core handshake
 (`mst_req/done`, `slv_req/done`, …) and Arbiters (the four grant vectors).
+xsim names generate scopes `\gen_arb[j].u_arb `, so the Vivado wave script
+shows the core's `gnt` array instead of each arbiter's `gnt`.
 
 ## Formal Verification Results
 
@@ -220,7 +240,13 @@ answer only when requested. It asserts these properties:
 - P5: slave-side fields are stable until done.
 - P6: there is an idle cycle between transactions on a slave.
 
-**Not yet run** (no SymbiYosys on csun.edu). The harness compiles cleanly in VCS.
+| Task | Mode | Depth | Result |
+|------|------|-------|--------|
+| `rr` (round robin) | BMC | 24 | PASS |
+| `fp` (fixed priority) | BMC | 24 | PASS |
+
+SBY v0.60 / Yosys 0.60, boolector. Results generated 2026-10-11 on a standard
+host (about 10 s per task).
 
 ```bash
 python3 verification/tools/formal_bus_matrix.py --tool sby
@@ -285,8 +311,10 @@ new tests and missed by the older RW and contention tests:
   `0x4001_0000` into S2: 36 errors in each test. The guard read-back also
   caught the overwritten slave words.
 
-Results generated 2026-10-10 on Synopsys VCS Y-2026.03. The Vivado xsim path
-of the runner has not been re-run since the port.
+Results generated 2026-10-10 on Synopsys VCS Y-2026.03. All 5 tests also
+pass on Vivado xsim 2023.2 (standard host, 2026-10-11), with the same
+transfer, error and coverage counts and 0 scoreboard mismatches. xsim runs one
+test per invocation.
 
 ```bash
 python3 verification/tools/uvm_bus_matrix.py --test all --sim vcs     # csun.edu
@@ -313,7 +341,16 @@ The redesigned RTL was written to be SpyGlass-clean without waivers:
 The VHDL mirrors the same structure. VHDL lint has no working path on csun.edu
 (see `.agents/reference_spyglass_lint.md`).
 
-**Standard hosts:** Verilator and GHDL have not been re-run since the redesign.
+**On standard hosts** (2026-10-11):
+
+| Language | Tool      | Version     | Findings | Waivers | Result |
+|----------|-----------|-------------|----------|---------|--------|
+| SV       | Verilator | 5.043       | 0        | 3       | PASS   |
+| VHDL     | GHDL      | 6.0.0-dev   | 0        | 0       | PASS   |
+
+The 3 Verilator waivers are `UNUSEDSIGNAL` on port bits the design ignores by
+intent: `HTRANS[0]`, `BRESP[0]` and `RRESP[0]`. Details are in
+`verification/lint/waivers.md`.
 
 ## Firmware
 
@@ -328,16 +365,31 @@ matrix on each side of every port.
 
 ### Yosys / Vivado / Quartus (standard hosts)
 
-**Not re-run since the 2026-10-09 redesign.** None of these tools is on
-csun.edu. The scripts have been ported to the new file set and to all four
-protocols, but they are untested:
-- `synthesis/yosys/synth_bus_matrix_<proto>[_vhdl].ys`
-- `synthesis/vivado/synth_bus_matrix_<proto>.tcl`
-- `synthesis/quartus/synth_bus_matrix_<proto>.tcl`
+Default configuration, 100 MHz clock. Results generated 2026-10-11.
 
-The SV tops reference `bus_matrix_pkg::` by name rather than importing it in
-the module header, which Yosys cannot parse. `synthesis/vivado/report.txt` and
-`synthesis/quartus/report.txt` describe the old RTL.
+| Variant | Yosys 0.60 cells / DFFs (SV) | Yosys cells / DFFs (VHDL) | Vivado 2023.2 LUTs / FFs | Vivado WNS | Quartus 23.1std registers |
+|---------|------------|------------|-----------|----------|-----|
+| APB4      | 1514 / 18  | 1517 / 18  | 463 / 18  | +7.07 ns | 18  |
+| AHB-Lite  | 1611 / 88  | 1632 / 90  | 474 / 88  | +5.60 ns | 88  |
+| AXI4-Lite | 2135 / 320 | 2099 / 320 | 555 / 320 | +5.20 ns | 322 |
+| Wishbone  | 1491 / 14  | 1494 / 14  | 459 / 14  | +7.54 ns | 14  |
+
+- Vivado: Zynq-7010 (`xc7z010clg400-1`), out-of-context, all MET.
+- Quartus: Cyclone V SE (`5CSEMA4U23C6`), Analysis & Synthesis only.
+- Yosys: generic `synth -flatten`; VHDL via the ghdl plugin.
+- Vivado and Quartus synthesize the SV tops.
+
+```bash
+python3 synthesis/yosys/run_synth.py
+python3 synthesis/run_vendor_synth.py --vivado     # or --quartus
+```
+
+**Quartus Prime Standard needs explicit generate regions.** It rejects
+`for (genvar i = ...)` and generate `if`/`for` without
+`generate`/`endgenerate`. So every generate in the SV RTL declares its
+`genvar`s up front and sits inside `generate`/`endgenerate`. The SV tops
+reference `bus_matrix_pkg::` by name rather than importing it in the module
+header, which Yosys cannot parse.
 
 ### Design Compiler (csun.edu only)
 
@@ -483,6 +535,9 @@ On csun.edu the regression runs:
 On standard hosts it runs Icarus, GHDL, ModelSim and xsim, UVM on xsim, and
 SymbiYosys. In both cases it collects the lint result. Output:
 `verification/work/regression_results.log`.
+
+Standard host, 2026-10-11: **147/147 PASS**. That is 144 directed-test rows
+(4 simulators, 24 runs), UVM `base_test` on xsim, SymbiYosys and lint.
 
 ## Known Limitations
 

@@ -405,7 +405,8 @@ def parse_vivado_timing(rpt_path):
     with open(rpt_path) as fh:
         content = fh.read()
 
-    m = re.search(r"^CLK\s+([-\d.]+)", content, re.MULTILINE)
+    # First value of the row under the Design Timing Summary "WNS(ns)" header
+    m = re.search(r"WNS\(ns\).*\n\s*-+.*\n\s*([-\d.]+)", content)
     if m:
         wns = m.group(1)
 
