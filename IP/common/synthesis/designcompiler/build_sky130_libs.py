@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -29,12 +30,17 @@ from typing import Optional
 
 # SkyWater 130nm open-source PDK, installed per-user via volare (not under
 # /opt/ECE_Lib like the SAED PDKs — those are shared installs; this one is
-# each CSUN user's own scratch install). This is a stable symlink
-# (/tmp/pet43490/PDK/sky130A) rather than the volare-versioned path
-# directly, since the versioned path's content was found wiped on
-# 2026-10-03 (see .agents/reference_sky130_pdk.md) — the flat symlink
-# target can be repointed at a re-fetched version without a code change.
-SKY130_PDK = "/tmp/pet43490/PDK/sky130A"
+# each CSUN user's own install). The location comes only from the
+# CLAUDE_SKY130_PDK_PATH environment variable, exported by each IP's
+# setup.sh; it should point at a stable sky130A symlink rather than the
+# volare-versioned path, so a re-fetched version only means repointing the
+# symlink. Keep the install out of /tmp: the host's /tmp cleanup wiped the
+# old /tmp/pet43490/PDK copy twice (2026-10-03, 2026-10-14; see
+# .agents/reference_sky130_pdk.md). Empty when unset — importing this
+# module must still work on hosts without sky130; ensure_sky130_dbs()
+# reports the missing variable.
+SKY130_PDK_ENV = "CLAUDE_SKY130_PDK_PATH"
+SKY130_PDK = os.environ.get(SKY130_PDK_ENV, "")
 
 # All three sky130_fd_sc_hd corners are compiled so per-corner STA/analysis
 # has them available; synthesis itself targets the worst-case (slow) corner
@@ -57,6 +63,10 @@ def ensure_sky130_dbs(pdk_path: str = SKY130_PDK, cache_dir: Path = CACHE_DIR,
 
     Returns {corner: db_path} for every corner in SKY130_CORNERS, or None on failure.
     """
+    if not pdk_path:
+        print(f"  ERROR: {SKY130_PDK_ENV} is not set (source the IP's setup.sh,")
+        print(f"         or export {SKY130_PDK_ENV}=<path to sky130A>)")
+        return None
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     db_paths = {}

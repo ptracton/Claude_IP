@@ -149,6 +149,13 @@ provided by the user, and rename the variable `CLAUDE_IP_NAME_PATH` to
 - File exports `CLAUDE_GPIO_PATH` and `IP_NAME="gpio"`
 - Convenience paths become `GPIO_DESIGN_PATH`, `GPIO_VERIFICATION_PATH`, etc.
 
+**Timer wins**: the template above predates the csun.edu flow. Copy
+`IP/system/timer/setup.sh` instead — it adds host detection (`_ON_CSUN`), the csun
+cross-compiler paths, and `CLAUDE_SKY130_PDK_PATH` (the SkyWater sky130A PDK root read by
+`IP/common/synthesis/designcompiler/build_sky130_libs.py`; csun default
+`/home/users6/pet43490/PDK/sky130A`, overridable by pre-setting it). There is no fallback
+path in the Python: if the variable is unset, sky130 synthesis/STA/post-syn report it.
+
 ---
 
 ### 3. Generate `IP_NAME/cleanup.sh`

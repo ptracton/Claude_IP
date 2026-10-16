@@ -21,10 +21,10 @@ Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
 - 90nm PDK at `/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm`.
 - 32nm PDK at `/opt/ECE_Lib/SAED32_EDK`.
 - 14nm PDK at `/opt/ECE_Lib/SAED14nm_EDK_03_2025`.
-- SKY130 PDK at `/tmp/pet43490/PDK/sky130A` (SkyWater open-source PDK,
+- SKY130 PDK at `$CLAUDE_SKY130_PDK_PATH` (exported by `setup.sh`; on csun.edu `/home/users6/pet43490/PDK/sky130A`) (SkyWater open-source PDK,
   per-user volare install — not under `/opt/ECE_Lib`). This is a stable
   symlink to the real, versioned install
-  (`/tmp/pet43490/PDK/volare/sky130/versions/<hash>/sky130A`) — code should
+  (`.../PDK/volare/sky130/versions/<hash>/sky130A`) — code should
   reference the symlink (`build_sky130_libs.SKY130_PDK`), not the versioned
   path directly, so re-fetching a version only means repointing the symlink.
   `lc_shell` must also be on `$PATH`: sky130 ships only ASCII `.lib`, and it

@@ -16,6 +16,8 @@ about the bus protocols, register read-back and running the tool lives here.
 | `claude_axi4l_fv.sv` | AXI4-Lite protocol checker + transaction observer |
 | `claude_wb_fv.sv` | Wishbone B4 (classic) protocol checker + transaction observer |
 | `claude_reg_fv.sv` | Protocol-neutral register read-back checker (one instance per address) |
+| `claude_mem_fv.sv` | Claude memory bus (`mem_*`) protocol checker; `INITIATOR_IS_DUT` picks assume vs. assert (adapter or memory) |
+| `claude_mem_xfer_fv.sv` | End-to-end check of a `claude_<proto>_mem_if` adapter: one memory request per bus transfer, all fields carried through |
 | `vcf/claude_vcf_fpv.tcl` | Generic VC Formal run script (configured by environment variables) |
 | `../tools/claude_vcf.py` | Python driver: builds jobs, runs `vcf`, parses reports, applies waivers |
 
@@ -107,6 +109,16 @@ Use `IP/system/timer/verification/formal/vcf/` as the worked example.
    `claude_vcf`, build one `VcfJob` per (protocol, language), and call
    `claude_vcf.run_job()`. The helpers `common_bridge_file()` and
    `common_checker_files()` supply the common files.
+
+### Memory IPs (`claude_<proto>_mem_if` + `mem_*` bus)
+
+Memories use the `claude_<proto>_mem_if` adapters instead of the register
+bridges (see `IP/common/design/rtl/mem_bus.md`). The adapters are verified
+once in `IP/common/verification/mem_if/formal/`, which is also the worked
+example. A memory IP binds `claude_mem_fv` with `INITIATOR_IS_DUT=0` on its
+memory core, so the core is checked as a legal `mem_*` target. Its data
+integrity is checked at the bus level, through the adapter. The AHB checker
+runs with `SINGLE_ONLY=0` there, because the memory adapter accepts bursts.
 
 ### IPs without a register map (interconnects)
 

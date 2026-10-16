@@ -61,6 +61,7 @@ IP/common/
 │       │   ├── claude_ahb_if.sv      # AHB-Lite → regbus bridge
 │       │   ├── claude_axi4l_if.sv    # AXI4-Lite → regbus bridge
 │       │   ├── claude_wb_if.sv       # Wishbone B4 → regbus bridge
+│       │   ├── claude_<proto>_mem_if.sv  # APB4/AHB-Lite/AXI4-Lite/WB → memory bus (mem_*)
 │       │   └── ...                   # CDC sync cells, reset synchronizers, etc.
 │       └── vhdl/             # VHDL-2008 equivalents of every component in verilog/
 │           ├── claude_apb_if.vhd
@@ -103,6 +104,17 @@ acts as a bus slave instantiates one of these common bridges — never a per-IP 
 modules have no IP-specific logic and are parameterized by `DATA_W` and `ADDR_W`.
 
 **RULE — New IP blocks must instantiate `claude_*_if` from common, not write their own.**
+
+**Memory adapters (`claude_<proto>_mem_if`)** are the counterpart for memory-like IP (SRAM,
+ROM, flash controllers). They connect the same four bus protocols to the Claude memory bus
+(`mem_req/gnt/we/addr/be/wdata` → `mem_rvalid/rdata/err`). That bus supports a full-width byte
+address, back-pressure on the grant and the response, error responses, AHB bursts and
+HSIZE byte lanes, and serialized AXI4-Lite reads and writes. The spec is
+`IP/common/design/rtl/mem_bus.md`, and the adapters are verified once, in
+`IP/common/verification/mem_if/` (`verification/tools/verify_mem_if.py`). Memory IP must use
+these adapters rather than the register bridges. Their AHB port has `HSIZE` and separate
+`HREADY` (in) / `HREADYOUT` (out). Their AHB testbenches define `CLAUDE_BFM_AHB_HSIZE` before
+including `tasks_ahb.sv`, which enables the BFM's sized-transfer and INCR4 burst tasks.
 
 `IP_COMMON_PATH` is set by `setup.sh` and points to this directory.
 
@@ -480,7 +492,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | Design Compiler (`dc_shell`) | csun.edu only, on `$PATH` | ASIC synthesis (target: SAED90, SAED32, SAED14, SKY130) |
 | Library Compiler (`lc_shell`) | csun.edu only, on `$PATH` | Compiles sky130's ASCII `.lib` to `.db` (sky130 ships no pre-compiled `.db`, unlike SAED) |
 | SAED90/32/14 PDKs | `/opt/ECE_Lib/...` (csun.edu, shared install) | ASIC standard cell libraries |
-| SKY130 PDK | `/tmp/pet43490/PDK/sky130A` (csun.edu, per-user install — stable symlink to `volare/sky130/versions/<hash>/`) | Open-source ASIC standard cell library |
+| SKY130 PDK | `$CLAUDE_SKY130_PDK_PATH`, set by `setup.sh` (csun.edu: `/home/users6/pet43490/PDK/sky130A`, per-user install — not /tmp, which gets wiped — stable symlink to `volare/sky130/versions/<hash>/`) | Open-source ASIC standard cell library |
 | volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 | SpyGlass (`spyglass_vc`) | csun.edu only, on `$PATH` | SV lint (replaces Verilator there); no working VHDL-2008 path — VHDL lint is unavailable on csun.edu |
 | PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |

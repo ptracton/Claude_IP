@@ -2,7 +2,7 @@
 PrimeTime STA Report — timer IP
 Target        : SKY130 (130nm, SkyWater open-source PDK) — ss_100C_1v60 (worst-case)
 Tool version  : PrimeTime (pt_shell)
-Run date      : 2026-10-03
+Run date      : 2026-10-15
 ========================================================================
 
 STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).

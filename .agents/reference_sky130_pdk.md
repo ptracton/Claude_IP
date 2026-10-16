@@ -117,3 +117,17 @@ Verilog models as shipped (`default_nettype none` UDPs, and a broken
 `lpflow_bleeder_1` cell); the workarounds are documented in
 [power](power.md) under "SKY130 gate-level simulation in VCS". Power uses
 the cached tt `.db`.
+
+**Wiped again (found 2026-10-15):** `sky130_fd_sc_hd` was down to `verilog/` only (dir
+mtime 2026-10-14). Moved aside to `/tmp/pet43490/PDK/sky130_fd_sc_hd.damaged_2026-10-14`
+and re-fetched the same hash; `sky130_sram_macros` (for the SRAM IP) fetched alongside.
+volare lives at `~/.local/bin/volare` on csun.edu (not in the project venv). Second
+occurrence — moving the PDK out of `/tmp` is now worth doing.
+
+**Moved out of /tmp (2026-10-15):** fresh pinned fetch to `$HOME/PDK` (NFS home), stable
+symlink `/home/users6/pet43490/PDK/sky130A`. The path now comes ONLY from the env var
+`CLAUDE_SKY130_PDK_PATH`, exported by each IP's `setup.sh` on csun.edu (pre-set it to
+override); `build_sky130_libs.SKY130_PDK` is empty when unset and `ensure_sky130_dbs()`
+reports the missing variable — no `$HOME` or hard-coded fallback in Python (user request). Re-verified: `.db` cache recompiled, timer `--dcsky130` = 737 cells /
+191 FFs, PrimeTime ss +1.39 / tt +5.64 / ff +7.23 ns — identical to before. The old
+`/tmp/pet43490/PDK` tree is left in place (unused) until the user says to remove it.

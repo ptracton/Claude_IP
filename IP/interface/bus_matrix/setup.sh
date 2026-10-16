@@ -65,6 +65,14 @@ else
     export XPACK_RISCV_PATH="/opt/xpack-riscv-none-elf-gcc-15.2.0-1"
 fi
 
+# SkyWater sky130 PDK root (stable sky130A symlink) for Design Compiler,
+# PrimeTime, post-synthesis simulation and power. Read by
+# IP/common/synthesis/designcompiler/build_sky130_libs.py. Kept out of /tmp
+# (the host's /tmp cleanup wiped it twice). Pre-set it to override.
+if [ "${_ON_CSUN}" -eq 1 ]; then
+    export CLAUDE_SKY130_PDK_PATH="${CLAUDE_SKY130_PDK_PATH:-/home/users6/pet43490/PDK/sky130A}"
+fi
+
 # ---------------------------------------------------------------------------
 # Vivado 2023.2  (sources its own settings64.sh which modifies PATH)
 # Not available on csun.edu.

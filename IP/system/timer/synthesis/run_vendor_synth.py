@@ -28,8 +28,8 @@ Requirements:
         90nm PDK at /opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm
         32nm PDK at /opt/ECE_Lib/SAED32_EDK
         14nm PDK at /opt/ECE_Lib/SAED14nm_EDK_03_2025
-        SKY130 PDK at /tmp/pet43490/PDK/sky130A (a stable symlink to
-            /tmp/pet43490/PDK/volare/sky130/versions/<version>/sky130A —
+        SKY130 PDK at $CLAUDE_SKY130_PDK_PATH (set by setup.sh; a stable
+            sky130A symlink to .../volare/sky130/versions/<version>/sky130A —
             SkyWater open-source PDK, installed per-user via volare)
 
 Outputs:
