@@ -10,10 +10,13 @@ RAM, Intel/Altera `altsyncram`, and a generic behavioral array.
 Key features:
 - **Bus interfaces:** APB4, AHB-Lite (bursts, HSIZE), AXI4-Lite and Wishbone B4,
   one top-level each, built on the shared `claude_<proto>_mem_if` adapters.
-- **Configurable size:** width and depth are parameters. The wrapper tiles the
-  technology's macros by depth (banks) and width (columns).
+- **Configurable size:** width and depth are parameters. Each ASIC technology
+  wrapper builds the requested width x depth from its vendor primitives, with
+  generate loops: primitives side by side for width, stacked for depth (the
+  upper address bits pick the row). FPGA and generic memories are inferred
+  whole and the tool does the tiling.
 - **Byte enables (optional):** native byte masks where the macro has them,
-  otherwise one column of 8-bit macros per byte lane.
+  otherwise one column of 8-bit primitives per byte lane.
 - **Power gating:** RUN / LIGHT_SLEEP / DEEP_SLEEP / SHUTDOWN through a
   side-band request/acknowledge pair. These map onto the SAED32 low-power
   macros' LS/DS/SD pins, or onto UPF power domains with isolation on the
@@ -22,7 +25,8 @@ Key features:
   deep-sleeping or shut-down array, optional output register, clear engine,
   status outputs.
 - **Optional, each switchable by a parameter:** SECDED ECC, per-bank power
-  gating, March C- built-in self-test, and a second bus port.
+  gating, March C- built-in self-test, and a second bus port. The second port
+  may have a different width (and so depth) and its own clock.
 
 There is **no register block** and therefore no SystemRDL step: all control
 and status uses side-band pins (design decision D2, 2026-10-15).
@@ -39,13 +43,18 @@ them share one protocol-independent core. A top-level contains only wiring.
  ├── claude_<proto>_mem_if   (IP/common; one per port)   bus -> Claude memory bus
  └── sram_core
      ├── sram_port            per bus port: checks, ECC, read-modify-write, response
-     │   ├── sram_ecc_enc / sram_ecc_dec   SECDED (ECC_EN)
+     │   ├── sram_ecc_enc / sram_ecc_dec   SECDED, one per codeword (ECC_EN)
+     ├── sram_cdc             port B on its own clock (COMMON_CLK = 0): permission
+     │                        handshake, claude_sync / claude_pulse_sync (IP/common)
      ├── sram_pwr_ctrl        one power state machine per domain (whole array or bank)
      ├── sram_clr             clear engine (clr_req_i, after reset with ECC, after shutdown)
      ├── sram_bist            March C- engine (BIST_EN)
-     └── sram_array           banks x rows x columns of macro tiles
-         └── sram_macro / sram_macro_dp      TECH dispatcher (single- / two-port)
-             └── sram_macro[_dp]_<tech>      generic | xilinx | altera | saed90 | saed32 | saed14 | sky130
+     └── sram_array           NUM_BANKS banks (power domains), bank select + read mux;
+                              dual port with different widths: R slices per bank
+         └── sram_macro / sram_macro_dp      TECH dispatcher (single- / two-port), any W x D
+             └── sram_macro[_dp]_<tech>      saed90 | saed32 | saed14 | sky130: rows x columns
+                                             of vendor primitives; generic | xilinx | altera:
+                                             one inferred memory
 ```
 
 **Request flow.** The bus adapter turns each transfer into one memory-bus
@@ -70,17 +79,55 @@ stages:
 clear engine over the bus port(s). A pending engine stops new grants, and
 starts once the ports are idle.
 
-**Dual port.** Ports A and B run in parallel on two-port macros. Same-word
-conflicts complete in the order A then B: B waits a cycle if either access
-writes, and a port waits while the other port's read-modify-write of that
-word is pending. Conflicting writes are serialized, never dropped.
+**Dual port.** Ports A and B run in parallel on two-port macros.
+- *Widths.* Port B has `WIDTH_B` bits (`WIDTH / WIDTH_B` a power of two
+  either way) and `DEPTH_B = WIDTH * DEPTH / WIDTH_B` words of the same
+  storage. Both ports use the same byte addresses: narrow word `j` is bits
+  `[(j % R) * N +: N]` of wide word `j / R` (little-endian, `R` = ratio, `N` =
+  narrow width). `sram_array` builds each bank from `R` slices of the narrow
+  width: the wide port drives all slices, the narrow port one.
+- *ECC.* Codewords are as wide as the narrower port, and each codeword is one
+  write lane. A narrow write never needs a read of the wide word, and a wide
+  read-modify-write only writes back the codewords it strobes.
+- *Clocks.* Each port has its own clock and reset pins.
+  - `COMMON_CLK = 1` (default): drive both clock pins from the same clock.
+    Same-word conflicts complete in the order A then B: B waits a cycle if
+    either access writes, and a port waits while the other port's
+    read-modify-write of that word is pending. Conflicting writes are
+    serialized, never dropped.
+  - `COMMON_CLK = 0`: the clocks are unrelated, and same-word accesses in
+    overlapping cycles are undefined (as on any true dual-port RAM). Power,
+    clear, BIST and status stay on port A's clock. Port B reaches them
+    through `sram_cdc`: a four-phase permission handshake per power domain,
+    built from 2-flop synchronizers (`claude_sync`, `claude_pulse_sync` in
+    IP/common). The core takes the permission back, and waits for port B's
+    last access to finish, before a domain sleeps or an engine starts. Port
+    B's clock must keep running while that happens.
+  - SAED14's two-port macro (`SRAM2RW`) has a write clock and a read clock,
+    not one clock per port (liberty and model agree), so `TECH_SAED14` needs
+    `COMMON_CLK = 1`. SAED90, SAED32, SKY130 and the FPGA/generic memories
+    support both modes.
 
-**Tiling.** `sram_pkg::macro_width` / `macro_depth` (and their `_dp`
-counterparts) pick a macro for the technology. The array is built from
-`NUM_BANKS` banks of `DEPTH / NUM_BANKS` words. Each bank is split into rows of
-`MAC_D` words and columns of `MAC_W` bits. SAED macros have no byte mask, so
-byte lanes use 8-bit-wide macros. SKY130 and the FPGA/generic tiles have native
-byte masks.
+**Tiling.** `sram_array` splits the array into `NUM_BANKS` banks of
+`DEPTH / NUM_BANKS` words, one `sram_macro` wrapper each. Each ASIC wrapper
+(`sram_macro[_dp]_<tech>`) builds its W x D bank from vendor primitives:
+- `sram_pkg::prim_width` / `prim_depth` (and the `_dp` versions) pick one
+  primitive size `PRIM_W x PRIM_D`: the deepest available one that is not
+  deeper than D.
+- `ROWS = D / PRIM_D` primitives are stacked in depth. The address bits above
+  the primitive address drive the rows' chip selects, and a registered row
+  select steers the read multiplexer. If D is smaller than every primitive,
+  there is one row and the top address bits are tied to 0.
+- `COLS = ceil(W / PRIM_W)` primitives sit side by side. The last column is
+  zero-padded when `PRIM_W` does not divide W.
+- SAED primitives have no byte mask, so each column must lie inside one write
+  lane (byte lanes use 8-bit primitives). This is checked at elaboration.
+  SKY130 primitives have a native byte mask.
+
+For example, 16 x 2048 on SAED32 uses `1024x8` primitives in 2 rows x 2
+columns, with `addr[10]` selecting the row. GENERIC, XILINX and ALTERA
+infer one W x D memory per bank (`xpm_memory_*` / `altsyncram` accept any
+size) and leave block-RAM cascading to Vivado / Quartus.
 
 | TECH | Single-port macros | Two-port macros | Byte mask |
 |---|---|---|---|
@@ -92,9 +139,9 @@ byte masks.
 | SAED14 | `SRAM1RW{16..512}x{8,32}` | `SRAM2RW{16..512}x{8,32}` | no (x8 lanes) |
 | SKY130 | OpenRAM `sky130_sram_*_1rw1r_*` (port 1 unused) | same macros, port B read-only | yes (`wmask`) |
 
-Default configuration (32 x 1024, byte enables): SAED90/SAED32 use 4 lanes of
-`8x1024` / `1024x8`; SAED14 uses 2 rows x 4 lanes of `512x8`; SKY130 uses 2
-rows of `32x512`.
+Default configuration (32 x 1024, byte enables): SAED90/SAED32 use 1 row x 4
+columns of `8x1024` / `1024x8`; SAED14 uses 2 rows x 4 columns of `512x8`;
+SKY130 uses 2 rows x 1 column of `32x512`.
 
 **Macro and model quirks handled:**
 - The SAED14 single-port macros have an active-high `CSB`. The two-port macros
@@ -125,12 +172,19 @@ rows of `32x512`.
 | `RST_POL` | 0 | 0 | documents the reset polarity, which is carried by the bus reset pin |
 
 Dual port is a separate top-level (`sram_<proto>_dp`), not a parameter of the
-single-port top-levels.
+single-port top-levels. The dual-port top-levels add:
+
+| Parameter | Range | Default | Meaning |
+|---|---|---|---|
+| `WIDTH_B` | 8..128, multiple of 8, `WIDTH / WIDTH_B` a power of two | `WIDTH` | port B data width; port B has `WIDTH * DEPTH / WIDTH_B` words |
+| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as for port A | port A's | port B options |
+| `COMMON_CLK` | 0/1 | 1 | 1: the B clock is the A clock; 0: unrelated clocks (not `TECH_SAED14`) |
 
 **Memory map.** Word `n` sits at byte offset `n * WIDTH / 8` of the slave
 port. Addresses at or beyond `DEPTH * WIDTH / 8` get the bus error response,
 and the contents are unchanged. Narrow AHB transfers use the byte lanes given
-by HSIZE/HADDR.
+by HSIZE/HADDR. In a dual-port top, port B sees the same bytes at the same
+offsets (its word `j` is at `j * WIDTH_B / 8`, `DEPTH_B` words).
 
 ## Interfaces
 
@@ -142,7 +196,7 @@ by HSIZE/HADDR.
 | `sram_ahb` | `HCLK HRESETn HSEL HADDR HTRANS HWRITE HSIZE HWDATA HWSTRB HREADY HRDATA HREADYOUT HRESP` | bursts, BUSY, HSIZE; HREADY in / HREADYOUT out |
 | `sram_axi4l` | `ACLK ARESETn AW* W* B* AR* R*` | BRESP/RRESP = SLVERR on error |
 | `sram_wb` | `CLK_I RST_I CYC_I STB_I WE_I ADR_I DAT_I SEL_I DAT_O ACK_O ERR_O` | classic cycles; ERR_O on error |
-| `sram_<proto>_dp` | the above, twice: `A_*` and `B_*`, sharing the clock and reset | |
+| `sram_<proto>_dp` | the above, twice: `A_*` and `B_*`, each with its own clock and reset (`A_PCLK`/`B_PCLK`, ...); port B's data and strobes are `WIDTH_B` wide | side-band on port A's clock |
 
 The bus adapter timing is described in `IP/common/design/rtl/mem_bus.md`.
 
@@ -164,15 +218,17 @@ The bus adapter timing is described in `IP/common/design/rtl/mem_bus.md`.
 | `bist_fail_o` | out | 1 | BIST: a word failed (valid from `bist_done_o` until the next start) |
 | `bist_fail_addr_o` | out | log2(DEPTH) | BIST: first failing word |
 
-Inputs of disabled options must be tied to 0. Their outputs stay 0.
+Inputs of disabled options must be tied to 0. Their outputs stay 0. All
+side-band ports are synchronous to port A's clock; with `COMMON_CLK = 0`,
+port B's events reach `ecc_*_o` / `err_irq_o` through pulse synchronizers.
 
 ### `sram_core`
 
 | Port group | Signals |
 |---|---|
-| clock / reset | `clk`, `rst_n` (synchronous, active low) |
+| clock / reset | `clk`, `rst_n` (synchronous, active low); `clk_b`, `rst_b_n` for port B (single port: tie to `clk` / `rst_n`) |
 | memory bus, port A | `mem_req_i mem_gnt_o mem_we_i mem_addr_i mem_be_i mem_wdata_i mem_rvalid_o mem_rdata_o mem_err_o` |
-| memory bus, port B | the same names with `mem_b_` (DUAL_PORT; tie off otherwise) |
+| memory bus, port B | the same names with `mem_b_`, `WIDTH_B` wide (DUAL_PORT; tie off otherwise) |
 | side-band | as the table above |
 
 ## Power Management

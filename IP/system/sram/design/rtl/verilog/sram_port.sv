@@ -20,8 +20,16 @@
 //   word. A read-modify-write merges the strobed bytes into the corrected
 //   word and writes it back in s1 (no write if uncorrectable).
 //
+// ECC codewords: the WIDTH-bit word is stored as WIDTH / CW SECDED
+// codewords of CW data bits (CW = WIDTH except on the wide port of a dual
+// port with different widths, where CW is the narrow width). Each codeword
+// is one write lane: a write only stores the codewords it strobes, and a
+// partial write inside a codeword reads the word first and writes back
+// only the strobed codewords (read-modify-write). The other port's words in
+// the untouched codewords are never rewritten.
+//
 // ECC error injection: ecc_inj_i[0] / [1] arm a 1-bit / 2-bit flip (stored
-// bits 0, or 0 and 1) applied to the next write from this port.
+// bits 0, or 0 and 1: codeword 0) applied to the next write from this port.
 //
 // READ_ONLY: every write is answered with a bus error (port B of a SKY130
 // dual-port array, whose second macro port cannot write).
@@ -38,9 +46,10 @@ module sram_port #(
   parameter bit          ECC_EN         = 0,     // SECDED
   parameter int unsigned NPD            = 1,     // power domains
   parameter bit          READ_ONLY      = 0,     // writes are bus errors
+  parameter int unsigned CW             = WIDTH, // ECC codeword data width (divides WIDTH)
   // Derived
-  localparam int unsigned MW     = WIDTH + (ECC_EN ? sram_pkg::ecc_check_bits(WIDTH) : 0),
-  localparam int unsigned NLANES = (BYTE_EN && !ECC_EN) ? WIDTH / 8 : 1
+  localparam int unsigned MW     = sram_pkg::stored_width(WIDTH, CW, ECC_EN),
+  localparam int unsigned NLANES = sram_pkg::stored_lanes(WIDTH, CW, BYTE_EN, ECC_EN)
 ) (
   input  logic                       clk,          // clock
   input  logic                       rst_n,        // synchronous active-low reset
@@ -93,6 +102,9 @@ module sram_port #(
   localparam int unsigned DomW   = (NPD > 1) ? $clog2(NPD) : 1;
   localparam int unsigned DomSh  = $clog2(DEPTH / NPD);
   localparam int unsigned UpperW = (ADDR_W > OffW + IdxW) ? ADDR_W - OffW - IdxW : 1;
+  localparam int unsigned NCW    = WIDTH / CW;                          // codewords
+  localparam int unsigned CWS    = ECC_EN ? MW / NCW : CW;              // stored codeword
+  localparam int unsigned CWB    = CW / 8;                              // bytes per codeword
 
   // -------------------------------------------------------------------------
   // Request decode (s0)
@@ -101,6 +113,8 @@ module sram_port #(
   logic [DomW-1:0] dom;
   logic            oor;        // beyond the last word
   logic            partial;    // write with some byte enables clear
+  logic [NCW-1:0]  cw_touch;   // codewords with a strobed byte
+  logic [NCW-1:0]  cw_part;    // codewords only partly strobed
   logic            req_err;    // grant with an error response
   logic            rmw;        // ECC partial write: read first
   logic            grant;      // mem_gnt_o
@@ -125,7 +139,13 @@ module sram_port #(
   assign partial = mem_we_i && (mem_be_i != {StrbW{1'b1}});
   assign req_err = oor || dom_err_i[dom] || (READ_ONLY && mem_we_i) ||
                    (!BYTE_EN && PARTIAL_WR_ERR && partial);
-  assign rmw     = ECC_EN && BYTE_EN && partial;
+  for (genvar c = 0; c < NCW; c++) begin : g_cw_strobe
+    assign cw_touch[c] = |mem_be_i[c * CWB +: CWB];
+    assign cw_part[c]  = cw_touch[c] && !(&mem_be_i[c * CWB +: CWB]);
+  end
+
+  // ECC: a write that covers whole codewords stores them directly.
+  assign rmw     = ECC_EN && BYTE_EN && mem_we_i && (|cw_part);
 
   // Grant: never while an engine owns the array or a response is pending.
   always_comb begin : p_grant
@@ -186,8 +206,12 @@ module sram_port #(
   // ECC: decode the word read in s0, merge for read-modify-write, encode
   // -------------------------------------------------------------------------
   logic [WIDTH-1:0] rd_data;     // data read (corrected)
+  logic [NCW-1:0]   cw_single;   // per codeword: corrected error
+  logic [NCW-1:0]   cw_double;   // per codeword: uncorrectable error
+  logic [NCW-1:0]   cw_used;     // codewords that matter for the response
   logic             dec_single;
   logic             dec_double;
+  logic [NCW-1:0]   s1_touch;    // codewords strobed by the s1 request
   logic [WIDTH-1:0] merged;      // read-modify-write result
   logic             rmw_write;   // s1 write-back of a read-modify-write
   logic [WIDTH-1:0] enc_data;    // data to encode / write
@@ -197,26 +221,37 @@ module sram_port #(
   logic [MW-1:0]    flip;        // injected bit flips
 
   if (ECC_EN) begin : g_ecc
-    sram_ecc_dec #(
-      .K(WIDTH)
-    ) u_dec (
-      .code_i  (arr_rdata_i),
-      .data_o  (rd_data),
-      .single_o(dec_single),
-      .double_o(dec_double)
-    );
-    sram_ecc_enc #(
-      .K(WIDTH)
-    ) u_enc (
-      .data_i(enc_data),
-      .code_o(stored)
-    );
+    for (genvar c = 0; c < NCW; c++) begin : g_cw
+      sram_ecc_dec #(
+        .K(CW)
+      ) u_dec (
+        .code_i  (arr_rdata_i[c * CWS +: CWS]),
+        .data_o  (rd_data[c * CW +: CW]),
+        .single_o(cw_single[c]),
+        .double_o(cw_double[c])
+      );
+      sram_ecc_enc #(
+        .K(CW)
+      ) u_enc (
+        .data_i(enc_data[c * CW +: CW]),
+        .code_o(stored[c * CWS +: CWS])
+      );
+    end
   end else begin : g_no_ecc
-    assign rd_data    = arr_rdata_i[WIDTH-1:0];
-    assign dec_single = 1'b0;
-    assign dec_double = 1'b0;
-    assign stored     = MW'(enc_data);
+    assign rd_data   = arr_rdata_i[WIDTH-1:0];
+    assign cw_single = '0;
+    assign cw_double = '0;
+    assign stored    = MW'(enc_data);
   end
+
+  // A read checks every codeword; a read-modify-write only the codewords it
+  // writes back.
+  for (genvar c = 0; c < NCW; c++) begin : g_s1_touch
+    assign s1_touch[c] = |s1_be_q[c * CWB +: CWB];
+  end
+  assign cw_used    = s1_rmw_q ? s1_touch : '1;
+  assign dec_single = |(cw_single & cw_used);
+  assign dec_double = |(cw_double & cw_used);
 
   for (genvar b = 0; b < StrbW; b++) begin : g_merge
     assign merged[8*b +: 8] = s1_be_q[b] ? s1_wdata_q[8*b +: 8] : rd_data[8*b +: 8];
@@ -251,10 +286,15 @@ module sram_port #(
       arr_cs_o  = 1'b1;
       arr_we_o  = 1'b1;
       arr_idx_o = s1_idx_q;
+      if (ECC_EN && BYTE_EN) begin
+        arr_lane_we_o = NLANES'(s1_touch);
+      end
     end else if (do_access) begin
       arr_cs_o = 1'b1;
       arr_we_o = mem_we_i && !rmw;
-      if (NLANES > 1) begin
+      if (ECC_EN && BYTE_EN) begin
+        arr_lane_we_o = NLANES'(cw_touch);
+      end else if (NLANES > 1) begin
         arr_lane_we_o = NLANES'(mem_be_i);
       end
     end

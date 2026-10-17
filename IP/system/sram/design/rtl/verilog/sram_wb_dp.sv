@@ -2,10 +2,14 @@
 //
 // Instantiates claude_wb_mem_if (one per port) (IP/common) and sram_core. Contains no
 // logic — only port declarations and submodule wiring (plus the reset inversion Wishbone needs).
-// Dual-port variant: two Wishbone B4 slave ports (A_*, B_*) on one clock and
-// reset, on a two-port array (sram_core DUAL_PORT = 1). Same-word conflicts
-// complete in the order A then B. With TECH_SKY130 port B is read-only
-// (writes get a bus error).
+// Dual-port variant: two Wishbone B4 slave ports (A_*, B_*) on a two-port
+// array (sram_core DUAL_PORT = 1). Port B may be narrower or wider
+// (WIDTH_B; same capacity). Each port has its own clock and reset pins:
+// with COMMON_CLK = 1 drive B_CLK_I from the same clock as A_CLK_I
+// (same-word conflicts then complete in the order A then B); with
+// COMMON_CLK = 0 the clocks are unrelated and same-word collisions are
+// undefined. The side-band runs on port A's clock. With TECH_SKY130 port B
+// is read-only (writes get a bus error); TECH_SAED14 needs COMMON_CLK = 1.
 //
 // Parameters (see doc/spec.md):
 //   TECH            sram_pkg::TECH_* (GENERIC, XILINX, ALTERA, SAED90, SAED32, SAED14, SKY130)
@@ -17,32 +21,43 @@
 //   PWR_GATE        power modes; BANK_PG: one power domain per bank
 //   NUM_BANKS       banks (power of two)
 //   ECC_EN, BIST_EN SECDED ECC, March C- self-test
+//   WIDTH_B         port B data width: WIDTH / WIDTH_B a power of two either way;
+//                   port B has WIDTH * DEPTH / WIDTH_B words (same storage)
+//   BYTE_EN_B, PARTIAL_WR_ERR_B, READ_LATENCY_B   port B options (default: A's)
+//   COMMON_CLK      1: B_<clock> is the same clock as A_<clock>; 0: unrelated clocks
 //   INIT_FILE       preload (GENERIC / FPGA)
 //   RST_POL         0 = active-low reset (polarity is carried by the bus reset pin)
 // Side-band ports of disabled options are present; tie their inputs to 0.
 
 module sram_wb_dp #(
-  parameter int unsigned TECH           = sram_pkg::TECH_GENERIC, // technology
-  parameter int unsigned ADDR_W         = 32,    // bus byte-address width
-  parameter int unsigned WIDTH          = 32,    // data width (multiple of 8)
-  parameter int unsigned DEPTH          = 1024,  // words (power of two)
-  parameter bit          BYTE_EN        = 1,     // byte-lane writes
-  parameter bit          PARTIAL_WR_ERR = 1,     // BYTE_EN = 0: partial write is an error
-  parameter int unsigned READ_LATENCY   = 1,     // 1 or 2
-  parameter bit          PWR_GATE       = 1,     // power modes
-  parameter bit          ECC_EN         = 0,     // SECDED
-  parameter bit          BANK_PG        = 0,     // one power domain per bank
-  parameter int unsigned NUM_BANKS      = 1,     // banks (power of two)
-  parameter bit          BIST_EN        = 0,     // March C- engine
-  parameter string       INIT_FILE      = "",    // preload (GENERIC/FPGA)
+  parameter int unsigned TECH             = sram_pkg::TECH_GENERIC, // technology
+  parameter int unsigned ADDR_W           = 32,             // bus byte-address width
+  parameter int unsigned WIDTH            = 32,             // data width (multiple of 8)
+  parameter int unsigned DEPTH            = 1024,           // words (power of two)
+  parameter bit          BYTE_EN          = 1,              // byte-lane writes
+  parameter bit          PARTIAL_WR_ERR   = 1,              // BYTE_EN = 0: partial write errors
+  parameter int unsigned READ_LATENCY     = 1,              // 1 or 2
+  parameter bit          PWR_GATE         = 1,              // power modes
+  parameter bit          ECC_EN           = 0,              // SECDED
+  parameter bit          BANK_PG          = 0,              // one power domain per bank
+  parameter int unsigned NUM_BANKS        = 1,              // banks (power of two)
+  parameter bit          BIST_EN          = 0,              // March C- engine
+  parameter int unsigned WIDTH_B          = WIDTH,          // port B data width (multiple of 8)
+  parameter bit          BYTE_EN_B        = BYTE_EN,        // port B byte-lane writes
+  parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR, // port B partial-write error
+  parameter int unsigned READ_LATENCY_B   = READ_LATENCY,   // port B: 1 or 2
+  parameter bit          COMMON_CLK       = 1,              // 1: B clock is A's clock; 0: separate
+  parameter string       INIT_FILE        = "",             // preload (GENERIC/FPGA)
   /* verilator lint_off UNUSEDPARAM */
-  parameter int unsigned RST_POL        = 0,     // 0 = active-low; polarity carried by RST_I
+  parameter int unsigned RST_POL          = 0,              // 0 = active-low (reset pins)
   /* verilator lint_on UNUSEDPARAM */
   // Derived
-  localparam int unsigned NPD           = BANK_PG ? NUM_BANKS : 1
+  localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1
 ) (
-  input  logic                      CLK_I,              // bus clock (both ports)
-  input  logic                      RST_I,              // Wishbone active-high synchronous reset
+  input  logic                      A_CLK_I,            // port A bus clock (core, side-band)
+  input  logic                      A_RST_I,            // port A reset (active-high, synchronous)
+  input  logic                      B_CLK_I,            // port B bus clock (= A's if COMMON_CLK)
+  input  logic                      B_RST_I,            // port B reset (active-high, synchronous)
 
   // Wishbone B4 bus, port A
   input  logic                      A_CYC_I,            // bus cycle valid
@@ -60,9 +75,9 @@ module sram_wb_dp #(
   input  logic                      B_STB_I,            // strobe
   input  logic                      B_WE_I,             // 1 = write
   input  logic [ADDR_W-1:0]         B_ADR_I,            // byte address
-  input  logic [WIDTH-1:0]          B_DAT_I,            // write data
-  input  logic [WIDTH/8-1:0]        B_SEL_I,            // byte selects
-  output logic [WIDTH-1:0]          B_DAT_O,            // read data
+  input  logic [WIDTH_B-1:0]        B_DAT_I,            // write data
+  input  logic [WIDTH_B/8-1:0]      B_SEL_I,            // byte selects
+  output logic [WIDTH_B-1:0]        B_DAT_O,            // read data
   output logic                      B_ACK_O,            // normal termination
   output logic                      B_ERR_O,            // error termination
 
@@ -84,7 +99,9 @@ module sram_wb_dp #(
 
   // Wishbone uses an active-high synchronous reset; the core uses active-low.
   logic rst_n;
-  assign rst_n = ~RST_I;
+  logic b_rst_n;
+  assign rst_n   = ~A_RST_I;
+  assign b_rst_n = ~B_RST_I;
 
   // Memory bus between the adapters and the core
   logic                      a_mem_req;
@@ -100,18 +117,18 @@ module sram_wb_dp #(
   logic                      b_mem_gnt;
   logic                      b_mem_we;
   logic [ADDR_W-1:0]         b_mem_addr;
-  logic [WIDTH/8-1:0]        b_mem_be;
-  logic [WIDTH-1:0]          b_mem_wdata;
+  logic [WIDTH_B/8-1:0]      b_mem_be;
+  logic [WIDTH_B-1:0]        b_mem_wdata;
   logic                      b_mem_rvalid;
-  logic [WIDTH-1:0]          b_mem_rdata;
+  logic [WIDTH_B-1:0]        b_mem_rdata;
   logic                      b_mem_err;
 
   claude_wb_mem_if #(
     .DATA_W(WIDTH),
     .ADDR_W(ADDR_W)
   ) u_if_a (
-    .CLK_I       (CLK_I),
-    .RST_I       (RST_I),
+    .CLK_I       (A_CLK_I),
+    .RST_I       (A_RST_I),
     .CYC_I       (A_CYC_I),
     .STB_I       (A_STB_I),
     .WE_I        (A_WE_I),
@@ -133,11 +150,11 @@ module sram_wb_dp #(
   );
 
   claude_wb_mem_if #(
-    .DATA_W(WIDTH),
+    .DATA_W(WIDTH_B),
     .ADDR_W(ADDR_W)
   ) u_if_b (
-    .CLK_I       (CLK_I),
-    .RST_I       (RST_I),
+    .CLK_I       (B_CLK_I),
+    .RST_I       (B_RST_I),
     .CYC_I       (B_CYC_I),
     .STB_I       (B_STB_I),
     .WE_I        (B_WE_I),
@@ -159,23 +176,30 @@ module sram_wb_dp #(
   );
 
   sram_core #(
-    .TECH          (TECH),
-    .ADDR_W        (ADDR_W),
-    .WIDTH         (WIDTH),
-    .DEPTH         (DEPTH),
-    .BYTE_EN       (BYTE_EN),
-    .PARTIAL_WR_ERR(PARTIAL_WR_ERR),
-    .READ_LATENCY  (READ_LATENCY),
-    .PWR_GATE      (PWR_GATE),
-    .ECC_EN        (ECC_EN),
-    .BANK_PG       (BANK_PG),
-    .NUM_BANKS     (NUM_BANKS),
-    .BIST_EN       (BIST_EN),
-    .DUAL_PORT     (1),
-    .INIT_FILE     (INIT_FILE)
+    .TECH            (TECH),
+    .ADDR_W          (ADDR_W),
+    .WIDTH           (WIDTH),
+    .DEPTH           (DEPTH),
+    .BYTE_EN         (BYTE_EN),
+    .PARTIAL_WR_ERR  (PARTIAL_WR_ERR),
+    .READ_LATENCY    (READ_LATENCY),
+    .PWR_GATE        (PWR_GATE),
+    .ECC_EN          (ECC_EN),
+    .BANK_PG         (BANK_PG),
+    .NUM_BANKS       (NUM_BANKS),
+    .BIST_EN         (BIST_EN),
+    .DUAL_PORT       (1),
+    .WIDTH_B         (WIDTH_B),
+    .BYTE_EN_B       (BYTE_EN_B),
+    .PARTIAL_WR_ERR_B(PARTIAL_WR_ERR_B),
+    .READ_LATENCY_B  (READ_LATENCY_B),
+    .COMMON_CLK      (COMMON_CLK),
+    .INIT_FILE       (INIT_FILE)
   ) u_core (
-    .clk             (CLK_I),
+    .clk             (A_CLK_I),
     .rst_n           (rst_n),
+    .clk_b           (B_CLK_I),
+    .rst_b_n         (b_rst_n),
     .mem_req_i       (a_mem_req),
     .mem_gnt_o       (a_mem_gnt),
     .mem_we_i        (a_mem_we),

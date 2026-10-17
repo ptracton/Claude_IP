@@ -2,10 +2,14 @@
 //
 // Instantiates claude_axi4l_mem_if (one per port) (IP/common) and sram_core. Contains no
 // logic — only port declarations and submodule wiring.
-// Dual-port variant: two AXI4-Lite slave ports (A_*, B_*) on one clock and
-// reset, on a two-port array (sram_core DUAL_PORT = 1). Same-word conflicts
-// complete in the order A then B. With TECH_SKY130 port B is read-only
-// (writes get a bus error).
+// Dual-port variant: two AXI4-Lite slave ports (A_*, B_*) on a two-port
+// array (sram_core DUAL_PORT = 1). Port B may be narrower or wider
+// (WIDTH_B; same capacity). Each port has its own clock and reset pins:
+// with COMMON_CLK = 1 drive B_ACLK from the same clock as A_ACLK
+// (same-word conflicts then complete in the order A then B); with
+// COMMON_CLK = 0 the clocks are unrelated and same-word collisions are
+// undefined. The side-band runs on port A's clock. With TECH_SKY130 port B
+// is read-only (writes get a bus error); TECH_SAED14 needs COMMON_CLK = 1.
 //
 // Parameters (see doc/spec.md):
 //   TECH            sram_pkg::TECH_* (GENERIC, XILINX, ALTERA, SAED90, SAED32, SAED14, SKY130)
@@ -17,32 +21,43 @@
 //   PWR_GATE        power modes; BANK_PG: one power domain per bank
 //   NUM_BANKS       banks (power of two)
 //   ECC_EN, BIST_EN SECDED ECC, March C- self-test
+//   WIDTH_B         port B data width: WIDTH / WIDTH_B a power of two either way;
+//                   port B has WIDTH * DEPTH / WIDTH_B words (same storage)
+//   BYTE_EN_B, PARTIAL_WR_ERR_B, READ_LATENCY_B   port B options (default: A's)
+//   COMMON_CLK      1: B_<clock> is the same clock as A_<clock>; 0: unrelated clocks
 //   INIT_FILE       preload (GENERIC / FPGA)
 //   RST_POL         0 = active-low reset (polarity is carried by the bus reset pin)
 // Side-band ports of disabled options are present; tie their inputs to 0.
 
 module sram_axi4l_dp #(
-  parameter int unsigned TECH           = sram_pkg::TECH_GENERIC, // technology
-  parameter int unsigned ADDR_W         = 32,    // bus byte-address width
-  parameter int unsigned WIDTH          = 32,    // data width (multiple of 8)
-  parameter int unsigned DEPTH          = 1024,  // words (power of two)
-  parameter bit          BYTE_EN        = 1,     // byte-lane writes
-  parameter bit          PARTIAL_WR_ERR = 1,     // BYTE_EN = 0: partial write is an error
-  parameter int unsigned READ_LATENCY   = 1,     // 1 or 2
-  parameter bit          PWR_GATE       = 1,     // power modes
-  parameter bit          ECC_EN         = 0,     // SECDED
-  parameter bit          BANK_PG        = 0,     // one power domain per bank
-  parameter int unsigned NUM_BANKS      = 1,     // banks (power of two)
-  parameter bit          BIST_EN        = 0,     // March C- engine
-  parameter string       INIT_FILE      = "",    // preload (GENERIC/FPGA)
+  parameter int unsigned TECH             = sram_pkg::TECH_GENERIC, // technology
+  parameter int unsigned ADDR_W           = 32,             // bus byte-address width
+  parameter int unsigned WIDTH            = 32,             // data width (multiple of 8)
+  parameter int unsigned DEPTH            = 1024,           // words (power of two)
+  parameter bit          BYTE_EN          = 1,              // byte-lane writes
+  parameter bit          PARTIAL_WR_ERR   = 1,              // BYTE_EN = 0: partial write errors
+  parameter int unsigned READ_LATENCY     = 1,              // 1 or 2
+  parameter bit          PWR_GATE         = 1,              // power modes
+  parameter bit          ECC_EN           = 0,              // SECDED
+  parameter bit          BANK_PG          = 0,              // one power domain per bank
+  parameter int unsigned NUM_BANKS        = 1,              // banks (power of two)
+  parameter bit          BIST_EN          = 0,              // March C- engine
+  parameter int unsigned WIDTH_B          = WIDTH,          // port B data width (multiple of 8)
+  parameter bit          BYTE_EN_B        = BYTE_EN,        // port B byte-lane writes
+  parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR, // port B partial-write error
+  parameter int unsigned READ_LATENCY_B   = READ_LATENCY,   // port B: 1 or 2
+  parameter bit          COMMON_CLK       = 1,              // 1: B clock is A's clock; 0: separate
+  parameter string       INIT_FILE        = "",             // preload (GENERIC/FPGA)
   /* verilator lint_off UNUSEDPARAM */
-  parameter int unsigned RST_POL        = 0,     // 0 = active-low; polarity carried by ARESETn
+  parameter int unsigned RST_POL          = 0,              // 0 = active-low (reset pins)
   /* verilator lint_on UNUSEDPARAM */
   // Derived
-  localparam int unsigned NPD           = BANK_PG ? NUM_BANKS : 1
+  localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1
 ) (
-  input  logic                      ACLK,               // bus clock (both ports)
-  input  logic                      ARESETn,            // AXI active-low reset
+  input  logic                      A_ACLK,             // port A bus clock (core, side-band)
+  input  logic                      A_ARESETn,          // port A AXI active-low reset
+  input  logic                      B_ACLK,             // port B bus clock (= A's if COMMON_CLK)
+  input  logic                      B_ARESETn,          // port B AXI active-low reset
 
   // AXI4-Lite bus, port A
   input  logic                      A_AWVALID,          // write address valid
@@ -69,8 +84,8 @@ module sram_axi4l_dp #(
   input  logic [ADDR_W-1:0]         B_AWADDR,           // write byte address
   input  logic                      B_WVALID,           // write data valid
   output logic                      B_WREADY,           // write data accepted
-  input  logic [WIDTH-1:0]          B_WDATA,            // write data
-  input  logic [WIDTH/8-1:0]        B_WSTRB,            // write byte strobes
+  input  logic [WIDTH_B-1:0]        B_WDATA,            // write data
+  input  logic [WIDTH_B/8-1:0]      B_WSTRB,            // write byte strobes
   output logic                      B_BVALID,           // write response valid
   input  logic                      B_BREADY,           // write response accepted
   output logic [1:0]                B_BRESP,            // OKAY or SLVERR
@@ -79,7 +94,7 @@ module sram_axi4l_dp #(
   input  logic [ADDR_W-1:0]         B_ARADDR,           // read byte address
   output logic                      B_RVALID,           // read data valid
   input  logic                      B_RREADY,           // read data accepted
-  output logic [WIDTH-1:0]          B_RDATA,            // read data
+  output logic [WIDTH_B-1:0]        B_RDATA,            // read data
   output logic [1:0]                B_RRESP,            // OKAY or SLVERR
 
   // Side-band: power, clear, status, ECC, BIST
@@ -112,18 +127,18 @@ module sram_axi4l_dp #(
   logic                      b_mem_gnt;
   logic                      b_mem_we;
   logic [ADDR_W-1:0]         b_mem_addr;
-  logic [WIDTH/8-1:0]        b_mem_be;
-  logic [WIDTH-1:0]          b_mem_wdata;
+  logic [WIDTH_B/8-1:0]      b_mem_be;
+  logic [WIDTH_B-1:0]        b_mem_wdata;
   logic                      b_mem_rvalid;
-  logic [WIDTH-1:0]          b_mem_rdata;
+  logic [WIDTH_B-1:0]        b_mem_rdata;
   logic                      b_mem_err;
 
   claude_axi4l_mem_if #(
     .DATA_W(WIDTH),
     .ADDR_W(ADDR_W)
   ) u_if_a (
-    .ACLK        (ACLK),
-    .ARESETn     (ARESETn),
+    .ACLK        (A_ACLK),
+    .ARESETn     (A_ARESETn),
     .AWVALID     (A_AWVALID),
     .AWREADY     (A_AWREADY),
     .AWADDR      (A_AWADDR),
@@ -153,11 +168,11 @@ module sram_axi4l_dp #(
   );
 
   claude_axi4l_mem_if #(
-    .DATA_W(WIDTH),
+    .DATA_W(WIDTH_B),
     .ADDR_W(ADDR_W)
   ) u_if_b (
-    .ACLK        (ACLK),
-    .ARESETn     (ARESETn),
+    .ACLK        (B_ACLK),
+    .ARESETn     (B_ARESETn),
     .AWVALID     (B_AWVALID),
     .AWREADY     (B_AWREADY),
     .AWADDR      (B_AWADDR),
@@ -187,23 +202,30 @@ module sram_axi4l_dp #(
   );
 
   sram_core #(
-    .TECH          (TECH),
-    .ADDR_W        (ADDR_W),
-    .WIDTH         (WIDTH),
-    .DEPTH         (DEPTH),
-    .BYTE_EN       (BYTE_EN),
-    .PARTIAL_WR_ERR(PARTIAL_WR_ERR),
-    .READ_LATENCY  (READ_LATENCY),
-    .PWR_GATE      (PWR_GATE),
-    .ECC_EN        (ECC_EN),
-    .BANK_PG       (BANK_PG),
-    .NUM_BANKS     (NUM_BANKS),
-    .BIST_EN       (BIST_EN),
-    .DUAL_PORT     (1),
-    .INIT_FILE     (INIT_FILE)
+    .TECH            (TECH),
+    .ADDR_W          (ADDR_W),
+    .WIDTH           (WIDTH),
+    .DEPTH           (DEPTH),
+    .BYTE_EN         (BYTE_EN),
+    .PARTIAL_WR_ERR  (PARTIAL_WR_ERR),
+    .READ_LATENCY    (READ_LATENCY),
+    .PWR_GATE        (PWR_GATE),
+    .ECC_EN          (ECC_EN),
+    .BANK_PG         (BANK_PG),
+    .NUM_BANKS       (NUM_BANKS),
+    .BIST_EN         (BIST_EN),
+    .DUAL_PORT       (1),
+    .WIDTH_B         (WIDTH_B),
+    .BYTE_EN_B       (BYTE_EN_B),
+    .PARTIAL_WR_ERR_B(PARTIAL_WR_ERR_B),
+    .READ_LATENCY_B  (READ_LATENCY_B),
+    .COMMON_CLK      (COMMON_CLK),
+    .INIT_FILE       (INIT_FILE)
   ) u_core (
-    .clk             (ACLK),
-    .rst_n           (ARESETn),
+    .clk             (A_ACLK),
+    .rst_n           (A_ARESETn),
+    .clk_b           (B_ACLK),
+    .rst_b_n         (B_ARESETn),
     .mem_req_i       (a_mem_req),
     .mem_gnt_o       (a_mem_gnt),
     .mem_we_i        (a_mem_we),

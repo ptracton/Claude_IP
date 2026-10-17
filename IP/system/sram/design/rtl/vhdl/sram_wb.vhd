@@ -12,20 +12,20 @@ use work.sram_pkg.all;
 
 entity sram_wb is
   generic (
-    TECH           : natural  := TECH_GENERIC_C;  -- technology (TECH_*_C)
-    ADDR_W         : positive := 32;    -- bus byte-address width
-    WIDTH          : positive := 32;    -- data width (multiple of 8)
-    DEPTH          : positive := 1024;  -- words (power of two)
-    BYTE_EN        : natural  := 1;     -- byte-lane writes (0 / 1)
-    PARTIAL_WR_ERR : natural  := 1;     -- BYTE_EN = 0: partial write is an error
-    READ_LATENCY   : positive := 1;     -- 1 or 2
-    PWR_GATE       : natural  := 1;     -- power modes (0 / 1)
-    ECC_EN         : natural  := 0;     -- SECDED (0 / 1)
-    BANK_PG        : natural  := 0;     -- one power domain per bank (0 / 1)
-    NUM_BANKS      : positive := 1;     -- banks (power of two)
-    BIST_EN        : natural  := 0;     -- March C- engine (0 / 1)
-    INIT_FILE      : string   := "";    -- preload (GENERIC/FPGA)
-    RST_POL        : natural  := 0      -- 0 = active-low; polarity carried by RST_I
+    TECH           : natural  := TECH_GENERIC_C; -- technology (TECH_*_C)
+    ADDR_W         : positive := 32;             -- bus byte-address width
+    WIDTH          : positive := 32;             -- data width (multiple of 8)
+    DEPTH          : positive := 1024;           -- words (power of two)
+    BYTE_EN        : natural  := 1;              -- byte-lane writes (0 / 1)
+    PARTIAL_WR_ERR : natural  := 1;              -- BYTE_EN = 0: partial write is an error
+    READ_LATENCY   : positive := 1;              -- 1 or 2
+    PWR_GATE       : natural  := 1;              -- power modes (0 / 1)
+    ECC_EN         : natural  := 0;              -- SECDED (0 / 1)
+    BANK_PG        : natural  := 0;              -- one power domain per bank (0 / 1)
+    NUM_BANKS      : positive := 1;              -- banks (power of two)
+    BIST_EN        : natural  := 0;              -- March C- engine (0 / 1)
+    INIT_FILE      : string   := "";             -- preload (GENERIC/FPGA)
+    RST_POL        : natural  := 0               -- 0 = active-low; polarity carried by RST_I
   );
   port (
     -- Wishbone B4 bus
@@ -127,6 +127,8 @@ begin
     port map (
       clk              => CLK_I,
       rst_n            => rst_n,
+      clk_b            => CLK_I,
+      rst_b_n          => rst_n,
       mem_req_i        => mem_req,
       mem_gnt_o        => mem_gnt,
       mem_we_i         => mem_we,

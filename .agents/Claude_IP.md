@@ -62,12 +62,17 @@ IP/common/
 │       │   ├── claude_axi4l_if.sv    # AXI4-Lite → regbus bridge
 │       │   ├── claude_wb_if.sv       # Wishbone B4 → regbus bridge
 │       │   ├── claude_<proto>_mem_if.sv  # APB4/AHB-Lite/AXI4-Lite/WB → memory bus (mem_*)
-│       │   └── ...                   # CDC sync cells, reset synchronizers, etc.
+│       │   ├── claude_sync.sv        # N-flop level synchronizer (CDC)
+│       │   ├── claude_pulse_sync.sv  # toggle-based pulse synchronizer (CDC)
+│       │   └── ...                   # reset synchronizers, etc.
 │       └── vhdl/             # VHDL-2008 equivalents of every component in verilog/
 │           ├── claude_apb_if.vhd
 │           ├── claude_ahb_if.vhd
 │           ├── claude_axi4l_if.vhd
 │           ├── claude_wb_if.vhd
+│           ├── claude_<proto>_mem_if.vhd
+│           ├── claude_sync.vhd
+│           ├── claude_pulse_sync.vhd
 │           └── ...
 ├── verification/
 │   ├── tasks/            # Protocol BFM task libraries (one file per bus protocol)
@@ -115,6 +120,22 @@ HSIZE byte lanes, and serialized AXI4-Lite reads and writes. The spec is
 these adapters rather than the register bridges. Their AHB port has `HSIZE` and separate
 `HREADY` (in) / `HREADYOUT` (out). Their AHB testbenches define `CLAUDE_BFM_AHB_HSIZE` before
 including `tasks_ahb.sv`, which enables the BFM's sized-transfer and INCR4 burst tasks.
+
+**Clock-domain-crossing cells (`claude_sync`, `claude_pulse_sync`)** are the shared
+synchronizers.
+- `claude_sync` passes independent level bits through `STAGES` (default 2) flops on the
+  destination clock, with a synchronous active-low reset to `RST_VAL`.
+- `claude_pulse_sync` turns a one-cycle source pulse into a one-cycle destination pulse
+  through a toggle flop and a `claude_sync`. Pulses closer together than about three
+  destination cycles may merge.
+
+**RULE — Every clock crossing goes through these cells.** Register the signal in its
+source domain first, so no combinational logic feeds a synchronizer. Never select, gate
+or derive a clock in RTL (`b_clk = sel ? clk_a : clk_b`, or VHDL `b_clk <= clk`). In VHDL
+a clock assignment adds a delta cycle and races the flops on the copy against the
+original. If two ports may share a clock, give each its own clock pin and document that
+both must be driven from the same clock. The first user is the sram dual port
+(`IP/system/sram/design/rtl/*/sram_cdc.*`).
 
 `IP_COMMON_PATH` is set by `setup.sh` and points to this directory.
 

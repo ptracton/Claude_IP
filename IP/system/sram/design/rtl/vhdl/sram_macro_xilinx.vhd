@@ -1,7 +1,8 @@
--- sram_macro_xilinx.vhd — Xilinx XPM single-port RAM tile (TECH_XILINX).
+-- sram_macro_xilinx.vhd — Xilinx XPM single-port RAM wrapper (TECH_XILINX).
 --
--- VHDL-2008 twin of sram_macro_xilinx.sv: xpm_memory_spram with one cycle of
--- read latency and byte writes; sleep = ls_i or ds_i or sd_i with
+-- VHDL-2008 twin of sram_macro_xilinx.sv: one xpm_memory_spram of W x D (not
+-- tiled: Vivado cascades block RAMs) with one cycle of read latency and lane
+-- writes (BYTE_WRITE_WIDTH_A = W / NLANES); sleep = ls_i or ds_i or sd_i with
 -- WAKEUP_TIME = "use_sleep_pin".
 -- The component is declared here rather than through "library xpm", so the
 -- file analyses on any host; it is only elaborated (and bound to Vivado's
@@ -13,21 +14,22 @@ use work.sram_pkg.all;
 
 entity sram_macro_xilinx is
   generic (
-    MAC_W     : positive := 32;   -- word width (multiple of 8)
-    MAC_D     : positive := 1024; -- words
+    W         : positive := 32;   -- word width
+    D         : positive := 1024; -- words (power of two)
+    NLANES    : positive := 4;    -- write lanes of W / NLANES bits
     INIT_FILE : string   := ""    -- optional preload (.mem)
   );
   port (
-    clk     : in  std_ulogic;                                   -- clock
-    cs_i    : in  std_ulogic;                                   -- chip select
-    we_i    : in  std_ulogic;                                   -- 1 = write, 0 = read
-    addr_i  : in  std_ulogic_vector(clog2(MAC_D) - 1 downto 0); -- word address
-    wdata_i : in  std_ulogic_vector(MAC_W - 1 downto 0);        -- write data
-    wbe_i   : in  std_ulogic_vector(MAC_W / 8 - 1 downto 0);    -- byte write enables
-    ls_i    : in  std_ulogic;                                   -- light sleep
-    ds_i    : in  std_ulogic;                                   -- deep sleep
-    sd_i    : in  std_ulogic;                                   -- shutdown
-    rdata_o : out std_ulogic_vector(MAC_W - 1 downto 0)         -- read data
+    clk       : in  std_ulogic;                               -- clock
+    cs_i      : in  std_ulogic;                               -- chip select
+    we_i      : in  std_ulogic;                               -- 1 = write, 0 = read
+    addr_i    : in  std_ulogic_vector(clog2(D) - 1 downto 0); -- word address
+    wdata_i   : in  std_ulogic_vector(W - 1 downto 0);        -- write data
+    lane_we_i : in  std_ulogic_vector(NLANES - 1 downto 0);   -- lanes to write
+    ls_i      : in  std_ulogic;                               -- light sleep
+    ds_i      : in  std_ulogic;                               -- deep sleep
+    sd_i      : in  std_ulogic;                               -- shutdown
+    rdata_o   : out std_ulogic_vector(W - 1 downto 0)         -- read data
   );
 end entity sram_macro_xilinx;
 
@@ -80,34 +82,34 @@ architecture rtl of sram_macro_xilinx is
     return f;
   end function init_name;
 
-  signal wea   : std_logic_vector(MAC_W / 8 - 1 downto 0);
+  signal wea   : std_logic_vector(NLANES - 1 downto 0);
   signal sleep : std_logic;
-  signal douta : std_logic_vector(MAC_W - 1 downto 0);
+  signal douta : std_logic_vector(W - 1 downto 0);
 
 begin
 
-  wea   <= std_logic_vector(wbe_i) when we_i = '1' else (others => '0');
+  wea   <= std_logic_vector(lane_we_i) when we_i = '1' else (others => '0');
   sleep <= ls_i or ds_i or sd_i;
 
   u_xpm : xpm_memory_spram
     generic map (
-      ADDR_WIDTH_A        => clog2(MAC_D),
+      ADDR_WIDTH_A        => clog2(D),
       AUTO_SLEEP_TIME     => 0,
-      BYTE_WRITE_WIDTH_A  => 8,
+      BYTE_WRITE_WIDTH_A  => W / NLANES,
       ECC_MODE            => "no_ecc",
       MEMORY_INIT_FILE    => init_name(INIT_FILE),
       MEMORY_INIT_PARAM   => "0",
       MEMORY_OPTIMIZATION => "true",
       MEMORY_PRIMITIVE    => "auto",
-      MEMORY_SIZE         => MAC_W * MAC_D,
+      MEMORY_SIZE         => W * D,
       MESSAGE_CONTROL     => 0,
-      READ_DATA_WIDTH_A   => MAC_W,
+      READ_DATA_WIDTH_A   => W,
       READ_LATENCY_A      => 1,
       READ_RESET_VALUE_A  => "0",
       RST_MODE_A          => "SYNC",
       USE_MEM_INIT        => 1,
       WAKEUP_TIME         => "use_sleep_pin",
-      WRITE_DATA_WIDTH_A  => MAC_W,
+      WRITE_DATA_WIDTH_A  => W,
       WRITE_MODE_A        => "read_first"
     )
     port map (

@@ -138,6 +138,8 @@ module sram_axi4l #(
   ) u_core (
     .clk             (ACLK),
     .rst_n           (ARESETn),
+    .clk_b           (ACLK),
+    .rst_b_n         (ARESETn),
     .mem_req_i       (mem_req),
     .mem_gnt_o       (mem_gnt),
     .mem_we_i        (mem_we),

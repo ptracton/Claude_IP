@@ -126,6 +126,8 @@ module sram_wb #(
   ) u_core (
     .clk             (CLK_I),
     .rst_n           (rst_n),
+    .clk_b           (CLK_I),
+    .rst_b_n         (rst_n),
     .mem_req_i       (mem_req),
     .mem_gnt_o       (mem_gnt),
     .mem_we_i        (mem_we),

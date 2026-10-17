@@ -21,10 +21,12 @@ same RTL targets:
 | `SAED14` | `SRAM1RW<d>x<w>` macros | |
 | `SKY130` | OpenRAM `sky130_sram_*_1rw1r_*` macros | port 0 used as read/write, port 1 tied off |
 
-Width and depth are parameters. The wrapper builds the requested size from
-the technology's macros: banks by depth, columns by width. Byte enables,
-power gating, ECC, per-bank power gating, built-in self-test and a second
-port can each be turned on or off.
+Width and depth are parameters. Each ASIC technology wrapper builds the
+requested size from its vendor primitives with generate loops: primitives in
+parallel for width, stacked for depth, with the upper address bits selecting
+the row. FPGA and generic memories are inferred whole; the tool tiles them.
+Byte enables, power gating, ECC, per-bank power gating, built-in self-test
+and a second port can each be turned on or off.
 
 ## Features
 
@@ -46,11 +48,21 @@ Optional (parameters, default off unless noted):
 - `BANK_PG` — an independent power mode per bank of macros.
 - `BIST_EN` — March C- self-test engine.
 - `DUAL_PORT` — a second bus port of the same protocol. *[Step 3]* Provided as
-  separate top-levels `sram_<proto>_dp` (ports `A_*` / `B_*`, one clock).
-  Same-word conflicts are **serialized A then B** (B waits a cycle when either
-  writes; a port waits for the other's pending ECC read-modify-write), so no
-  write is ever dropped — this replaces the planned "port A wins". With
-  SKY130 port B is read-only (OpenRAM 1rw1r): writes get a bus error.
+  separate top-levels `sram_<proto>_dp` (ports `A_*` / `B_*`). With SKY130
+  port B is read-only (OpenRAM 1rw1r): writes get a bus error.
+  - *[Step 3c]* Port B may have a **different width** (`WIDTH_B`, ratio a
+    power of two; `DEPTH_B = WIDTH * DEPTH / WIDTH_B`, same storage,
+    little-endian packing) and a **different clock** (`COMMON_CLK = 0`; each
+    port has its own clock and reset pins).
+  - With `COMMON_CLK = 1` same-word conflicts are **serialized A then B** (B
+    waits a cycle when either writes; a port waits for the other's pending
+    ECC read-modify-write), so no write is dropped. This replaces the planned
+    "port A wins".
+  - With `COMMON_CLK = 0` same-word collisions are undefined. The side-band
+    runs on port A's clock, and port B reaches it through a CDC handshake
+    (`sram_cdc`). `TECH_SAED14` needs `COMMON_CLK = 1`: its two-port macro has
+    a write clock and a read clock.
+  - ECC codewords are as wide as the narrower port.
 
 There is no register block: all control and status is side-band pins.
 
@@ -69,6 +81,9 @@ There is no register block: all control and status is side-band pins.
 | `BANK_PG` | 0/1 | 0 | per-bank power modes |
 | `BIST_EN` | 0/1 | 0 | March C- engine |
 | `DUAL_PORT` | 0/1 | 0 | second bus port (core parameter; *[Step 3]* exposed as the `sram_<proto>_dp` top-levels) |
+| `WIDTH_B` | 8..128, `WIDTH / WIDTH_B` a power of two | `WIDTH` | *[Step 3c]* port B width (dual port) |
+| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as port A | port A's | *[Step 3c]* port B options |
+| `COMMON_CLK` | 0/1 | 1 | *[Step 3c]* 1: one clock; 0: port B on its own clock (not SAED14) |
 | `INIT_FILE` | path | "" | FPGA / simulation preload (`$readmemh` format) |
 
 Default synthesized configuration (DC, PrimeTime, gate-level, power):
@@ -83,6 +98,12 @@ its slave port. Word `n` is at byte offset `n * WIDTH / 8`. Accesses at or
 beyond the end return the protocol's bus error and do not change the
 contents.
 
+*[Step 3c]* Dual port: port B sees the same bytes at the same offsets. Its
+word `j` is at byte offset `j * WIDTH_B / 8`, and it has
+`DEPTH_B = WIDTH * DEPTH / WIDTH_B` words. With different widths, packing is
+little-endian: narrow word `j` is bits `[(j % R) * N +: N]` of wide word
+`j / R` (R = width ratio, N = narrow width).
+
 ## Interfaces
 
 ### Bus protocol top-levels
@@ -93,6 +114,7 @@ contents.
 | `sram_ahb` | AHB-Lite | HSIZE byte lanes, INCR/WRAP bursts, BUSY; HREADY in, HREADYOUT out |
 | `sram_axi4l` | AXI4-Lite | one read and one write in flight, alternated |
 | `sram_wb` | Wishbone B4 classic | ERR_O on error |
+| `sram_<proto>_dp` | two of the above (`A_*`, `B_*`) | *[Step 3c]* each port has its own clock and reset pins (with `COMMON_CLK = 1` drive both from one clock); port B's data and strobes are `WIDTH_B` wide |
 
 ### Side-band ports
 
@@ -105,6 +127,10 @@ contents.
 | `err_irq_o` | out | pulse on bus error / ECC event (*[Step 3]* registered, one cycle after the response) |
 | `ecc_corr_o`, `ecc_uncorr_o`, `ecc_inj_i[1:0]` | | `ECC_EN` only; pulses registered; injection applies to the next port-A write |
 | `bist_start_i`, `bist_done_o`, `bist_fail_o`, `bist_fail_addr_o` | | `BIST_EN` only |
+
+*[Step 3c]* All side-band ports are synchronous to port A's clock, including
+in a dual-port top with `COMMON_CLK = 0`. Port B's ECC and error events reach
+`ecc_*_o` / `err_irq_o` through pulse synchronizers, a few cycles later.
 
 ### Power modes
 
@@ -128,10 +154,27 @@ bus wait states or delays `pwr_mode_ack_o`.
 | SKY130 | `sky130_sram_2kbyte_1rw1r_32x512_8` and others | yes (`wmask`) | native |
 | XILINX / ALTERA / GENERIC | inferred / primitive | yes | native |
 
-Default 32 x 1024 on SKY130 = two 32 x 512 macros (banked by depth).
-*[Step 3]* Exact macro lists (single- and two-port) are in `sram_pkg`
-(`macro_width`, `macro_depth`, `macro_width_dp`, `macro_depth_dp`) and in the
-README's Design Architecture table. Quirks handled: SAED14 single-port `CSB` is
+*[Step 3c]* Two-port primitives and their clocking (dual port):
+
+| PDK | Two-port family | Clocks | `COMMON_CLK = 0` |
+|---|---|---|---|
+| SAED90 | `SRAM<w>x<d>` (w 8/32/39, d 16..128) | CE1 port A, CE2 port B | yes |
+| SAED32 | `SRAMLP2RW<d>x<w>` | CE1 port A, CE2 port B | yes |
+| SAED14 | `SRAM2RW<d>x<w>` | CE1 writes of both ports, CE2 reads of both ports (liberty and model) | **no**: `sram_core` stops elaboration |
+| SKY130 | OpenRAM `1rw1r` (port B read-only) | clk0 port A, clk1 port B | yes |
+| XILINX / ALTERA / GENERIC | `xpm_memory_tdpram` / altsyncram BIDIR / inferred | `independent_clock` / clock0 + clock1 / two processes | yes |
+
+With different port widths, every technology uses R slices of the narrow
+width per bank; FPGA mixed-width primitives are not used.
+
+Default 32 x 1024 on SKY130 = two 32 x 512 macros stacked in depth.
+*[Step 3b]* Each `sram_macro[_dp]_<tech>` ASIC wrapper is a W x D memory of
+`ROWS x COLS` primitives of one size, chosen by `sram_pkg` (`prim_width`,
+`prim_depth`, `prim_width_dp`, `prim_depth_dp`): `ROWS = D / PRIM_D` selected by
+the upper address bits, `COLS = ceil(W / PRIM_W)`. Example: 16 x 2048 on SAED32
+= 2 rows x 2 columns of `1024x8`. `sram_array` only splits the array into
+`NUM_BANKS` power-domain banks. Exact primitive lists are in the README's
+Design Architecture table. Quirks handled: SAED14 single-port `CSB` is
 active high (two-port and SAED90/32 active low); `SRAM1RW32x8` has a 32-bit
 `I` bus; the SAED14 and SKY130 simulation models need fixes, generated by
 `IP/common/verification/tools/pdk_sram_models.py`.
@@ -146,3 +189,10 @@ _[TBD — Step 3/4: cycle-level timing per protocol; Step 10: achieved clock per
   older `sram_1rw1r_32_256_8`), so SS/FF timing of the macros is limited.
   _[TBD — Step 10]_
 - No VHDL lint on csun.edu (SpyGlass has no working VHDL-2008 path).
+- *[Step 3c]* Dual port with `COMMON_CLK = 0`:
+  - same-word accesses in overlapping cycles are undefined;
+  - port B's clock must keep running while the core changes power modes or
+    runs the clear / BIST engines (it waits for port B to acknowledge);
+  - not available with `TECH_SAED14`.
+  - The XPM / altsyncram dual-clock leaves have not been elaborated yet (no
+    Vivado / Quartus on csun.edu).

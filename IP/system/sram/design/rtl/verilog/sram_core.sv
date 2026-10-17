@@ -16,39 +16,65 @@
 // With ECC_EN the clear engine zeroes the array after reset, so every word
 // holds a valid codeword; bus requests stall until it finishes.
 //
-// DUAL_PORT: a second bus port (mem_b_*) on a two-port array. Both ports
-// run in parallel; when they would access the same word in the same cycle
-// and either writes, port B waits a cycle, and a port waits while the other
-// port's read-modify-write of that word is pending. Conflicting accesses
-// therefore complete in the order A then B; none is dropped. The clear and
-// BIST engines use port A and stall both ports. With TECH_SKY130, port B is
-// read-only (OpenRAM 1rw1r): its writes get a bus error. ECC error
-// injection applies to port A writes.
+// DUAL_PORT: a second bus port (mem_b_*) on a two-port array. Port B has
+// its own width WIDTH_B (DEPTH_B = WIDTH * DEPTH / WIDTH_B words of the same
+// storage; see sram_array for the packing), byte-enable, partial-write and
+// read-latency options, and, with COMMON_CLK = 0, its own clock and reset
+// (clk_b / rst_b_n). With ECC the codewords are as wide as the narrower
+// port, so a narrow write never needs a read of the wide word. Port B always
+// runs on clk_b / rst_b_n (no clock is selected or derived inside the core).
+//   COMMON_CLK = 1  clk_b is the same clock as clk (connect both). When they
+//                   would access the same (wide) word in the same cycle and
+//                   either writes, port B waits a cycle, and a port waits
+//                   while the other port's read-modify-write of that word is
+//                   pending: conflicting accesses complete in the order A
+//                   then B; none is dropped.
+//   COMMON_CLK = 0  port B on clk_b (not TECH_SAED14: its two-port macro has
+//                   a write clock and a read clock, not one clock per port). Same-word accesses in overlapping
+//                   cycles are undefined (as on any true dual-port RAM).
+//                   Power, clear, BIST and status stay on clk (port A's
+//                   clock); port B reaches them through sram_cdc: it may only
+//                   access a domain it holds the permission for, and the core
+//                   withdraws that permission (and waits for B to finish)
+//                   before a domain sleeps or an engine starts. clk_b must
+//                   keep running while the core changes power modes or runs
+//                   an engine.
+// The clear and BIST engines use port A and keep port B out. With
+// TECH_SKY130, port B is read-only (OpenRAM 1rw1r): its writes get a bus
+// error. ECC error injection applies to port A writes.
 //
 // Power domains: NPD = NUM_BANKS when BANK_PG, else 1 (the whole array).
 // pwr_mode_req_i / pwr_mode_ack_o carry 2 bits per domain (domain d in bits
 // [2d+1:2d]). While BIST runs every domain is held in RUN.
 
 module sram_core #(
-  parameter int unsigned TECH           = sram_pkg::TECH_GENERIC, // technology
-  parameter int unsigned ADDR_W         = 32,    // bus byte-address width
-  parameter int unsigned WIDTH          = 32,    // data width (multiple of 8)
-  parameter int unsigned DEPTH          = 1024,  // words (power of two)
-  parameter bit          BYTE_EN        = 1,     // byte-lane writes
-  parameter bit          PARTIAL_WR_ERR = 1,     // BYTE_EN = 0: partial write is an error
-  parameter int unsigned READ_LATENCY   = 1,     // 1 or 2
-  parameter bit          PWR_GATE       = 1,     // power modes
-  parameter bit          ECC_EN         = 0,     // SECDED
-  parameter bit          BANK_PG        = 0,     // one power domain per bank
-  parameter int unsigned NUM_BANKS      = 1,     // banks (power of two)
-  parameter bit          BIST_EN        = 0,     // March C- engine
-  parameter bit          DUAL_PORT      = 0,     // second bus port (mem_b_*)
-  parameter string       INIT_FILE      = "",    // preload (GENERIC/FPGA)
+  parameter int unsigned TECH             = sram_pkg::TECH_GENERIC, // technology
+  parameter int unsigned ADDR_W           = 32,     // bus byte-address width
+  parameter int unsigned WIDTH            = 32,     // data width (multiple of 8)
+  parameter int unsigned DEPTH            = 1024,   // words (power of two)
+  parameter bit          BYTE_EN          = 1,      // byte-lane writes
+  parameter bit          PARTIAL_WR_ERR   = 1,      // BYTE_EN = 0: partial write is an error
+  parameter int unsigned READ_LATENCY     = 1,      // 1 or 2
+  parameter bit          PWR_GATE         = 1,      // power modes
+  parameter bit          ECC_EN           = 0,      // SECDED
+  parameter bit          BANK_PG          = 0,      // one power domain per bank
+  parameter int unsigned NUM_BANKS        = 1,      // banks (power of two)
+  parameter bit          BIST_EN          = 0,      // March C- engine
+  parameter bit          DUAL_PORT        = 0,      // second bus port (mem_b_*)
+  parameter int unsigned WIDTH_B          = WIDTH,  // port B data width (multiple of 8)
+  parameter bit          BYTE_EN_B        = BYTE_EN,         // port B byte-lane writes
+  parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR,  // port B partial-write error
+  parameter int unsigned READ_LATENCY_B   = READ_LATENCY,    // port B: 1 or 2
+  parameter bit          COMMON_CLK       = 1,      // 1: clk_b is clk; 0: separate clocks
+  parameter string       INIT_FILE        = "",     // preload (GENERIC/FPGA)
   // Derived
-  localparam int unsigned NPD            = BANK_PG ? NUM_BANKS : 1
+  localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1,
+  localparam int unsigned DEPTH_B         = WIDTH * DEPTH / WIDTH_B  // port B words
 ) (
-  input  logic                     clk,              // clock
+  input  logic                     clk,              // clock (port A, core)
   input  logic                     rst_n,            // synchronous active-low reset
+  input  logic                     clk_b,            // port B clock (= clk when COMMON_CLK)
+  input  logic                     rst_b_n,          // port B synchronous active-low reset
 
   // Memory bus (target side)
   input  logic                     mem_req_i,        // request
@@ -66,10 +92,10 @@ module sram_core #(
   output logic                     mem_b_gnt_o,      // request accepted
   input  logic                     mem_b_we_i,       // 1 = write
   input  logic [ADDR_W-1:0]        mem_b_addr_i,     // byte address
-  input  logic [WIDTH/8-1:0]       mem_b_be_i,       // byte enables
-  input  logic [WIDTH-1:0]         mem_b_wdata_i,    // write data
+  input  logic [WIDTH_B/8-1:0]     mem_b_be_i,       // byte enables
+  input  logic [WIDTH_B-1:0]       mem_b_wdata_i,    // write data
   output logic                     mem_b_rvalid_o,   // response
-  output logic [WIDTH-1:0]         mem_b_rdata_o,    // read data
+  output logic [WIDTH_B-1:0]       mem_b_rdata_o,    // read data
   output logic                     mem_b_err_o,      // response is an error
 
   // Power
@@ -94,11 +120,18 @@ module sram_core #(
   output logic [$clog2(DEPTH)-1:0] bist_fail_addr_o  // first failing word
 );
 
-  localparam int unsigned IdxW   = $clog2(DEPTH);
-  localparam int unsigned EccW   = ECC_EN ? sram_pkg::ecc_check_bits(WIDTH) : 0;
-  localparam int unsigned MW     = WIDTH + EccW;
-  localparam int unsigned NLanes = (BYTE_EN && !ECC_EN) ? WIDTH / 8 : 1;
+  localparam int unsigned IdxW    = $clog2(DEPTH);
+  localparam int unsigned IdxWB   = $clog2(DEPTH_B);
+  localparam int unsigned CW      = sram_pkg::ecc_cw(WIDTH, WIDTH_B, DUAL_PORT);
+  localparam int unsigned MW      = sram_pkg::stored_width(WIDTH, CW, ECC_EN);
+  localparam int unsigned MWB     = sram_pkg::stored_width(WIDTH_B, CW, ECC_EN);
+  localparam int unsigned NLanes  = sram_pkg::stored_lanes(WIDTH, CW, BYTE_EN, ECC_EN);
+  localparam int unsigned NLanesB = sram_pkg::stored_lanes(WIDTH_B, CW, BYTE_EN_B, ECC_EN);
   localparam int unsigned BanksPerDom = NUM_BANKS / NPD;
+  // Same-word check (COMMON_CLK): compare word indices at the wide width.
+  localparam int unsigned ShA     = (WIDTH < WIDTH_B) ? $clog2(WIDTH_B / WIDTH) : 0;
+  localparam int unsigned ShB     = (WIDTH_B < WIDTH) ? $clog2(WIDTH / WIDTH_B) : 0;
+  localparam bit          Async   = DUAL_PORT && !COMMON_CLK;
 
   // -------------------------------------------------------------------------
   // Parameter checks (elaboration time)
@@ -115,6 +148,21 @@ module sram_core #(
       $fatal(1, "sram_core: READ_LATENCY must be 1 or 2");
     if (BANK_PG && !PWR_GATE)
       $fatal(1, "sram_core: BANK_PG needs PWR_GATE");
+    if (DUAL_PORT) begin
+      if (WIDTH_B % 8 != 0 || WIDTH_B < 8 || WIDTH_B > 128)
+        $fatal(1, "sram_core: WIDTH_B must be a multiple of 8 in 8..128");
+      if (((WIDTH > WIDTH_B ? WIDTH / WIDTH_B : WIDTH_B / WIDTH) &
+           ((WIDTH > WIDTH_B ? WIDTH / WIDTH_B : WIDTH_B / WIDTH) - 1)) != 0 ||
+          (WIDTH % WIDTH_B != 0 && WIDTH_B % WIDTH != 0))
+        $fatal(1, "sram_core: WIDTH / WIDTH_B must be a power of two (either way)");
+      if (DEPTH_B < 2 || NUM_BANKS > DEPTH_B / 2)
+        $fatal(1, "sram_core: DEPTH_B must be >= 2 and >= 2 * NUM_BANKS");
+      if (READ_LATENCY_B != 1 && READ_LATENCY_B != 2)
+        $fatal(1, "sram_core: READ_LATENCY_B must be 1 or 2");
+      // SAED14 SRAM2RW: CE1 clocks both ports' writes, CE2 both ports' reads.
+      if (!COMMON_CLK && TECH == sram_pkg::TECH_SAED14)
+        $fatal(1, "sram_core: TECH_SAED14 two-port macros need COMMON_CLK = 1");
+    end
   end
   // synopsys translate_on
 
@@ -131,12 +179,16 @@ module sram_core #(
   logic [NPD-1:0]  a_wake, b_wake, a_dom_busy, b_dom_busy;
   logic            a_idle, b_idle, a_busy, b_busy, a_stall, b_stall;
   logic            a_ecc_corr, b_ecc_corr, a_ecc_uncorr, b_ecc_uncorr, a_irq, b_irq;
-  logic [IdxW-1:0] a_req_idx, b_req_idx, a_rmw_idx, b_rmw_idx;
+  logic [IdxW-1:0]  a_req_idx, a_rmw_idx;
+  logic [IdxWB-1:0] b_req_idx, b_rmw_idx;
   logic            a_req_we, b_req_we, a_acc, b_acc, a_rmw_pend, b_rmw_pend;
-  logic              b_cs, b_we;
-  logic [IdxW-1:0]   b_idx;
-  logic [MW-1:0]     b_wdata, b_rdata;
-  logic [NLanes-1:0] b_lane_we;
+  logic               b_cs, b_we;
+  logic [IdxWB-1:0]   b_idx;
+  logic [MWB-1:0]     b_wdata, b_rdata;
+  logic [NLanesB-1:0] b_lane_we;
+  logic [NPD-1:0]     b_dom_awake, b_dom_err;      // port B view of the domains
+  logic [NPD-1:0]     b_wake_a, b_quiet, dom_want; // port B, clk view (sram_cdc)
+  logic               b_busy_a, b_corr_a, b_uncorr_a, b_irq_a;
 
   logic            clr_pending, clr_busy, clr_cs;
   logic [IdxW-1:0] clr_idx;
@@ -166,7 +218,8 @@ module sram_core #(
     .PARTIAL_WR_ERR(PARTIAL_WR_ERR),
     .READ_LATENCY  (READ_LATENCY),
     .ECC_EN        (ECC_EN),
-    .NPD           (NPD)
+    .NPD           (NPD),
+    .CW            (CW)
   ) u_port (
     .clk          (clk),
     .rst_n        (rst_n),
@@ -206,30 +259,72 @@ module sram_core #(
   // -------------------------------------------------------------------------
   // Bus port B (DUAL_PORT) and same-word conflict holds
   // -------------------------------------------------------------------------
-  // A waits while B's read-modify-write of the same word is pending.
+  // A waits while B's read-modify-write of the same word is pending
+  // (COMMON_CLK only).
   assign a_stall = clr_pending || bist_pending ||
-                   (DUAL_PORT && b_rmw_pend && (a_req_idx == b_rmw_idx));
+                   (DUAL_PORT && !Async && b_rmw_pend &&
+                    ((a_req_idx >> ShA) == IdxW'(b_rmw_idx >> ShB)));
 
   if (DUAL_PORT) begin : g_port_b
-    // B waits when A accesses the same word this cycle and either writes, or
-    // while A's read-modify-write of that word is pending.
-    assign b_stall = clr_pending || bist_pending ||
-                     (a_acc && (a_req_idx == b_req_idx) && (a_req_we || b_req_we)) ||
-                     (a_rmw_pend && (b_req_idx == a_rmw_idx));
+    if (Async) begin : g_async
+      // Port B on its own clock; domain state and engines through sram_cdc.
+      assign b_stall = 1'b0;
+
+      sram_cdc #(
+        .NPD(NPD)
+      ) u_cdc (
+        .clk_a       (clk),
+        .rst_a_n     (rst_n),
+        .clk_b       (clk_b),
+        .rst_b_n     (rst_b_n),
+        .a_want_i    (dom_want),
+        .a_err_i     (dom_err),
+        .a_quiet_o   (b_quiet),
+        .a_wake_o    (b_wake_a),
+        .a_busy_o    (b_busy_a),
+        .a_corr_o    (b_corr_a),
+        .a_uncorr_o  (b_uncorr_a),
+        .a_irq_o     (b_irq_a),
+        .b_allow_o   (b_dom_awake),
+        .b_err_o     (b_dom_err),
+        .b_dom_busy_i(b_dom_busy),
+        .b_wake_i    (b_wake),
+        .b_busy_i    (b_busy),
+        .b_corr_i    (b_ecc_corr),
+        .b_uncorr_i  (b_ecc_uncorr),
+        .b_irq_i     (b_irq)
+      );
+    end else begin : g_sync
+      // B waits when A accesses the same word this cycle and either writes,
+      // or while A's read-modify-write of that word is pending.
+      assign b_dom_awake = dom_awake;
+      assign b_dom_err   = dom_err;
+      assign b_stall     = clr_pending || bist_pending ||
+                           (a_acc && ((a_req_idx >> ShA) == IdxW'(b_req_idx >> ShB)) &&
+                            (a_req_we || b_req_we)) ||
+                           (a_rmw_pend && ((a_rmw_idx >> ShA) == IdxW'(b_req_idx >> ShB)));
+      assign b_quiet     = '1;
+      assign b_wake_a    = b_wake;
+      assign b_busy_a    = b_busy;
+      assign b_corr_a    = b_ecc_corr;
+      assign b_uncorr_a  = b_ecc_uncorr;
+      assign b_irq_a     = b_irq;
+    end
 
     sram_port #(
       .ADDR_W        (ADDR_W),
-      .WIDTH         (WIDTH),
-      .DEPTH         (DEPTH),
-      .BYTE_EN       (BYTE_EN),
-      .PARTIAL_WR_ERR(PARTIAL_WR_ERR),
-      .READ_LATENCY  (READ_LATENCY),
+      .WIDTH         (WIDTH_B),
+      .DEPTH         (DEPTH_B),
+      .BYTE_EN       (BYTE_EN_B),
+      .PARTIAL_WR_ERR(PARTIAL_WR_ERR_B),
+      .READ_LATENCY  (READ_LATENCY_B),
       .ECC_EN        (ECC_EN),
       .NPD           (NPD),
-      .READ_ONLY     (TECH == sram_pkg::TECH_SKY130)
+      .READ_ONLY     (TECH == sram_pkg::TECH_SKY130),
+      .CW            (CW)
     ) u_port_b (
-      .clk          (clk),
-      .rst_n        (rst_n),
+      .clk          (clk_b),
+      .rst_n        (rst_b_n),
       .mem_req_i    (mem_b_req_i),
       .mem_gnt_o    (mem_b_gnt_o),
       .mem_we_i     (mem_b_we_i),
@@ -239,8 +334,8 @@ module sram_core #(
       .mem_rvalid_o (mem_b_rvalid_o),
       .mem_rdata_o  (mem_b_rdata_o),
       .mem_err_o    (mem_b_err_o),
-      .dom_awake_i  (dom_awake),
-      .dom_err_i    (dom_err),
+      .dom_awake_i  (b_dom_awake),
+      .dom_err_i    (b_dom_err),
       .stall_i      (b_stall),
       .wake_o       (b_wake),
       .dom_busy_o   (b_dom_busy),
@@ -263,6 +358,14 @@ module sram_core #(
       .busy_o       (b_busy)
     );
   end else begin : g_no_port_b
+    assign b_dom_awake    = '0;
+    assign b_dom_err      = '0;
+    assign b_quiet        = '1;
+    assign b_wake_a       = '0;
+    assign b_busy_a       = 1'b0;
+    assign b_corr_a       = 1'b0;
+    assign b_uncorr_a     = 1'b0;
+    assign b_irq_a        = 1'b0;
     assign b_stall        = 1'b0;
     assign mem_b_gnt_o    = 1'b0;
     assign mem_b_rvalid_o = 1'b0;
@@ -287,13 +390,23 @@ module sram_core #(
     assign b_busy         = 1'b0;
   end
 
-  assign port_wake    = a_wake | b_wake;
-  assign dom_busy     = a_dom_busy | b_dom_busy;
-  assign port_idle    = a_idle && b_idle;
-  assign port_busy    = a_busy || b_busy;
-  assign ecc_corr_o   = a_ecc_corr || b_ecc_corr;
-  assign ecc_uncorr_o = a_ecc_uncorr || b_ecc_uncorr;
-  assign err_irq_o    = a_irq || b_irq;
+  // With COMMON_CLK, port B's signals are used directly. With separate
+  // clocks, a domain is busy for port B until B is out of it (b_quiet), and
+  // B's wake requests count only for domains that may wake (B's error view
+  // lags the request).
+  if (Async) begin : g_b_async_view
+    assign port_wake = a_wake | (b_wake_a & dom_wakeable);
+    assign dom_busy  = a_dom_busy | ~b_quiet;
+    assign port_idle = a_idle && (&b_quiet);
+  end else begin : g_b_sync_view
+    assign port_wake = a_wake | b_wake;
+    assign dom_busy  = a_dom_busy | b_dom_busy;
+    assign port_idle = a_idle && b_idle;
+  end
+  assign port_busy    = a_busy || b_busy_a;
+  assign ecc_corr_o   = a_ecc_corr || b_corr_a;
+  assign ecc_uncorr_o = a_ecc_uncorr || b_uncorr_a;
+  assign err_irq_o    = a_irq || b_irq_a;
 
   // -------------------------------------------------------------------------
   // Power domains
@@ -308,6 +421,12 @@ module sram_core #(
     assign dom_err[d]      = PWR_GATE && (pwr_mode_req_i[2*d +: 2] == sram_pkg::PWR_DS ||
                                           pwr_mode_req_i[2*d +: 2] == sram_pkg::PWR_SD);
     assign dom_wakeable[d] = !dom_err[d];
+
+    // Port B (separate clock) is let into the domain while it is in RUN and
+    // will stay there, and no engine wants the array.
+    assign dom_want[d] = dom_awake[d] && !clr_pending && !bist_pending &&
+                         (!PWR_GATE || port_wake[d] || clr_wake[d] ||
+                          req == sram_pkg::PWR_RUN);
 
     sram_pwr_ctrl #(
       .PWR_GATE (PWR_GATE),
@@ -343,11 +462,11 @@ module sram_core #(
     .NPD           (NPD),
     .CLEAR_ON_RESET(ECC_EN)
   ) u_clr (
-    .clk        (clk),
-    .rst_n      (rst_n),
-    .start_i    (clr_req_i),
-    .mask_i     ({NPD{1'b1}}),
-    .auto_i     (dom_clr_req),
+    .clk    (clk),
+    .rst_n  (rst_n),
+    .start_i(clr_req_i),
+    .mask_i ({NPD{1'b1}}),
+    .auto_i (dom_clr_req),
     // Not while the march uses the array; a clear needed while BIST waits
     // for power (shutdown -> RUN) must still run, or BIST would wait forever.
     .port_idle_i(port_idle && !bist_active),
@@ -436,13 +555,17 @@ module sram_core #(
   end
 
   sram_array #(
-    .TECH     (TECH),
-    .MW       (MW),
-    .DEPTH    (DEPTH),
-    .NUM_BANKS(NUM_BANKS),
-    .NLANES   (NLanes),
-    .DUAL_PORT(DUAL_PORT),
-    .INIT_FILE(INIT_FILE)
+    .TECH      (TECH),
+    .MW        (MW),
+    .DEPTH     (DEPTH),
+    .NUM_BANKS (NUM_BANKS),
+    .NLANES    (NLanes),
+    .DUAL_PORT (DUAL_PORT),
+    .MW_B      (MWB),
+    .DEPTH_B   (DEPTH_B),
+    .NLANES_B  (NLanesB),
+    .COMMON_CLK(!Async),
+    .INIT_FILE (INIT_FILE)
   ) u_array (
     .clk        (clk),
     .cs_i       (arr_cs),
@@ -454,6 +577,7 @@ module sram_core #(
     .ds_i       (bank_ds),
     .sd_i       (bank_sd),
     .rdata_o    (arr_rdata),
+    .b_clk      (clk_b),
     .b_cs_i     (b_cs),
     .b_we_i     (b_we),
     .b_idx_i    (b_idx),

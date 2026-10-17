@@ -1,36 +1,48 @@
-// sram_array.sv — Tiles sram_macro instances into a DEPTH x MW array.
+// sram_array.sv — Splits the array into NUM_BANKS banks (and, for a dual
+// port with different widths, R slices per bank).
 //
-// Organisation (all sizes are powers of two except MW):
-//   banks    NUM_BANKS groups of BANK_D = DEPTH / NUM_BANKS words; each bank has
-//            its own sleep pins (the power domains of BANK_PG).
-//   rows     inside a bank, BANK_D / MAC_D tiles of MAC_D words (one row when
-//            the chosen macro is deeper than the bank; its top address bits
-//            are then tied to 0).
-//   columns  COLS = ceil(MW / MAC_W) macros side by side; the last column is
-//            zero-padded when MAC_W does not divide MW.
-// MAC_W / MAC_D come from sram_pkg::macro_width / macro_depth for TECH.
+// Banks: the top index bits select one of NUM_BANKS banks, each with its own
+// sleep pins (the power domains of BANK_PG). Inside a bank, the technology
+// wrapper tiles its primitives into rows and columns (sram_macro_<tech>).
 //
-// Write lanes: lane_we_i has NLANES bits, each covering MW / NLANES stored
-// bits. Every column byte takes the enable of the lane its first bit falls
-// in; sram_pkg::macro_width keeps mask-less macros inside one lane.
+// Single port: each bank is one sram_macro of MW x DEPTH / NUM_BANKS.
 //
-// Read: rdata_o is valid in the cycle after a read and comes from the tile
-// read in the previous cycle.
+// DUAL_PORT: ports A (MW x DEPTH, clock clk) and B (MW_B x DEPTH_B, clock
+// b_clk) see the same storage, MW x DEPTH == MW_B x DEPTH_B, with the ratio
+// R = wide / narrow a power of two. Narrow word j is bits
+// [(j % R) * SW +: SW] of wide word j / R (little-endian, SW = narrow
+// stored width). Each bank holds R slices, each one sram_macro_dp of
+// SW x (wide depth / NUM_BANKS):
+//   wide port    same address to every slice; slice s carries its bits
+//                [s * SW +: SW]
+//   narrow port  slice = low index bits, slice address = the rest; only that
+//                slice is selected, and a registered slice select (on the
+//                narrow port's clock) drives its read multiplexer
+// With R = 1 there is one slice and both ports are the same width.
+// Macro port a is always port A and macro port b port B (SKY130: port B is
+// the read-only macro port).
 //
-// DUAL_PORT: a second, independent port (b_*) on every tile, using the
-// technology's two-port macros (sram_macro_dp, sram_pkg::macro_*_dp). Port B
-// has its own read multiplexer. Sleep pins are shared by both ports.
+// Write lanes: lane_we_i / b_lane_we_i split each port's stored word into
+// NLANES / NLANES_B equal lanes. A slice uses SL = max(lanes per slice of
+// the two ports) lanes; a port with one lane per slice drives all SL.
+//
+// Read: each port's rdata is valid in the cycle after its read and comes
+// from the bank (and slice) it read, remembered on its own clock.
 
 module sram_array #(
-  parameter int unsigned TECH      = sram_pkg::TECH_GENERIC, // technology
-  parameter int unsigned MW        = 32,    // stored word width (data + ECC)
-  parameter int unsigned DEPTH     = 1024,  // words
-  parameter int unsigned NUM_BANKS = 1,     // banks (power domains)
-  parameter int unsigned NLANES    = 4,     // write lanes
-  parameter bit          DUAL_PORT = 0,     // second port (b_*)
-  parameter string       INIT_FILE = ""     // preload (GENERIC/FPGA, NUM_BANKS = 1)
+  parameter int unsigned TECH       = sram_pkg::TECH_GENERIC, // technology
+  parameter int unsigned MW         = 32,    // port A stored word width (data + ECC)
+  parameter int unsigned DEPTH      = 1024,  // port A words
+  parameter int unsigned NUM_BANKS  = 1,     // banks (power domains)
+  parameter int unsigned NLANES     = 4,     // port A write lanes
+  parameter bit          DUAL_PORT  = 0,     // second port (b_*)
+  parameter int unsigned MW_B       = MW,    // port B stored word width
+  parameter int unsigned DEPTH_B    = DEPTH, // port B words
+  parameter int unsigned NLANES_B   = NLANES,// port B write lanes
+  parameter bit          COMMON_CLK = 1,     // b_clk is clk
+  parameter string       INIT_FILE  = ""     // preload (GENERIC/FPGA, NUM_BANKS = 1, R = 1)
 ) (
-  input  logic                       clk,        // clock
+  input  logic                       clk,        // port A clock
   input  logic                       cs_i,       // access this cycle
   input  logic                       we_i,       // 1 = write, 0 = read
   input  logic [$clog2(DEPTH)-1:0]   idx_i,      // word index
@@ -42,137 +54,208 @@ module sram_array #(
   output logic [MW-1:0]              rdata_o,    // stored word (cycle after a read)
 
   // Port B (DUAL_PORT; tie inputs to 0 otherwise)
+  input  logic                       b_clk,      // port B clock
   input  logic                       b_cs_i,     // access this cycle
   input  logic                       b_we_i,     // 1 = write
-  input  logic [$clog2(DEPTH)-1:0]   b_idx_i,    // word index
-  input  logic [MW-1:0]              b_wdata_i,  // stored word to write
-  input  logic [NLANES-1:0]          b_lane_we_i,// lanes to write
-  output logic [MW-1:0]              b_rdata_o   // stored word (cycle after a read)
+  input  logic [$clog2(DEPTH_B)-1:0] b_idx_i,    // word index
+  input  logic [MW_B-1:0]            b_wdata_i,  // stored word to write
+  input  logic [NLANES_B-1:0]        b_lane_we_i,// lanes to write
+  output logic [MW_B-1:0]            b_rdata_o   // stored word (cycle after a read)
 );
 
-  localparam int unsigned IdxW   = $clog2(DEPTH);
-  localparam int unsigned LaneW  = MW / NLANES;
-  localparam int unsigned MacW   = DUAL_PORT ? sram_pkg::macro_width_dp(TECH, MW, NLANES)
-                                             : sram_pkg::macro_width(TECH, MW, NLANES);
-  localparam int unsigned BankD  = DEPTH / NUM_BANKS;
-  localparam int unsigned MacD   = DUAL_PORT ? sram_pkg::macro_depth_dp(TECH, MacW, BankD)
-                                             : sram_pkg::macro_depth(TECH, MacW, BankD);
-  localparam int unsigned MacAw  = $clog2(MacD);
-  localparam int unsigned Cols   = (MW + MacW - 1) / MacW;
-  localparam int unsigned PadW   = Cols * MacW;
-  localparam int unsigned Rows   = (BankD > MacD) ? BankD / MacD : 1;
-  localparam int unsigned Tiles  = NUM_BANKS * Rows;
-  // Index bits below the tile number: the macro address (or the whole bank
-  // offset when the macro is deeper than the bank).
-  localparam int unsigned TileSh = (MacD <= BankD) ? MacAw : $clog2(BankD);
-  localparam int unsigned TileW  = (Tiles > 1) ? $clog2(Tiles) : 1;
+  localparam bit          AWide   = !DUAL_PORT || (MW >= MW_B);  // A is the wide port
+  localparam int unsigned R       = !DUAL_PORT ? 1 : AWide ? MW / MW_B : MW_B / MW;
+  localparam int unsigned RSh     = (R > 1) ? $clog2(R) : 0;
+  localparam int unsigned SW      = AWide ? (DUAL_PORT ? MW_B : MW) : MW;  // slice width
+  localparam int unsigned SD      = (AWide ? DEPTH : DEPTH_B) / NUM_BANKS; // slice words
+  localparam bit          ASliced = DUAL_PORT && !AWide && (R > 1);       // A narrow
+  localparam bit          BSliced = DUAL_PORT && AWide && (R > 1);        // B narrow
+  localparam int unsigned BankAwA = $clog2(DEPTH / NUM_BANKS);  // >= 1 (sram_core checks)
+  localparam int unsigned BankAwB = $clog2(DEPTH_B / NUM_BANKS);
+  localparam int unsigned SAw     = $clog2(SD);
+  localparam int unsigned BankW   = (NUM_BANKS > 1) ? $clog2(NUM_BANKS) : 1;
+  localparam int unsigned SlW     = (R > 1) ? RSh : 1;
+  // Lanes per slice: the wide port's lanes divide over the R slices.
+  localparam int unsigned LpsA    = ASliced ? NLANES : (NLANES >= R ? NLANES / R : 1);
+  localparam int unsigned LpsB    = BSliced ? NLANES_B : (NLANES_B >= R ? NLANES_B / R : 1);
+  localparam int unsigned SL      = !DUAL_PORT ? NLANES : (LpsA > LpsB ? LpsA : LpsB);
 
-  // Lane of stored bit p (padding bits take the last lane).
-  function automatic int unsigned lane_of(int unsigned p);
-    int unsigned q;
-    q = (p < MW) ? p : MW - 1;
-    return q / LaneW;
+  // synopsys translate_off
+  initial begin : p_param_check
+    if (DUAL_PORT) begin
+      if (MW * DEPTH != MW_B * DEPTH_B)
+        $fatal(1, "sram_array: ports A and B must have the same capacity");
+      if ((R & (R - 1)) != 0)
+        $fatal(1, "sram_array: width ratio %0d is not a power of two", R);
+      if ((LpsA != SL && LpsA != 1) || (LpsB != SL && LpsB != 1))
+        $fatal(1, "sram_array: lanes per slice %0d / %0d do not match", LpsA, LpsB);
+    end
+  end
+  // synopsys translate_on
+
+  // Expand one port's lanes for slice s to the slice's SL lanes.
+  function automatic logic [SL-1:0] slice_lanes(logic [63:0] lanes, int unsigned nl,
+                                                bit sliced, int unsigned lps,
+                                                int unsigned s);
+    logic [SL-1:0] l;
+    for (int unsigned i = 0; i < SL; i++) begin
+      if (sliced) l[i] = (lps == SL) ? lanes[i] : lanes[0];
+      else if (nl >= R) l[i] = (lps == SL) ? lanes[s * lps + i] : lanes[s * lps];
+      else l[i] = lanes[0];
+    end
+    return l;
   endfunction
 
-  logic [TileW-1:0]  tile,      b_tile;       // tile addressed this cycle
-  logic [TileW-1:0]  rd_tile_q, b_rd_tile_q;  // tile read last cycle
-  logic [MacAw-1:0]  maddr,     b_maddr;      // macro word address
-  logic [PadW-1:0]   wdata_pad, b_wdata_pad;  // write data, zero-padded
-  logic [PadW-1:0]   tile_rdata   [Tiles];
-  logic [PadW-1:0]   b_tile_rdata [Tiles];
+  // -------------------------------------------------------------------------
+  // Port A decode and read multiplexer (clk)
+  // -------------------------------------------------------------------------
+  logic [BankW-1:0]  a_bank, a_rd_bank_q;    // bank addressed / read last
+  logic [SlW-1:0]    a_slice, a_rd_slice_q;  // slice (A narrow only)
+  logic [SAw-1:0]    a_saddr;                // word address in the slice
+  logic [MW-1:0]     a_bank_rdata [NUM_BANKS];
 
-  if (Tiles > 1) begin : g_tile_sel
-    assign tile   = TileW'(idx_i >> TileSh);
-    assign b_tile = TileW'(b_idx_i >> TileSh);
-  end else begin : g_one_tile
-    assign tile   = '0;
-    assign b_tile = '0;
+  if (NUM_BANKS > 1) begin : g_a_bank
+    assign a_bank = BankW'(idx_i >> BankAwA);
+  end else begin : g_a_one_bank
+    assign a_bank = '0;
   end
 
-  if (TileSh > 0) begin : g_maddr
-    assign maddr   = MacAw'(idx_i[TileSh-1:0]);
-    assign b_maddr = MacAw'(b_idx_i[TileSh-1:0]);
-  end else begin : g_maddr_zero
-    assign maddr   = '0;
-    assign b_maddr = '0;
+  if (ASliced) begin : g_a_slice
+    assign a_slice = SlW'(idx_i[BankAwA-1:0]);
+    assign a_saddr = SAw'(idx_i[BankAwA-1:0] >> RSh);
+  end else begin : g_a_whole
+    assign a_slice = '0;
+    assign a_saddr = SAw'(idx_i[BankAwA-1:0]);
   end
 
-  assign wdata_pad   = PadW'(wdata_i);
-  assign b_wdata_pad = PadW'(b_wdata_i);
-
-  // Remember which tile each port read, for the read multiplexers.
-  always_ff @(posedge clk) begin : p_rd_tile
+  always_ff @(posedge clk) begin : p_a_rd_sel
     if (cs_i && !we_i) begin
-      rd_tile_q <= tile;
-    end
-    if (b_cs_i && !b_we_i) begin
-      b_rd_tile_q <= b_tile;
+      a_rd_bank_q  <= a_bank;
+      a_rd_slice_q <= a_slice;
     end
   end
 
-  assign rdata_o   = MW'(tile_rdata[rd_tile_q]);
-  assign b_rdata_o = DUAL_PORT ? MW'(b_tile_rdata[b_rd_tile_q]) : '0;
+  assign rdata_o = a_bank_rdata[(NUM_BANKS > 1) ? a_rd_bank_q : '0];
 
-  for (genvar t = 0; t < Tiles; t++) begin : g_tile
-    localparam int unsigned Bank = t / Rows;
+  // -------------------------------------------------------------------------
+  // Port B decode and read multiplexer (b_clk)
+  // -------------------------------------------------------------------------
+  logic [BankW-1:0]  b_bank, b_rd_bank_q;
+  logic [SlW-1:0]    b_slice, b_rd_slice_q;
+  logic [SAw-1:0]    b_saddr;
+  logic [MW_B-1:0]   b_bank_rdata [NUM_BANKS];
 
-    logic tile_cs, b_tile_cs;
-    assign tile_cs   = cs_i && (tile == TileW'(t));
-    assign b_tile_cs = b_cs_i && (b_tile == TileW'(t));
+  if (NUM_BANKS > 1) begin : g_b_bank
+    assign b_bank = BankW'(b_idx_i >> BankAwB);
+  end else begin : g_b_one_bank
+    assign b_bank = '0;
+  end
 
-    for (genvar c = 0; c < Cols; c++) begin : g_col
-      logic [MacW/8-1:0] col_wbe, b_col_wbe;
+  if (BSliced) begin : g_b_slice
+    assign b_slice = SlW'(b_idx_i[BankAwB-1:0]);
+    assign b_saddr = SAw'(b_idx_i[BankAwB-1:0] >> RSh);
+  end else begin : g_b_whole
+    assign b_slice = '0;
+    assign b_saddr = SAw'(b_idx_i[BankAwB-1:0]);
+  end
 
-      for (genvar k = 0; k < MacW / 8; k++) begin : g_byte
-        assign col_wbe[k]   = lane_we_i[lane_of(c * MacW + 8 * k)];
-        assign b_col_wbe[k] = b_lane_we_i[lane_of(c * MacW + 8 * k)];
-      end
+  always_ff @(posedge b_clk) begin : p_b_rd_sel
+    if (b_cs_i && !b_we_i) begin
+      b_rd_bank_q  <= b_bank;
+      b_rd_slice_q <= b_slice;
+    end
+  end
 
-      if (DUAL_PORT) begin : g_dp
+  assign b_rdata_o = DUAL_PORT ? b_bank_rdata[(NUM_BANKS > 1) ? b_rd_bank_q : '0] : '0;
+
+  // -------------------------------------------------------------------------
+  // Banks
+  // -------------------------------------------------------------------------
+  for (genvar k = 0; k < NUM_BANKS; k++) begin : g_bank
+    logic a_bank_cs, b_bank_cs;
+    assign a_bank_cs = cs_i && (a_bank == BankW'(k));
+    assign b_bank_cs = b_cs_i && (b_bank == BankW'(k));
+
+    if (DUAL_PORT) begin : g_dp
+      logic [SW-1:0] a_slice_rdata [R];  // per-slice read data, port A
+      logic [SW-1:0] b_slice_rdata [R];  // per-slice read data, port B
+
+      for (genvar s = 0; s < R; s++) begin : g_slice
+        logic          a_cs, b_cs;
+        logic [SW-1:0] a_wd, b_wd;
+        logic [SL-1:0] a_lw, b_lw;
+
+        assign a_cs = a_bank_cs && (!ASliced || a_slice == SlW'(s));
+        assign b_cs = b_bank_cs && (!BSliced || b_slice == SlW'(s));
+        assign a_wd = ASliced ? SW'(wdata_i) : wdata_i[s * SW +: SW];
+        assign b_wd = BSliced ? SW'(b_wdata_i) : b_wdata_i[s * SW +: SW];
+        assign a_lw = slice_lanes(64'(lane_we_i), NLANES, ASliced, LpsA, s);
+        assign b_lw = slice_lanes(64'(b_lane_we_i), NLANES_B, BSliced, LpsB, s);
+
         sram_macro_dp #(
-          .TECH     (TECH),
-          .MAC_W    (MacW),
-          .MAC_D    (MacD),
-          .INIT_FILE(INIT_FILE)
+          .TECH      (TECH),
+          .W         (SW),
+          .D         (SD),
+          .NLANES    (SL),
+          .COMMON_CLK(COMMON_CLK),
+          .INIT_FILE ((R == 1) ? INIT_FILE : "")
         ) u_macro (
-          .clk      (clk),
-          .a_cs_i   (tile_cs),
-          .a_we_i   (we_i),
-          .a_addr_i (maddr),
-          .a_wdata_i(wdata_pad[c * MacW +: MacW]),
-          .a_wbe_i  (col_wbe),
-          .a_rdata_o(tile_rdata[t][c * MacW +: MacW]),
-          .b_cs_i   (b_tile_cs),
-          .b_we_i   (b_we_i),
-          .b_addr_i (b_maddr),
-          .b_wdata_i(b_wdata_pad[c * MacW +: MacW]),
-          .b_wbe_i  (b_col_wbe),
-          .b_rdata_o(b_tile_rdata[t][c * MacW +: MacW]),
-          .ls_i     (ls_i[Bank]),
-          .ds_i     (ds_i[Bank]),
-          .sd_i     (sd_i[Bank])
+          .a_clk      (clk),
+          .a_cs_i     (a_cs),
+          .a_we_i     (we_i),
+          .a_addr_i   (a_saddr),
+          .a_wdata_i  (a_wd),
+          .a_lane_we_i(a_lw),
+          .a_rdata_o  (a_slice_rdata[s]),
+          .b_clk      (b_clk),
+          .b_cs_i     (b_cs),
+          .b_we_i     (b_we_i),
+          .b_addr_i   (b_saddr),
+          .b_wdata_i  (b_wd),
+          .b_lane_we_i(b_lw),
+          .b_rdata_o  (b_slice_rdata[s]),
+          .ls_i       (ls_i[k]),
+          .ds_i       (ds_i[k]),
+          .sd_i       (sd_i[k])
         );
-      end else begin : g_sp
-        assign b_tile_rdata[t][c * MacW +: MacW] = '0;
 
-        sram_macro #(
-          .TECH     (TECH),
-          .MAC_W    (MacW),
-          .MAC_D    (MacD),
-          .INIT_FILE(INIT_FILE)
-        ) u_macro (
-          .clk    (clk),
-          .cs_i   (tile_cs),
-          .we_i   (we_i),
-          .addr_i (maddr),
-          .wdata_i(wdata_pad[c * MacW +: MacW]),
-          .wbe_i  (col_wbe),
-          .ls_i   (ls_i[Bank]),
-          .ds_i   (ds_i[Bank]),
-          .sd_i   (sd_i[Bank]),
-          .rdata_o(tile_rdata[t][c * MacW +: MacW])
-        );
+        // The wide port reads every slice.
+        if (!ASliced) begin : g_a_cat
+          assign a_bank_rdata[k][s * SW +: SW] = a_slice_rdata[s];
+        end
+        if (!BSliced) begin : g_b_cat
+          assign b_bank_rdata[k][s * SW +: SW] = b_slice_rdata[s];
+        end
       end
+
+      // The narrow port reads the slice it addressed.
+      if (ASliced) begin : g_a_mux
+        assign a_bank_rdata[k] = a_slice_rdata[a_rd_slice_q];
+      end
+      if (BSliced) begin : g_b_mux
+        assign b_bank_rdata[k] = b_slice_rdata[b_rd_slice_q];
+      end
+    end else begin : g_sp
+      assign b_bank_rdata[k] = '0;
+
+      sram_macro #(
+        .TECH     (TECH),
+        .W        (MW),
+        .D        (SD),
+        .NLANES   (NLANES),
+        .INIT_FILE(INIT_FILE)
+      ) u_macro (
+        .clk      (clk),
+        .cs_i     (a_bank_cs),
+        .we_i     (we_i),
+        .addr_i   (a_saddr),
+        .wdata_i  (wdata_i),
+        .lane_we_i(lane_we_i),
+        .ls_i     (ls_i[k]),
+        .ds_i     (ds_i[k]),
+        .sd_i     (sd_i[k]),
+        .rdata_o  (a_bank_rdata[k])
+      );
     end
   end
 

@@ -122,6 +122,8 @@ module sram_apb #(
   ) u_core (
     .clk             (PCLK),
     .rst_n           (PRESETn),
+    .clk_b           (PCLK),
+    .rst_b_n         (PRESETn),
     .mem_req_i       (mem_req),
     .mem_gnt_o       (mem_gnt),
     .mem_we_i        (mem_we),

@@ -4,8 +4,10 @@
 -- side of the Claude memory bus, one request at a time, response
 -- READ_LATENCY cycles after the grant. Checks (engine stall, range, partial
 -- write without byte enables, domain in DS/SD, domain asleep -> wake),
--- SECDED decode, read-modify-write for partial writes with ECC, and error
--- injection on the next write. Status pulses are registered.
+-- SECDED decode per codeword (WIDTH / CW codewords, one write lane each;
+-- a partial write inside a codeword is a read-modify-write that writes back
+-- only the strobed codewords), and error injection (codeword 0) on the next
+-- write. Status pulses are registered.
 -- READ_ONLY: every write is a bus error (port B of a SKY130 dual-port array).
 -- req_* / acc_o / rmw_* let the core keep two ports off the same word.
 
@@ -24,7 +26,9 @@ entity sram_port is
     READ_LATENCY   : positive := 1;    -- 1 or 2
     ECC_EN         : natural  := 0;    -- SECDED (0 / 1)
     NPD            : positive := 1;    -- power domains
-    READ_ONLY      : natural  := 0     -- writes are bus errors (0 / 1)
+    READ_ONLY      : natural  := 0;    -- writes are bus errors (0 / 1)
+    CW             : positive := 32    -- ECC codeword data width (= WIDTH, or the
+                                       -- narrow width of a dual port)
   );
   port (
     clk           : in  std_ulogic; -- clock
@@ -60,10 +64,11 @@ entity sram_port is
     arr_cs_o      : out std_ulogic;                                   -- array access
     arr_we_o      : out std_ulogic;                                   -- 1 = write
     arr_idx_o     : out std_ulogic_vector(clog2(DEPTH) - 1 downto 0); -- word index
-    arr_wdata_o   : out std_ulogic_vector(mem_width(WIDTH, ECC_EN) - 1 downto 0); -- stored word
-    arr_lane_we_o : out std_ulogic_vector(num_lanes(WIDTH, BYTE_EN, ECC_EN) - 1 downto 0); -- lanes
+    arr_wdata_o   : out std_ulogic_vector(stored_width(WIDTH, CW, ECC_EN) - 1 downto 0); -- word
+    arr_lane_we_o : out std_ulogic_vector(stored_lanes(WIDTH, CW, BYTE_EN, ECC_EN) - 1
+                                          downto 0); -- lanes to write
     -- stored word (cycle after a read)
-    arr_rdata_i   : in  std_ulogic_vector(mem_width(WIDTH, ECC_EN) - 1 downto 0);
+    arr_rdata_i   : in  std_ulogic_vector(stored_width(WIDTH, CW, ECC_EN) - 1 downto 0);
 
     -- ECC and status
     ecc_inj_i     : in  std_ulogic_vector(1 downto 0); -- arm 1-bit (0) / 2-bit (1) error
@@ -76,8 +81,11 @@ end entity sram_port;
 
 architecture rtl of sram_port is
 
-  constant MW_C     : positive := mem_width(WIDTH, ECC_EN);
-  constant NLANES_C : positive := num_lanes(WIDTH, BYTE_EN, ECC_EN);
+  constant MW_C     : positive := stored_width(WIDTH, CW, ECC_EN);
+  constant NLANES_C : positive := stored_lanes(WIDTH, CW, BYTE_EN, ECC_EN);
+  constant NCW_C    : positive := WIDTH / CW;  -- codewords
+  constant CWS_C    : positive := MW_C / NCW_C;  -- stored codeword width
+  constant CWB_C    : positive := CW / 8;      -- bytes per codeword
   constant STRB_W_C : positive := WIDTH / 8;
   constant OFF_W_C  : natural  := clog2(STRB_W_C);
   constant IDX_W_C  : positive := clog2(DEPTH);
@@ -89,6 +97,8 @@ architecture rtl of sram_port is
   signal dom       : natural range 0 to NPD - 1;
   signal oor       : std_ulogic; -- beyond the last word
   signal partial   : std_ulogic; -- write with some byte enables clear
+  signal cw_touch  : std_ulogic_vector(NCW_C - 1 downto 0); -- codewords with a strobed byte
+  signal cw_part   : std_ulogic_vector(NCW_C - 1 downto 0); -- codewords partly strobed
   signal req_err   : std_ulogic; -- grant with an error response
   signal rmw       : std_ulogic; -- ECC partial write: read first
   signal grant     : std_ulogic;
@@ -106,6 +116,10 @@ architecture rtl of sram_port is
 
   -- ECC
   signal rd_data    : std_ulogic_vector(WIDTH - 1 downto 0); -- data read (corrected)
+  signal cw_single  : std_ulogic_vector(NCW_C - 1 downto 0); -- per codeword: corrected
+  signal cw_double  : std_ulogic_vector(NCW_C - 1 downto 0); -- per codeword: uncorrectable
+  signal cw_used    : std_ulogic_vector(NCW_C - 1 downto 0); -- codewords that matter
+  signal s1_touch   : std_ulogic_vector(NCW_C - 1 downto 0); -- codewords strobed in s1
   signal dec_single : std_ulogic;
   signal dec_double : std_ulogic;
   signal merged     : std_ulogic_vector(WIDTH - 1 downto 0); -- read-modify-write result
@@ -148,7 +162,14 @@ begin
   req_err <= '1' when oor = '1' or dom_err_i(dom) = '1' or
                       (READ_ONLY /= 0 and mem_we_i = '1') or
                       (BYTE_EN = 0 and PARTIAL_WR_ERR /= 0 and partial = '1') else '0';
-  rmw     <= '1' when ECC_EN /= 0 and BYTE_EN /= 0 and partial = '1' else '0';
+  gen_cw_strobe : for c in 0 to NCW_C - 1 generate
+    cw_touch(c) <= or mem_be_i(c * CWB_C + CWB_C - 1 downto c * CWB_C);
+    cw_part(c)  <= cw_touch(c) and not (and mem_be_i(c * CWB_C + CWB_C - 1 downto c * CWB_C));
+  end generate gen_cw_strobe;
+
+  -- ECC: a write that covers whole codewords stores them directly.
+  rmw     <= '1' when ECC_EN /= 0 and BYTE_EN /= 0 and mem_we_i = '1' and
+                      unsigned(cw_part) /= 0 else '0';
 
   -- Grant: never while an engine owns the array or a response is pending.
   p_grant : process (all) is
@@ -202,30 +223,41 @@ begin
   -- ECC --
   ---------
   gen_ecc : if ECC_EN /= 0 generate
-    u_dec : entity work.sram_ecc_dec(rtl)
-      generic map (
-        K => WIDTH
-      )
-      port map (
-        code_i   => arr_rdata_i,
-        data_o   => rd_data,
-        single_o => dec_single,
-        double_o => dec_double
-      );
-    u_enc : entity work.sram_ecc_enc(rtl)
-      generic map (
-        K => WIDTH
-      )
-      port map (
-        data_i => enc_data,
-        code_o => stored
-      );
+    gen_cw : for c in 0 to NCW_C - 1 generate
+      u_dec : entity work.sram_ecc_dec(rtl)
+        generic map (
+          K => CW
+        )
+        port map (
+          code_i   => arr_rdata_i(c * CWS_C + CWS_C - 1 downto c * CWS_C),
+          data_o   => rd_data(c * CW + CW - 1 downto c * CW),
+          single_o => cw_single(c),
+          double_o => cw_double(c)
+        );
+      u_enc : entity work.sram_ecc_enc(rtl)
+        generic map (
+          K => CW
+        )
+        port map (
+          data_i => enc_data(c * CW + CW - 1 downto c * CW),
+          code_o => stored(c * CWS_C + CWS_C - 1 downto c * CWS_C)
+        );
+    end generate gen_cw;
   else generate
-    rd_data    <= arr_rdata_i(WIDTH - 1 downto 0);
-    dec_single <= '0';
-    dec_double <= '0';
-    stored     <= std_ulogic_vector(resize(unsigned(enc_data), MW_C));
+    rd_data   <= arr_rdata_i(WIDTH - 1 downto 0);
+    cw_single <= (others => '0');
+    cw_double <= (others => '0');
+    stored    <= std_ulogic_vector(resize(unsigned(enc_data), MW_C));
   end generate gen_ecc;
+
+  -- A read checks every codeword; a read-modify-write only the codewords it
+  -- writes back.
+  gen_s1_touch : for c in 0 to NCW_C - 1 generate
+    s1_touch(c) <= or s1_be_q(c * CWB_C + CWB_C - 1 downto c * CWB_C);
+  end generate gen_s1_touch;
+  cw_used    <= s1_touch when s1_rmw_q = '1' else (others => '1');
+  dec_single <= or (cw_single and cw_used);
+  dec_double <= or (cw_double and cw_used);
 
   gen_merge : for b in 0 to STRB_W_C - 1 generate
     merged(8 * b + 7 downto 8 * b) <= s1_wdata_q(8 * b + 7 downto 8 * b) when s1_be_q(b) = '1'
@@ -284,10 +316,15 @@ begin
       arr_cs_o  <= '1';
       arr_we_o  <= '1';
       arr_idx_o <= s1_idx_q;
+      if ECC_EN /= 0 and BYTE_EN /= 0 then
+        arr_lane_we_o <= std_ulogic_vector(resize(unsigned(s1_touch), NLANES_C));
+      end if;
     elsif do_access = '1' then
       arr_cs_o <= '1';
       arr_we_o <= mem_we_i and not rmw;
-      if NLANES_C > 1 then
+      if ECC_EN /= 0 and BYTE_EN /= 0 then
+        arr_lane_we_o <= std_ulogic_vector(resize(unsigned(cw_touch), NLANES_C));
+      elsif NLANES_C > 1 then
         arr_lane_we_o <= mem_be_i(NLANES_C - 1 downto 0);
       end if;
     end if;
