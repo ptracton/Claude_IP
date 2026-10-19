@@ -75,7 +75,7 @@ There is no register block: all control and status is side-band pins.
 | `DEPTH` | power of two | 1024 | number of words |
 | `BYTE_EN` | 0/1 | 1 | byte-lane writes |
 | `PARTIAL_WR_ERR` | 0/1 | 1 | `BYTE_EN = 0` only: a partial write is a bus error (1) or writes the full word (0) |
-| `READ_LATENCY` | 1/2 | 1 | 2 adds an output register |
+| `READ_LATENCY` | 1/2 | 1 | 2 adds an output register (every response, writes too, comes `READ_LATENCY` cycles after the grant) |
 | `PWR_GATE` | 0/1 | 1 | power modes |
 | `ECC_EN` | 0/1 | 0 | SECDED; *[Step 3]* the array is cleared after reset so every word holds a valid codeword |
 | `BANK_PG` | 0/1 | 0 | per-bank power modes |
@@ -93,10 +93,14 @@ DUAL_PORT.
 
 ## Memory Map
 
-The SRAM occupies `DEPTH * WIDTH / 8` bytes starting at byte offset 0 of
-its slave port. Word `n` is at byte offset `n * WIDTH / 8`. Accesses at or
-beyond the end return the protocol's bus error and do not change the
-contents.
+Word `n` is at byte offset `n * S` of the slave port, where the word
+stride `S` is `WIDTH / 8` rounded up to a power of two (the address decode
+takes the word index from `addr[log2(S) +: log2(DEPTH)]`). For a power-of-two
+byte width the SRAM occupies `DEPTH * WIDTH / 8` bytes; a 24-bit word takes 4
+bytes of address, and its byte lane 3 does not exist. Accesses at or beyond
+`DEPTH * S` return the protocol's bus error and do not change the contents.
+*[Step 4: corrected — the earlier text said `n * WIDTH / 8`, which is wrong
+for widths that are not a power-of-two number of bytes.]*
 
 *[Step 3c]* Dual port: port B sees the same bytes at the same offsets. Its
 word `j` is at byte offset `j * WIDTH_B / 8`, and it has
@@ -130,7 +134,9 @@ little-endian: narrow word `j` is bits `[(j % R) * N +: N]` of wide word
 
 *[Step 3c]* All side-band ports are synchronous to port A's clock, including
 in a dual-port top with `COMMON_CLK = 0`. Port B's ECC and error events reach
-`ecc_*_o` / `err_irq_o` through pulse synchronizers, a few cycles later.
+`ecc_*_o` / `err_irq_o` through pulse synchronizers, a few cycles later;
+events closer together than about three port-A cycles merge into one pulse
+(use the pulses as event flags, not exact counts).
 
 ### Power modes
 

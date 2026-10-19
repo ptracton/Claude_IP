@@ -180,11 +180,14 @@ single-port top-levels. The dual-port top-levels add:
 | `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as for port A | port A's | port B options |
 | `COMMON_CLK` | 0/1 | 1 | 1: the B clock is the A clock; 0: unrelated clocks (not `TECH_SAED14`) |
 
-**Memory map.** Word `n` sits at byte offset `n * WIDTH / 8` of the slave
-port. Addresses at or beyond `DEPTH * WIDTH / 8` get the bus error response,
-and the contents are unchanged. Narrow AHB transfers use the byte lanes given
+**Memory map.** Word `n` sits at byte offset `n * S` of the slave port,
+where the word stride `S` is `WIDTH / 8` rounded up to a power of two (a
+24-bit word takes 4 bytes of address; its byte lane 3 does not exist).
+Addresses at or beyond `DEPTH * S` get the bus error response, and the
+contents are unchanged. Narrow AHB transfers use the byte lanes given
 by HSIZE/HADDR. In a dual-port top, port B sees the same bytes at the same
 offsets (its word `j` is at `j * WIDTH_B / 8`, `DEPTH_B` words).
+Every response, writes included, comes `READ_LATENCY` cycles after the grant.
 
 ## Interfaces
 
@@ -253,9 +256,185 @@ domain is held in RUN. UPF files for SAED90, SAED14 and SKY130 belong in
 
 ## Simulation Results
 
-> Populated by Step 4 (directed_tests)
+Directed simulation (Step 4), SystemVerilog testbenches, results generated
+2026-10-18 on a `*.csun.edu` host with Synopsys VCS Y-2026.03-SP1 and Cadence
+Xcelium 25.03. The VHDL top-levels are not simulated yet.
 
-[TBD]
+```bash
+source IP/system/sram/setup.sh
+python3 verification/tools/sim_sram.py --sim all --proto all --tech all --coverage --jobs 8
+```
+
+Results: `verification/work/results.log` (one line per run),
+`verification/work/<sim>/<proto>_sv_<tech>/{compile,sim,results}.log`, and coverage
+in `verification/work/coverage/` (below).
+
+### Test bench
+
+`verification/testbench/tb_sram_<proto>.sv` (one per bus, sharing
+`sram_tb_body.svh`) reaches the SRAMs through `bus_matrix_<proto>`
+(`IP/interface/bus_matrix`), one matrix per data width, plus two SRAMs
+attached directly to a master:
+
+| Instance | Width (A / B) | Depth | Options | Reached through |
+|---|---|---|---|---|
+| s32 | 32 | 1024 | default | 32-bit matrix (2 masters) |
+| s32e | 32 | 512 | ECC, BIST, BANK_PG x2, READ_LATENCY 2 | 32-bit matrix |
+| dp0 | 32 / 8 | 256 | dual port, port B on its own clock, ECC (8-bit codewords), BIST | 32-bit / 8-bit matrices |
+| dp2 | 32 / 32 | 256 | dual port, one clock, ECC, BANK_PG x2, RL 2 / 1 | 32-bit matrix (CPU on A, DMA on B) |
+| s8 | 8 | 2048 | READ_LATENCY 2, second clock domain | 8-bit matrix |
+| dp3 | 8 / 8 | 4096 | dual port, one clock (several primitive rows per leaf) | 8-bit matrix |
+| s16 | 16 | 4096 | BYTE_EN 0, partial write = ERROR | 16-bit matrix |
+| s16w | 16 | 64 | BYTE_EN 0, partial write = full word, PWR_GATE 0 | 16-bit matrix |
+| dp1 | 16 / 64 | 1024 | dual port, one clock, B: BYTE_EN 0, RL 2; BIST | 16-bit / 64-bit matrices |
+| s24 | 24 | 256 | ECC | 24-bit matrix |
+| s24b | 24 | 128 | BANK_PG x4 | 24-bit matrix |
+| s64 | 64 | 512 | ECC, BIST, READ_LATENCY 2 | 64-bit matrix |
+| s32p / s32q | 32 | 256 | READ_LATENCY 1 / 2 | direct (no matrix) |
+
+Checking: every read is compared with a byte-level shadow memory at the
+master, and one `sram_model` per SRAM (`design/behavioral/sram_model.sv`)
+checks every response on the memory bus inside the top-level. A run passes
+only with zero model mismatches. GENERIC runs also flip stored bits through a
+VPI backdoor (`IP/common/verification/dpi/claude_backdoor.c`).
+
+### Tests
+
+| Test | What it checks | Checks (AHB, GENERIC) |
+|---|---|---|
+| test_reset | every port answers after reset; ECC arrays cleared; second reset with data | 20 |
+| test_params | data and address walks, power-of-two boundaries, full sweep of every port, range error (SRAM) and decode error (matrix), `err_irq_o` | 18 rows, 90k comparisons |
+| test_access | every size at every aligned offset, all write-strobe patterns, unaligned address (AHB), unaligned stores/loads split into legal transfers, BYTE_EN 0 behaviour | 54 |
+| test_burst | INCR4/8/16, WRAP4/8/16, undefined-length INCR, BUSY, byte bursts (AHB); same address sequences back to back on the other buses | 68 |
+| test_pipeline | READ_LATENCY 1 vs 2, pipelined write→read of one word, an error beat followed at once by a good one | 6 |
+| test_contention | two masters on one SRAM and on two SRAMs at once | 3 |
+| test_ecc | injected 1-bit (corrected, `ecc_corr_o`) and 2-bit (ERROR, `ecc_uncorr_o`) errors, RMW on clean / 1-bit / 2-bit words, backdoor flip of every stored bit and of bit pairs, dual-port codewords | 26 |
+| test_power | LS auto-wake, DS (ERROR, kept), SD (ERROR, cleared), sleep-to-sleep moves, per-bank modes, PWR_GATE 0 | 28 |
+| test_clear | clear on every instance, reads stall until `clr_done_o`, domains in DS skipped | 16 |
+| test_bist | March C- pass, reads stall, stuck-at fault found with its address, sleeping domains woken | 10 |
+| test_dp | width packing both ways, both ports busy at once, same-word races, port B under the side-band (through the CDC), clear, ECC read-modify-write from port B | 10 |
+| test_reset_busy | reset during BIST, clears, stalled reads and power transitions, then full recovery | 4 |
+
+### Results (VCS / Xcelium, thousands of comparisons per run)
+
+| Bus | GENERIC | SAED90 | SAED32 | SAED14 | SKY130 |
+|---|---|---|---|---|---|
+| AHB-Lite | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| APB4 | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AXI4-Lite | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| Wishbone | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+
+40/40 runs pass. SKY130 runs make fewer comparisons because port B of its
+dual-port macro is read-only (B writes are checked to get ERROR); only GENERIC
+runs the backdoor checks.
+
+Throughput, 32-bit SRAM at READ_LATENCY 1, attached directly: AHB 16-beat
+INCR burst 33 cycles (2 per beat); APB 32 and Wishbone 32 cycles for 16
+transfers; AXI4-Lite 64 cycles (the bench's AXI master runs one transaction
+at a time). Through a bus matrix every beat is a single transfer (AHB: 4
+cycles per beat).
+
+### Code coverage
+
+VCS code coverage (line, condition, toggle, FSM, branch) of the sram RTL:
+the top-levels and everything below them, including the shared bus adapters
+and synchronizers, but not the testbench, the bus matrix or the vendor SRAM
+macro models. Logic that is constant by construction (`-cm_noconst
+-cm_seqnoconst`, e.g. ECC outputs of an instance without ECC) is reported
+as unreachable. Runs are merged by module definition with
+`urg -lca -flex_merge modules`.
+
+**Target: at least 90% score for every component in every bus x technology
+run.** Met: the weakest module of any run scores 92.95.
+
+Per run (`verification/work/coverage/per_run.txt`):
+
+| Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
+|---|---|---|---|---|---|---|---|
+| AHB / GENERIC | 95.49 | 97.60 | 94.84 | 99.07 | 92.59 | 93.36 | sram_cdc (92.95) |
+| AHB / SAED14 | 95.39 | 97.50 | 94.89 | 99.04 | 92.59 | 92.92 | sram_pwr_ctrl (94.18) |
+| AHB / SAED32 | 95.59 | 97.56 | 95.47 | 99.02 | 92.59 | 93.29 | sram_cdc (92.95) |
+| AHB / SAED90 | 95.60 | 97.56 | 95.52 | 99.02 | 92.59 | 93.29 | sram_cdc (92.95) |
+| AHB / SKY130 | 95.16 | 97.56 | 93.87 | 98.51 | 92.59 | 93.29 | sram_cdc (92.95) |
+| APB / GENERIC | 94.71 | 97.40 | 94.26 | 99.23 | 89.47 | 93.19 | sram_cdc (92.95) |
+| APB / SAED14 | 94.61 | 97.28 | 94.36 | 99.19 | 89.47 | 92.73 | claude_apb_mem_if (93.67) |
+| APB / SAED32 | 94.82 | 97.36 | 94.99 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
+| APB / SAED90 | 94.84 | 97.36 | 95.05 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
+| APB / SKY130 | 94.30 | 97.36 | 93.06 | 98.47 | 89.47 | 93.12 | sram_cdc (92.95) |
+| AXI4-Lite / GENERIC | 95.04 | 97.54 | 93.42 | 99.17 | 91.67 | 93.41 | sram_cdc (92.95) |
+| AXI4-Lite / SAED14 | 94.96 | 97.44 | 93.56 | 99.13 | 91.67 | 92.99 | sram_pwr_ctrl (94.18) |
+| AXI4-Lite / SAED32 | 95.16 | 97.50 | 94.18 | 99.12 | 91.67 | 93.35 | sram_cdc (92.95) |
+| AXI4-Lite / SAED90 | 95.18 | 97.50 | 94.25 | 99.12 | 91.67 | 93.35 | sram_cdc (92.95) |
+| AXI4-Lite / SKY130 | 94.63 | 97.50 | 92.22 | 98.43 | 91.67 | 93.35 | sram_cdc (92.95) |
+| WB / GENERIC | 94.94 | 97.40 | 95.44 | 99.23 | 89.47 | 93.16 | claude_wb_mem_if (93.33) |
+| WB / SAED14 | 94.81 | 97.28 | 95.42 | 99.19 | 89.47 | 92.70 | claude_wb_mem_if (93.33) |
+| WB / SAED32 | 95.02 | 97.36 | 96.02 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
+| WB / SAED90 | 95.03 | 97.36 | 96.07 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
+| WB / SKY130 | 94.54 | 97.36 | 94.13 | 98.67 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
+
+All 20 runs merged (`verification/work/coverage/summary.txt`), total
+**95.78** (line 97.81, cond 94.13, toggle 99.19, FSM 93.75, branch 94.03):
+
+| Module | Score | Line | Cond | Toggle | FSM | Branch |
+|---|---|---|---|---|---|---|
+| `claude_wb_mem_if` | 93.33 | 100.00 | 73.33 | 100.00 | -- | 100.00 |
+| `claude_apb_mem_if` | 93.67 | 100.00 | 74.67 | 100.00 | -- | 100.00 |
+| `sram_clr` | 94.29 | 92.79 | 89.75 | 94.62 | -- | 100.00 |
+| `sram_pwr_ctrl` | 94.65 | 97.44 | 100.00 | 92.86 | 87.50 | 95.45 |
+| `sram_port` | 95.40 | 98.51 | 93.45 | 98.66 | -- | 90.97 |
+| `claude_axi4l_mem_if` | 95.80 | 100.00 | 82.90 | 98.83 | 100.00 | 97.30 |
+| `claude_ahb_mem_if` | 96.80 | 100.00 | 85.11 | 98.89 | 100.00 | 100.00 |
+| `sram_cdc` | 97.12 | 100.00 | 100.00 | 88.46 | -- | 100.00 |
+| `claude_sync` | 97.22 | 100.00 | -- | 91.67 | -- | 100.00 |
+| `sram_bist` | 98.18 | 100.00 | 100.00 | 100.00 | 90.91 | 100.00 |
+| `sram_core` | 98.19 | 100.00 | 93.64 | 99.12 | -- | 100.00 |
+| `sram_ahb_dp` | 98.50 | -- | -- | 98.50 | -- | -- |
+| `sram_macro_dp_sky130` | 98.87 | 100.00 | 100.00 | 95.48 | -- | 100.00 |
+| `sram_ahb` | 98.96 | -- | -- | 98.96 | -- | -- |
+| `sram_macro_sky130` | 99.06 | 100.00 | 100.00 | 96.24 | -- | 100.00 |
+| `sram_macro` | 99.45 | -- | -- | 99.45 | -- | -- |
+| `sram_macro_dp` | 99.46 | -- | -- | 99.46 | -- | -- |
+| `sram_macro_dp_saed14` | 99.59 | 100.00 | 100.00 | 98.36 | -- | 100.00 |
+| `sram_macro_dp_saed32` | 99.60 | 100.00 | 100.00 | 98.40 | -- | 100.00 |
+| `sram_macro_dp_saed90` | 99.64 | 100.00 | 100.00 | 98.57 | -- | 100.00 |
+| `sram_axi4l` | 99.74 | -- | -- | 99.74 | -- | -- |
+| `sram_macro_generic` | 99.82 | 100.00 | -- | 99.45 | -- | 100.00 |
+| `sram_macro_saed90` | 99.82 | 100.00 | 100.00 | 99.29 | -- | 100.00 |
+| `sram_macro_saed32` | 99.82 | 100.00 | 100.00 | 99.29 | -- | 100.00 |
+| `sram_macro_dp_generic` | 99.82 | 100.00 | -- | 99.47 | -- | 100.00 |
+| `sram_macro_saed14` | 99.85 | 100.00 | 100.00 | 99.41 | -- | 100.00 |
+| `sram_array` | 99.87 | 100.00 | 100.00 | 99.49 | -- | 100.00 |
+| `sram_ecc_enc` | 100.00 | 100.00 | 100.00 | 100.00 | -- | -- |
+| `sram_ecc_dec` | 100.00 | 100.00 | 100.00 | 100.00 | -- | -- |
+| `claude_pulse_sync` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
+| `sram_apb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_apb` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_axi4l_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_wb` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_wb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+
+Below 90% inside modules that pass: condition coverage of the APB / Wishbone
+adapters (73-75%; AHB 85, AXI4-Lite 83), `sram_pwr_ctrl` FSM 87.5%,
+`sram_cdc` toggle 88.5%, `sram_clr` condition 89.8%.
+
+Not covered: the XILINX and ALTERA leaves (no vendor simulation libraries on
+csun.edu). Coverage is collected with VCS only: Xcelium can write a coverage
+database (`xrun -coverage all -covfile`), but csun.edu has no IMC to merge or
+report it, so the Xcelium runs are functional checks.
+
+### Bugs found by these tests
+
+| Where | Bug | Fix |
+|---|---|---|
+| `bus_matrix_ahb` | HSIZE was not carried through the matrix, so a 64-bit slave saw 4 lanes and sub-word transfers lost their size | `M_HSIZE` / `S_HSIZE`; the initiator rebuilds HSIZE from the lanes and the address |
+| `bus_matrix_ahb_ini` (first version of that fix) | sparse write strobes at a word address became a byte transfer at the wrong lane | HSIZE must contain the address offset, else the bus size with the lanes in HWSTRB |
+| `sram_port` (SV and VHDL) | an all-zero-strobe write to an 8-bit SRAM wrote the word | lane enables follow the strobes whenever BYTE_EN = 1 |
+
+Behaviour confirmed and documented while writing the tests: every response
+(writes too) comes READ_LATENCY cycles after the grant; a clear requested
+during a pass joins it; a read on a port B with its own clock can complete
+just before a clear starts; error pulses from such a port merge when closer
+than about three port-A cycles (`claude_pulse_sync`).
 
 ## Formal Verification Results
 

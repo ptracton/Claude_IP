@@ -29,6 +29,7 @@ module bus_matrix_ahb #(
   input  logic [NUM_MASTERS*ADDR_W-1:0]     M_HADDR,  // master i HADDR
   input  logic [NUM_MASTERS*2-1:0]          M_HTRANS, // master i HTRANS [i*2+:2]
   input  logic [NUM_MASTERS-1:0]            M_HWRITE, // master i HWRITE
+  input  logic [NUM_MASTERS*3-1:0]          M_HSIZE,  // master i HSIZE [i*3+:3]
   input  logic [NUM_MASTERS*DATA_W-1:0]     M_HWDATA, // master i HWDATA
   input  logic [NUM_MASTERS*DATA_W/8-1:0]   M_HWSTRB, // master i HWSTRB
   output logic [NUM_MASTERS-1:0]            M_HREADY, // master i HREADY
@@ -40,6 +41,7 @@ module bus_matrix_ahb #(
   output logic [NUM_SLAVES*ADDR_W-1:0]      S_HADDR,  // slave j HADDR
   output logic [NUM_SLAVES*2-1:0]           S_HTRANS, // slave j HTRANS [j*2+:2]
   output logic [NUM_SLAVES-1:0]             S_HWRITE, // slave j HWRITE
+  output logic [NUM_SLAVES*3-1:0]           S_HSIZE,  // slave j HSIZE [j*3+:3]
   output logic [NUM_SLAVES*DATA_W-1:0]      S_HWDATA, // slave j HWDATA
   output logic [NUM_SLAVES*DATA_W/8-1:0]    S_HWSTRB, // slave j HWSTRB
   input  logic [NUM_SLAVES-1:0]             S_HREADY, // slave j HREADYOUT
@@ -84,6 +86,7 @@ module bus_matrix_ahb #(
         .HADDR      (M_HADDR[gi*ADDR_W+:ADDR_W]),
         .HTRANS     (M_HTRANS[gi*2+:2]),
         .HWRITE     (M_HWRITE[gi]),
+        .HSIZE      (M_HSIZE[gi*3+:3]),
         .HWDATA     (M_HWDATA[gi*DATA_W+:DATA_W]),
         .HWSTRB     (M_HWSTRB[gi*STRB_W+:STRB_W]),
         .HRDATA     (M_HRDATA[gi*DATA_W+:DATA_W]),
@@ -124,6 +127,7 @@ module bus_matrix_ahb #(
         .HADDR      (S_HADDR[gj*ADDR_W+:ADDR_W]),
         .HTRANS     (S_HTRANS[gj*2+:2]),
         .HWRITE     (S_HWRITE[gj]),
+        .HSIZE      (S_HSIZE[gj*3+:3]),
         .HWDATA     (S_HWDATA[gj*DATA_W+:DATA_W]),
         .HWSTRB     (S_HWSTRB[gj*STRB_W+:STRB_W]),
         .HRDATA     (S_HRDATA[gj*DATA_W+:DATA_W]),

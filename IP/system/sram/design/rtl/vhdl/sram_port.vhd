@@ -324,7 +324,9 @@ begin
       arr_we_o <= mem_we_i and not rmw;
       if ECC_EN /= 0 and BYTE_EN /= 0 then
         arr_lane_we_o <= std_ulogic_vector(resize(unsigned(cw_touch), NLANES_C));
-      elsif NLANES_C > 1 then
+      elsif BYTE_EN /= 0 then
+        -- One lane per byte (also for an 8-bit word: an all-zero strobe
+        -- writes nothing).
         arr_lane_we_o <= mem_be_i(NLANES_C - 1 downto 0);
       end if;
     end if;

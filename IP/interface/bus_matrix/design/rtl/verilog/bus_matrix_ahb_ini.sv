@@ -7,6 +7,10 @@
 //     high; held until the slave's HREADY is high.
 //   Data phase:    HTRANS=IDLE, HWDATA/HWSTRB driven from the core; done
 //     pulses in the cycle the slave raises HREADY, with HRDATA and HRESP.
+//   HSIZE is rebuilt from core_be (the target adapter's lane mask) and
+//     HADDR: the naturally aligned block of 2**k lanes holding the address
+//     gives HSIZE = k; any other mask (a full word, or write strobes that do
+//     not form that block) gives the bus size, with the lanes in HWSTRB.
 //
 // The core keeps req high until done and drops it on the following cycle,
 // so a new address phase is never started for a finished request.
@@ -33,6 +37,7 @@ module bus_matrix_ahb_ini #(
   output logic [ADDR_W-1:0]     HADDR,  // byte address
   output logic [1:0]            HTRANS, // transfer type
   output logic                  HWRITE, // 1 = write
+  output logic [2:0]            HSIZE,  // transfer size, 2**HSIZE bytes
   output logic [DATA_W-1:0]     HWDATA, // write data (data phase)
   output logic [DATA_W/8-1:0]   HWSTRB, // byte strobes (data phase)
   input  logic [DATA_W-1:0]     HRDATA, // read data
@@ -42,6 +47,30 @@ module bus_matrix_ahb_ini #(
 
   localparam logic [1:0] HTRANS_IDLE   = 2'b00;
   localparam logic [1:0] HTRANS_NONSEQ = 2'b10;
+
+  localparam int unsigned StrbW = DATA_W / 8;
+  localparam logic [2:0]  BusSize = (StrbW > 1) ? 3'($clog2(StrbW)) : 3'd0;
+
+  // Byte-offset width (at least 1 bit so the vectors stay legal for DATA_W = 8).
+  localparam int unsigned OffW = (StrbW > 1) ? $clog2(StrbW) : 1;
+
+  // be_size — HSIZE of a lane mask at byte offset `offset`: k when the mask
+  // is the naturally aligned block of 2**k lanes holding the offset (as the
+  // target adapter built it from the master's HSIZE), otherwise the bus size
+  // (a full mask, or write strobes that do not form such a block).
+  function automatic logic [2:0] be_size(logic [StrbW-1:0] be, logic [OffW-1:0] offset);
+    logic [2:0] size;
+    size = BusSize;
+    for (int unsigned k = 0; (1 << k) < StrbW; k++) begin
+      for (int unsigned base = 0; base + (1 << k) <= StrbW; base += (1 << k)) begin
+        if (be == StrbW'(((1 << (1 << k)) - 1) << base) &&
+            (int'(offset) >> k) == (base >> k)) begin
+          size = 3'(k);
+        end
+      end
+    end
+    return size;
+  endfunction
 
   logic dphase_q; // data phase in progress
   logic aphase;   // address phase presented this cycle
@@ -60,6 +89,7 @@ module bus_matrix_ahb_ini #(
   assign HTRANS = aphase ? HTRANS_NONSEQ : HTRANS_IDLE;
   assign HADDR  = core_addr;
   assign HWRITE = core_we;
+  assign HSIZE  = be_size(core_be, core_addr[OffW-1:0]);
   assign HWDATA = core_wdata;
   assign HWSTRB = core_we ? core_be : '0;
 

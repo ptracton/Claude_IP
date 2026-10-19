@@ -739,6 +739,31 @@ Always add an **Interactive Simulation (GUI)** section to the IP `README.md` doc
 4. Re-run after changes: **Restart** then **Run All** in xsim toolbar
 5. Reload waves: `source /path/to/verification/vivado/wave_apb.tcl`
 
+### 5b. Code coverage (csun.edu, VCS) — part of `sim_IP_NAME.py`
+
+`sim_IP_NAME.py` must have a `--coverage` option in this step, not later (Tools With Each
+Step Rule in `Claude_IP.md`). The reference implementation is
+`IP/system/sram/verification/tools/sim_sram.py`. Copy `COV_METRICS`, `cov_hier()`, the `-cm`
+additions in `run_vcs()` and `merge_coverage()`:
+
+- **Compile and simulate:** `-cm line+cond+fsm+tgl+branch -cm_dir <run>/cov.vdb`.
+- **Compile only:** `-cm_hier <run>/cov_hier.cfg`, which includes the IP's top-levels
+  (`+moduletree IP_NAME_<proto>`) and excludes vendor or third-party models (`-moduletree ...`).
+  Testbench code is not counted.
+- **Merge:** `urg -full64 -lca -flex_merge modules -format both -report
+  verification/work/coverage ...`, then write `verification/work/coverage/summary.txt`.
+  - **Never a plain merge across benches.** Different protocol tops or technologies are
+    different designs, and plain urg keeps only the first design's instances (`CMR-VCINF`) while
+    returning 0.
+  - `-flex_merge modules` needs `-lca`.
+- Coverage is VCS only. Xcelium (`-coverage all` / IMC) is not set up.
+- Report the per-module table, not just the total: modules that no run instantiates are
+  missing from the report, not shown at 0%.
+
+Run it with `--proto all --tech all --coverage --jobs 8` and put `summary.txt`'s total and
+weakest modules in the README Simulation Results section. There is no numeric coverage gate
+until the user sets targets.
+
 ### 6. Run and verify
 
 **Standard environment** (any host other than `*.csun.edu`):
@@ -790,6 +815,13 @@ with a descriptive error message when `ON_CSUN` is `True`.
 Replace the `[TBD]` placeholder in **Simulation Results** with a table of every
 test × protocol × simulator × language combination and its result.
 Include the simulator versions and the date the results were generated.
+
+**Also record the code coverage results (standard, user rule 2026-10-18):** the measurement
+scope, target and status, the per-run table (`verification/work/coverage/per_run.txt`), the
+merged per-module table (`summary.txt`), metrics below 90%, and what is not covered and why.
+Generate the tables from those files. See "Code Coverage → Recording results" in
+`Claude_IP.md`; `IP/system/sram/README.md` is the reference layout. Refresh the coverage
+tables whenever the simulation results are refreshed.
 7. Update `README.md` — replace the `[TBD]` placeholder in **Simulation Results** with a
    table of every test run, the simulators used, the language tested, and the result:
 
@@ -822,6 +854,7 @@ Include the simulator versions and the date the results were generated.
 | `verification/tests/test_*.sv` | Directed SV test files |
 | `verification/tools/sim_IP_NAME.py` | Completed simulation runner |
 | `verification/work/<sim>/<proto>_<lang>/results.log` | `PASS` / `FAIL` per combination (icarus/ghdl on standard hosts; vcs/xcelium on csun.edu) |
+| `verification/work/coverage/summary.txt` | Merged VCS code coverage per module definition (`--coverage`, csun.edu) |
 | `verification/modelsim/tb_IP_NAME_<proto>.do` | ModelSim GUI compile+sim script (4 files) |
 | `verification/modelsim/tb_IP_NAME_<proto>_wave.do` | ModelSim waveform config (4 files) |
 | `verification/vivado/create_project_<proto>.tcl` | Vivado project creation script (4 files) |
@@ -838,6 +871,14 @@ Include the simulator versions and the date the results were generated.
 - On csun.edu, `sim_IP_NAME.py --sim icarus` (or `--sim ghdl` or `--sim modelsim`) prints a
   clear error and exits non-zero without attempting to invoke the unavailable tool.
 - No testbench or task code resides in `design/rtl/`.
+- On csun.edu, `sim_IP_NAME.py --coverage` runs and writes
+  `verification/work/coverage/summary.txt`. `coverage_urg.log` shows a `-flex_merge modules`
+  merge with no `CMR-VCINF` (dropped instance) warnings. The numbers are reported in the README
+  (no threshold until the user sets one).
+- Every reported result comes from `sim_IP_NAME.py`, not from scratch scripts.
+- The README Simulation Results section holds the current coverage tables (per run and merged
+  per module), the target and its status. The target is 90% score for every component in
+  every bus x technology run (user, 2026-10-18).
 - No compile-time DUT-selection defines in any testbench — DUT is named explicitly.
 - All four `verification/modelsim/tb_IP_NAME_<proto>.do` files exist and reference their
   corresponding `_wave.do` files.

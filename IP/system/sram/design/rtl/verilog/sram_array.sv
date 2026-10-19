@@ -187,8 +187,18 @@ module sram_array #(
 
         assign a_cs = a_bank_cs && (!ASliced || a_slice == SlW'(s));
         assign b_cs = b_bank_cs && (!BSliced || b_slice == SlW'(s));
-        assign a_wd = ASliced ? SW'(wdata_i) : wdata_i[s * SW +: SW];
-        assign b_wd = BSliced ? SW'(b_wdata_i) : b_wdata_i[s * SW +: SW];
+        // The narrow port drives every slice with its whole word; the wide
+        // port gives each slice its part.
+        if (ASliced) begin : g_a_wd_all
+          assign a_wd = SW'(wdata_i);
+        end else begin : g_a_wd_part
+          assign a_wd = wdata_i[s * SW +: SW];
+        end
+        if (BSliced) begin : g_b_wd_all
+          assign b_wd = SW'(b_wdata_i);
+        end else begin : g_b_wd_part
+          assign b_wd = b_wdata_i[s * SW +: SW];
+        end
         assign a_lw = slice_lanes(64'(lane_we_i), NLANES, ASliced, LpsA, s);
         assign b_lw = slice_lanes(64'(b_lane_we_i), NLANES_B, BSliced, LpsB, s);
 

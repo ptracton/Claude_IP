@@ -9,9 +9,22 @@ firmware/build/
 firmware/obj/
 firmware/lib/
 
-# Simulation work directories (all simulators; keep the directory itself)
+# Simulation work directories (all simulators; keep the directory itself),
+# including code coverage databases and reports (sim_sram.py --coverage)
 verification/work/*
 !verification/work/.gitkeep
+verification/work.vdb/
+
+# Code coverage run by hand (VCS/URG, Xcelium)
+*.vdb/
+urgReport/
+cov_work/
+xcelium.d/
+xrun.log
+xrun.history
+xrun.key
+waves.shm/
+.simvision/
 verification/vivado/work/
 
 # Formal verification run directories

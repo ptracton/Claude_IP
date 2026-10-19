@@ -3,9 +3,11 @@
 // Wraps the shared AHB-Lite task library (IP/common/verification/tasks/
 // tasks_ahb.sv) around one master port, so a testbench can run several
 // masters at once: u_m0.write_reg(...), u_m1.read_reg(...), u_m0.bfm_err.
-// Addresses are 32 bits wide.
+// Addresses are 32 bits wide. HSIZE is driven (word for write_reg/read_reg,
+// see CLAUDE_BFM_AHB_HSIZE in tasks_ahb.sv).
 
 `define CLAUDE_BFM_ADDR_W 32
+`define CLAUDE_BFM_AHB_HSIZE
 
 `timescale 1ns / 1ps
 
@@ -15,6 +17,7 @@ module bus_matrix_ahb_bfm (
   output logic [31:0] HADDR,
   output logic [1:0]  HTRANS,
   output logic        HWRITE,
+  output logic [2:0]  HSIZE,
   output logic [31:0] HWDATA,
   output logic [3:0]  HWSTRB,
   input  logic        HREADY,
@@ -31,6 +34,7 @@ module bus_matrix_ahb_bfm (
     HADDR  = '0;
     HTRANS = 2'b00;
     HWRITE = 1'b0;
+    HSIZE  = 3'b010;
     HWDATA = '0;
     HWSTRB = 4'h0;
     bfm_err = 1'b0;
@@ -39,3 +43,4 @@ module bus_matrix_ahb_bfm (
 endmodule : bus_matrix_ahb_bfm
 
 `undef CLAUDE_BFM_ADDR_W
+`undef CLAUDE_BFM_AHB_HSIZE

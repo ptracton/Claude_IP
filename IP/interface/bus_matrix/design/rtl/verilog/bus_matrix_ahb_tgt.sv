@@ -4,10 +4,14 @@
 // transfer into one request on the core's internal handshake.
 //
 //   Address phase: accepted when HREADY is high and HSEL & HTRANS[1]
-//     (NONSEQ or SEQ; every beat is treated as a single transfer).
+//     (NONSEQ or SEQ; every beat is treated as a single transfer). HSIZE and
+//     the low HADDR bits give the transfer's byte lanes (the naturally
+//     aligned 2**HSIZE-byte block holding the address; all lanes for a full
+//     bus word or more).
 //   Data phase:    mst_req is held, HREADY low, until the core reports done.
 //     HWDATA/HWSTRB are passed through live: the master holds them for the
-//     whole data phase.
+//     whole data phase. core_be is the lane mask, ANDed with HWSTRB on
+//     writes (AHB5 write strobes; a master without HWSTRB ties it high).
 //   Response:      OKAY ends the data phase in the done cycle. ERROR takes
 //     two cycles (HREADY low + HRESP high, then HREADY high + HRESP high).
 //
@@ -29,6 +33,7 @@ module bus_matrix_ahb_tgt #(
   input  logic [1:0]            HTRANS, // transfer type
   /* verilator lint_on UNUSEDSIGNAL */
   input  logic                  HWRITE, // 1 = write
+  input  logic [2:0]            HSIZE,  // transfer size, 2**HSIZE bytes
   input  logic [DATA_W-1:0]     HWDATA, // write data (data phase)
   input  logic [DATA_W/8-1:0]   HWSTRB, // byte strobes (data phase)
   output logic [DATA_W-1:0]     HRDATA, // read data
@@ -46,6 +51,26 @@ module bus_matrix_ahb_tgt #(
   input  logic                  core_err    // error (valid with done)
 );
 
+  localparam int unsigned StrbW = DATA_W / 8;
+  // Byte-offset width (at least 1 bit so the vectors stay legal for DATA_W = 8).
+  localparam int unsigned OffW  = (StrbW > 1) ? $clog2(StrbW) : 1;
+
+  // lane_mask — lanes of a 2**size-byte transfer at byte offset `offset`:
+  // lane b is on when it is in the same naturally aligned block.
+  function automatic logic [StrbW-1:0] lane_mask(logic [2:0] size, logic [OffW-1:0] offset);
+    logic [StrbW-1:0] mask;
+    logic [OffW-1:0]  lane;
+    mask = '0;
+    for (int unsigned b = 0; b < StrbW; b++) begin
+      lane    = OffW'(b);
+      mask[b] = ((lane >> size) == (offset >> size)) ? 1'b1 : 1'b0;
+    end
+    if (StrbW == 1) begin
+      mask = '1;
+    end
+    return mask;
+  endfunction
+
   typedef enum logic [1:0] {
     TgtIdle = 2'b00,  // no data phase in progress
     TgtBusy = 2'b01,  // data phase, waiting for the core
@@ -55,6 +80,7 @@ module bus_matrix_ahb_tgt #(
   tgt_state_e        state_q, state_d;
   logic [ADDR_W-1:0] addr_q;
   logic              we_q;
+  logic [StrbW-1:0]  mask_q; // byte lanes of the transfer
   logic              aphase; // an address phase is presented
 
   assign aphase = HSEL & HTRANS[1];
@@ -97,9 +123,11 @@ module bus_matrix_ahb_tgt #(
     if (!rst_n) begin
       addr_q <= '0;
       we_q   <= 1'b0;
+      mask_q <= '0;
     end else if (HREADY && aphase) begin
       addr_q <= HADDR;
       we_q   <= HWRITE;
+      mask_q <= lane_mask(HSIZE, HADDR[OffW-1:0]);
     end
   end
 
@@ -107,7 +135,7 @@ module bus_matrix_ahb_tgt #(
   assign core_addr  = addr_q;
   assign core_we    = we_q;
   assign core_wdata = HWDATA;
-  assign core_be    = HWSTRB;
+  assign core_be    = we_q ? (mask_q & HWSTRB) : mask_q;
   assign HRDATA     = core_rdata;
 
 endmodule : bus_matrix_ahb_tgt

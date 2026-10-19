@@ -91,6 +91,8 @@ IP/common/
 │   │   ├── claude_wb_fv.sv       # Wishbone B4 protocol checker + transaction observer
 │   │   ├── claude_reg_fv.sv      # protocol-neutral register read-back checker
 │   │   └── vcf/claude_vcf_fpv.tcl # generic VC Formal FPV run script
+│   ├── dpi/              # DPI-C helpers for testbenches
+│   │   └── claude_backdoor.c # claude_bd_get / claude_bd_put: read / deposit any variable by path
 │   └── tools/            # Python base class and shared utilities for all tool scripts
 │       ├── ip_tool_base.py
 │       └── claude_vcf.py     # VC Formal driver (jobs, report parsing, waivers)
@@ -136,6 +138,17 @@ a clock assignment adds a delta cycle and races the flops on the copy against th
 original. If two ports may share a clock, give each its own clock pin and document that
 both must be driven from the same clock. The first user is the sram dual port
 (`IP/system/sram/design/rtl/*/sram_cdc.*`).
+
+**Backdoor access (`verification/dpi/claude_backdoor.c`)** reads or deposits any design
+variable by hierarchical path through VPI, the way UVM's `uvm_hdl_deposit` does. Values are
+binary strings, MSB first. Use it to preload, peek and poke memory arrays.
+- **Do not use `$deposit`.** VCS rejects it at compile time (ICPD, illegal combination of
+  drivers) on any variable written in `always_ff`, and no option downgrades it. Xcelium
+  accepts it, but the testbench must run on both.
+- Compile flags: VCS `-debug_access+r+w` plus the `.c` file; Xcelium `-access +rw` plus the
+  `.c` file.
+- Untested on Questa and xsim. Icarus has no DPI-C, so backdoor tests must be skipped there.
+- First user: the sram ECC test (`IP/system/sram/verification/tests/test_ecc.sv`).
 
 `IP_COMMON_PATH` is set by `setup.sh` and points to this directory.
 
@@ -217,6 +230,23 @@ if not IP_NAME_PATH:
     print("       Please run:  source IP_NAME/setup.sh")
     sys.exit(1)
 ```
+
+---
+
+## Tools With Each Step Rule (mandatory for all sub-agents)
+
+**RULE (user, 2026-10-18) — Each step's tools and infrastructure are built in that step.**
+Runner scripts (`verification/tools/sim_<ip>.py` and the other step runners), regression
+hooks and results logs must be written in the step that needs them. They cannot wait for a
+later step.
+- Every reported result must come from the IP's own runner, never from scratch or
+  scratchpad scripts or hand-typed tool commands.
+- A step is not complete while its runner is a skeleton.
+- When a runner gains a capability (more protocols, technologies, coverage), extend it in
+  the same piece of work.
+
+Why: in sram Step 4 a new bench was run from a scratch script while `sim_sram.py` was still
+the Step 1 skeleton, so the user could not reproduce the reported results.
 
 ---
 
@@ -461,6 +491,100 @@ Full detail on the PTPX flow, liberty paths, and Tcl commands is in
 
 ---
 
+## Code Coverage (Step 4 onwards — VCS, csun.edu)
+
+Code coverage comes from the directed-simulation runner. The reference implementation is
+`IP/system/sram/verification/tools/sim_sram.py --coverage`. The timer and bus_matrix runners
+do not collect coverage yet.
+
+### How to run
+```bash
+source IP/system/sram/setup.sh
+python3 IP/system/sram/verification/tools/sim_sram.py --proto all --tech all --coverage --jobs 8
+```
+
+### What it does
+- **Compile:**
+  - `-cm line+cond+fsm+tgl+branch`, `-cm_dir <run>/cov.vdb`, and `-cm_hier <run>/cov_hier.cfg`.
+  - The hierarchy file keeps the IP's top-levels and everything below them
+    (`+moduletree sram_<proto>`, `+moduletree sram_<proto>_dp`).
+  - `-cm_noconst -cm_seqnoconst` leave out logic that is constant by construction: tie-offs and
+    parameter-disabled features, also through flops. For example, `ecc_corr_o` of an instance
+    with `ECC_EN = 0` is reported Unreachable instead of uncovered. Inputs the testbench could
+    drive are not constant, so the tests drive them (e.g. `ecc_inj_i` / `bist_start_i` on
+    instances without those features, checking they are ignored).
+  - It drops what is not our code: the vendor SRAM macro models (`-moduletree SRAM*`,
+    `sky130_sram_*`, ...).
+  - Testbench, BFMs, reference model and bus_matrix are outside the trees, so they are not
+    counted.
+- **Simulate:** with the same `-cm` / `-cm_dir`.
+- **Merge:** every run's `cov.vdb` with `urg`.
+- **Output:**
+  - `verification/work/coverage/summary.txt`: all runs merged, total then one line per module
+    definition, weakest first.
+  - `verification/work/coverage/per_run.txt`: one line per run (bus x technology) with its
+    total and its weakest module; `per_run_modules.txt` lists every module of every run.
+    Targets apply per run: a merged report can hide a weak single bus or technology.
+  - `verification/work/coverage/dashboard.html`, `modlist.txt` / `hierarchy.txt`: the full urg
+    report.
+  - `verification/work/coverage_urg.log`: the merge log.
+
+### Known issues
+- **A plain urg merge silently drops data.** Each protocol bench is a different top, and
+  each technology instantiates a different macro leaf. urg takes the first `-dir` as the base
+  design and discards every instance not found in it (warning `CMR-VCINF`, thousands of times),
+  while still reporting `rc 0`. Neither `-flex_merge union` nor `-map <module>` fixes this.
+  **Use `urg -lca -flex_merge modules`**, which merges code coverage by module definition
+  across different hierarchies. It is an LCA feature: without `-lca` urg stops with
+  `URG-LCA-FEATURE`.
+- **VCS only; Xcelium cannot be reported on csun.edu.**
+  - Xcelium collects code coverage (`xrun -coverage all -covfile <ccf>`, writing
+    `cov_work/scope/<test>/*.ucd`).
+  - Select the IP with `select_coverage -all -module <top>...` lines in the `.ccf`.
+    `-covdut <top>` fails with `*E,COVMDU` when the bench has more than one instance of the top.
+  - csun.edu has no IMC (the Cadence tool that merges and reports `.ucd`), so Xcelium coverage
+    cannot be read there. Only VCS numbers exist.
+  - Even with IMC, Xcelium and VCS count differently (expression/toggle rules, FSM extraction),
+    so their percentages are not directly comparable.
+  - Standard hosts have no coverage flow; Icarus and GHDL have none.
+- **Read the per-module numbers, not just the total.** Modules or technologies that no run
+  instantiates (sram: the XILINX/ALTERA leaves on csun.edu) are missing from the report
+  entirely rather than shown at 0%.
+- Coverage of parameter-dependent code depends on the configurations the bench instantiates.
+  Unused generate branches count against the module.
+- **Target (user, 2026-10-18): 90% score for every component, for each technology and bus
+  type.** Check it in `per_run.txt`: every run's weakest module must be at or above 90.
+  - sram status 2026-10-18: met. Every module of all 20 runs (4 buses x 5 technologies) is
+    >= 92.95. Run totals are 94.3-95.6; merged total 95.8.
+  - Individual metrics below 90 remain in a few modules (bus adapters' condition coverage
+    73-85, sram_pwr_ctrl FSM 87.5, sram_cdc toggle 88.5, sram_clr cond 89.8).
+  - History: 66.5 on the first measurement, when power/clear/BIST/dual-port tests were stubs.
+- **FSM reset transitions count.** VCS reports "state X -> reset state" for every state; they
+  are covered only by asserting reset while the FSM is in X. The sram's `test_reset_busy`
+  does that (reset during BIST, clears, stalled reads, power transitions).
+
+### Recording results (standard)
+**RULE (user, 2026-10-18) — Coverage results are recorded every time simulation results
+are.** The IP's README "Simulation Results" section must contain, from the latest
+`--coverage` run:
+1. what is measured: metrics, scope, exclusions (`-cm_noconst`), merge method;
+2. the target and whether it is met;
+3. the per-run table (`per_run.txt`: every bus x technology, metrics and weakest module);
+4. the merged per-module table (`summary.txt`);
+5. metrics below 90% inside passing modules, and what is not covered at all and why (e.g. FPGA
+   leaves, simulators without coverage).
+
+Generate the tables from the report files rather than typing numbers. Also record the date and
+the tool versions. The sram README is the reference
+(`IP/system/sram/README.md`, Simulation Results → Code coverage).
+
+### Adding coverage to another IP's runner
+Copy `COV_METRICS`, `cov_hier()`, the `-cm` additions in `run_vcs()` and `merge_coverage()`
+from `sim_sram.py`. Change the `+moduletree` entries to the IP's top-levels and the exclusions
+to its vendor or third-party models.
+
+---
+
 ## Inter-Agent Contracts
 
 | Producer | Consumer(s) | Contract Artifact |
@@ -468,7 +592,7 @@ Full detail on the PTPX flow, liberty paths, and Tcl commands is in
 | setup (1) | All | `setup.sh`, `cleanup.sh`, directory tree |
 | rdl (2) | rtl (3), uvm (6), firmware (9) | `design/rtl/verilog/`, `design/rtl/vhdl/`, `firmware/include/IP_NAME_regs.h` |
 | rtl (3) | directed_tests (4), formal (5), uvm (6), lint (8), synthesis (10) | `design/rtl/verilog/`, `design/rtl/vhdl/` |
-| directed_tests (4) | formal (5), regression (7) | `verification/work/*/results.log` |
+| directed_tests (4) | formal (5), regression (7) | `verification/work/*/results.log`, `verification/work/coverage/summary.txt` (VCS `--coverage`) |
 | formal (5) | regression (7) | `verification/formal/results.log`, `verification/formal/vcf/results.log` |
 | uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
 | lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
@@ -519,7 +643,8 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |
 | PrimePower (`pt_shell`, power mode) | csun.edu only, on `$PATH` | Power analysis from gate-level SAIF (`sim_<ip>.py --power`, Step 12) |
 | Synopsys VCS MX (`vcs`) | Y-2026.03, csun.edu only | SV/VHDL directed simulation, gate-level simulation, UVM (`-ntb_opts uvm-1.2`; Vivado is not available there) |
-| Cadence Xcelium (`xrun`) | 25.03, csun.edu only | SV/VHDL directed simulation |
+| Synopsys URG (`urg`) | Y-2026.03 (with VCS), csun.edu only | Merges and reports VCS code coverage (`sim_<ip>.py --coverage`; needs `-lca -flex_merge modules` for different designs) |
+| Cadence Xcelium (`xrun`) | 25.03, csun.edu only | SV/VHDL directed simulation (no coverage flow yet) |
 | Synopsys VC Formal (`vcf`) | Y-2026.03, csun.edu only | Formal property verification of SV and VHDL tops (replaces SymbiYosys there) |
 
 ---

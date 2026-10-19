@@ -294,7 +294,9 @@ module sram_port #(
       arr_we_o = mem_we_i && !rmw;
       if (ECC_EN && BYTE_EN) begin
         arr_lane_we_o = NLANES'(cw_touch);
-      end else if (NLANES > 1) begin
+      end else if (BYTE_EN) begin
+        // One lane per byte (also for an 8-bit word: an all-zero strobe
+        // writes nothing).
         arr_lane_we_o = NLANES'(mem_be_i);
       end
     end

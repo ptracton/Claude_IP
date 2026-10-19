@@ -33,6 +33,7 @@ module tb_bus_matrix_ahb;
   wire [NM*AW-1:0]      M_HADDR;
   wire [NM*2-1:0]       M_HTRANS;
   wire [NM-1:0]         M_HWRITE;
+  wire [NM*3-1:0]       M_HSIZE;
   wire [NM*DW-1:0]      M_HWDATA;
   wire [NM*SW-1:0]      M_HWSTRB;
   wire [NM-1:0]         M_HREADY;
@@ -42,6 +43,7 @@ module tb_bus_matrix_ahb;
   wire [NS*AW-1:0]      S_HADDR;
   wire [NS*2-1:0]       S_HTRANS;
   wire [NS-1:0]         S_HWRITE;
+  wire [NS*3-1:0]       S_HSIZE;  // not used by claude_ahb_if (word registers)
   wire [NS*DW-1:0]      S_HWDATA;
   wire [NS*SW-1:0]      S_HWSTRB;
   wire [NS-1:0]         S_HREADY;
@@ -55,6 +57,7 @@ module tb_bus_matrix_ahb;
     .M_HADDR  (M_HADDR),
     .M_HTRANS (M_HTRANS),
     .M_HWRITE (M_HWRITE),
+    .M_HSIZE  (M_HSIZE),
     .M_HWDATA (M_HWDATA),
     .M_HWSTRB (M_HWSTRB),
     .M_HREADY (M_HREADY),
@@ -64,6 +67,7 @@ module tb_bus_matrix_ahb;
     .S_HADDR  (S_HADDR),
     .S_HTRANS (S_HTRANS),
     .S_HWRITE (S_HWRITE),
+    .S_HSIZE  (S_HSIZE),
     .S_HWDATA (S_HWDATA),
     .S_HWSTRB (S_HWSTRB),
     .S_HREADY (S_HREADY),
@@ -80,6 +84,7 @@ module tb_bus_matrix_ahb;
     .HADDR  (M_HADDR[0*AW+:AW]),
     .HTRANS (M_HTRANS[0*2+:2]),
     .HWRITE (M_HWRITE[0]),
+    .HSIZE  (M_HSIZE[0*3+:3]),
     .HWDATA (M_HWDATA[0*DW+:DW]),
     .HWSTRB (M_HWSTRB[0*SW+:SW]),
     .HREADY (M_HREADY[0]),
@@ -93,6 +98,7 @@ module tb_bus_matrix_ahb;
     .HADDR  (M_HADDR[1*AW+:AW]),
     .HTRANS (M_HTRANS[1*2+:2]),
     .HWRITE (M_HWRITE[1]),
+    .HSIZE  (M_HSIZE[1*3+:3]),
     .HWDATA (M_HWDATA[1*DW+:DW]),
     .HWSTRB (M_HWSTRB[1*SW+:SW]),
     .HREADY (M_HREADY[1]),

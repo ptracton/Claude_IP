@@ -16,7 +16,17 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
 1. Run `cleanup.sh` (created in Step 1) to remove **every** tool output — after it runs,
    `git status --ignored` inside `IP_NAME/` must show nothing:
    - `verification/work/` contents (includes post-syn sims and power reports under
-     `work/postsyn/<pdk>/<proto>/`).
+     `work/postsyn/<pdk>/<proto>/`, and the code coverage output of `sim_IP_NAME.py
+     --coverage`: per-run `cov.vdb/` and `cov_report/`, `work/coverage/`,
+     `work/coverage_merged.vdb/`, `work/coverage_urg.log`).
+   - Code coverage outside `work/`:
+     - `verification/work.vdb/`: urg writes `<dir>.vdb` beside the directory when `-dbname`
+       has no `.vdb` suffix. The runner must pass `-dbname <work>/coverage_merged.vdb`;
+       cleanup still removes the stray one.
+     - Hand-run coverage in the `IP_NAME/` root, `verification/` and `verification/tools/`:
+       `*.vdb/`, `urgReport/` (VCS/URG); `cov_work/`, `xcelium.d/`, `xrun.log`,
+       `xrun.history`, `xrun.key`, `waves.shm/`, `.simvision/` (Xcelium).
+     - List all of these in `.gitignore` as well. Reference: `IP/system/sram/cleanup.sh`.
    - Formal: `python3 verification/tools/formal_IP_NAME.py --clean` — SymbiYosys run dirs,
      `verification/formal/results.log` **and** `verification/formal/vcf/results.log`
      (VC Formal). `run_formal.sh --clean` alone misses both results logs.

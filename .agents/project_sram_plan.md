@@ -21,7 +21,7 @@ instead of the `claude_*_if` register bridges.
 | 3 — RTL SV + VHDL, all options | **Done.** Scratch smoke tests PASS on GENERIC + all 4 PDKs, both languages |
 | 3b — macro tiling rework (§11) | **Done 2026-10-17** (D11 = A); uncommitted |
 | 3c — asymmetric / dual-clock DP (§12) | **Done 2026-10-17**, uncommitted (§12.9) |
-| 4 — directed tests | **Next** |
+| 4 — directed tests | **In progress** (§13.7): SV bench, 12 tests, all 4 buses × 5 techs, 40/40 PASS; coverage ≥ 90 per module per run (min 92.95) |
 | 5–12 | Not started |
 
 **Nothing is committed.** The working tree also holds the SKY130 PDK move to `$HOME` and the
@@ -684,3 +684,151 @@ port B stays read-only.
     Vivado/Quartus on csun).
   - `sram_model` is still single-clock, same width; DP checking is
     tb_dp2's own scoreboard.
+
+## 13. Step 4 — directed tests, SV AHB system bench first (2026-10-17)
+
+### 13.1 Request (user, 2026-10-17)
+Start Step 4. Reach the memories through the **bus_matrix IP** (repair it as needed).
+Instantiate several SRAMs of different widths and depths; cover at least **8, 16, 24, 32
+and 64 bits**. Show the ECC, power and BIST side-band working; inject and detect single-
+and double-bit errors. Dual port: different settings on A and B. Demonstrate pipelines,
+RMW, aligned and unaligned access, and bursts. **SystemVerilog + AHB first** as the
+model; the other protocols and VHDL follow it.
+
+### 13.2 Findings before starting
+- **bus_matrix AHB drops HSIZE.** The target adapter ignores it, and the initiator has
+  no HSIZE output, so a slave behind the matrix only sees HWSTRB. That is wrong for
+  `claude_ahb_mem_if`: its byte lanes come from HSIZE/HADDR (a 64-bit slave tied to word
+  size would only enable 4 lanes), and classic AHB-Lite slaves without HWSTRB need HSIZE.
+  **Repair:** the target turns HSIZE/HADDR into the transfer's lane mask (`core_be` =
+  mask, ANDed with HWSTRB on writes). The initiator rebuilds HSIZE from `core_be`: a
+  naturally aligned block of 2^k lanes gives k; a full or sparse mask gives the bus
+  size. The protocol-neutral core is untouched. New ports `M_HSIZE` / `S_HSIZE`.
+- bus_matrix core, arbiter, decoder and AHB adapters are DATA_W-generic (8/16/24/64
+  work); the README's "DATA_W = 32 only" is stale.
+- The matrix runs every beat as a single transfer (one outstanding beat per master,
+  one idle arbitration cycle per slave). Bursts work, but the SRAM's zero-gap AHB
+  pipelining is only visible with a master connected straight to an SRAM, so the bench
+  has one such instance.
+- **24-bit words:** `sram_port` decodes the word index from `addr[OffW +: IdxW]` with
+  `OffW = $clog2(WIDTH/8)`, so the word stride is the next power of two (4 bytes for
+  24-bit), not `WIDTH/8` as spec.md says. The RTL is right (the AHB size and address
+  rules need power-of-two strides); **spec.md and README are fixed**.
+
+### 13.3 Bench architecture (`verification/testbench/tb_sram_ahb.sv`)
+Five `bus_matrix_ahb` instances, one per data width, each with a 64 KB window per slave
+(`S_MASK = 0xFFFF_0000`; the SRAM sees `HADDR[15:0]`, so addresses past the SRAM but in
+the window test the SRAM's own range error, and unmapped addresses test the matrix's):
+
+| Matrix | Clock | Masters | Slaves |
+|---|---|---|---|
+| X32 | clk_a | CPU + DMA (round robin) | s32 (32x1024 default) · s32e (32x512 ECC, BIST, BANK_PG x2, RL2) · dp0.A (32-bit, ECC, async) |
+| X8 | clk_b | 1 | s8 (8x2048 RL2) · dp0.B (8-bit, own clock) |
+| X16 | clk_a | 1 | s16 (16x4096 BYTE_EN=0, partial = error) · s16w (16x64 BYTE_EN=0, partial = full write) · dp1.A (16-bit, BIST) |
+| X24 | clk_a | 1 | s24 (24x256 ECC) · s24b (24x128 BANK_PG x4) |
+| X64 | clk_a | 1 | s64 (64x512 ECC, RL2, BIST) · dp1.B (64-bit, RL2, common clock) |
+| none | clk_a | 1 | s32p (32x256): direct, zero-gap AHB pipelining |
+
+dp0: 32/8, COMMON_CLK = 0 (8-bit ECC codewords). dp1: 16/64, COMMON_CLK = 1, B with
+RL2. On SKY130 port B is read-only (the bench expects errors); on SAED14 dp0 uses
+COMMON_CLK = 1. The same bench runs with `+define+TECH=<n>` on GENERIC and every PDK.
+
+Files:
+- `sram_tb_ahb_master.sv`: a DATA_W-parameterized AHB master BFM with single sized
+  transfers, pipelined INCR/WRAP/INCRx bursts of any length, optional BUSY cycles, and
+  per-beat responses.
+- `sram_tb_pkg.sv`: slave table (master, base, width, depth, options), byte-level
+  shadow memory shared by both ports of a dual port, address→storage mapping (power-of-
+  two strides, little-endian narrow/wide packing).
+- `tests/test_*.sv`: included in the bench, timer style. Each test loops over the slave
+  table, so every configuration runs every test that applies to it.
+- Checkers: every read is compared against the shadow at the master. `sram_model`
+  (extended to dual port and two clocks) watches every SRAM's memory bus as a second,
+  independent checker; its mismatch count must be 0.
+- Backdoor peek/poke (GENERIC only, hierarchical into the leaf arrays) for preload and
+  for flipping arbitrary stored bits (data and check bits).
+
+### 13.4 Tests
+| Test | Covers |
+|---|---|
+| test_reset | every SRAM answers after reset; ECC arrays read zero |
+| test_params | first/last/primitive-row boundary words, address walking 1s, full-array sweep on small arrays; range error (SRAM) and decode error (matrix) |
+| test_access | byte/half/word/dword at every offset (aligned and sub-word unaligned), sparse HWSTRB, 24-bit lanes, BYTE_EN = 0 error vs full write |
+| test_burst | INCR4/8/16, WRAP4/8/16, INCR undefined length, BUSY cycles, reads and writes, through the matrix and direct |
+| test_pipeline | READ_LATENCY 1 vs 2 cycle counts, back-to-back write→read of one word, zero-gap direct bursts |
+| test_contention | CPU and DMA on one SRAM and on different SRAMs at once |
+| test_ecc | ecc_inj 1-bit (corrected, `ecc_corr_o`) and 2-bit (HRESP ERROR, `ecc_uncorr_o`, `err_irq_o`); rewrite heals; RMW on clean, single-error and double-error words; backdoor flips of every stored bit position (GENERIC) |
+| test_power | LS auto-wake with wait states, DS → error then data kept, SD → data lost and auto-clear, per-bank modes with the other bank working, `busy_o`, `pwr_mode_ack_o` sequencing; clear engine |
+| test_bist | BIST pass on every BIST instance, contents afterwards; stuck-at fault → `bist_fail_o` and the failing address |
+| test_dp | A writes / B reads and back with different widths (little-endian), separate clocks with both ports busy on different words, common-clock same-word order (A then B), B side-band effects (power error, LS wake from B), ECC via the narrow port, SKY130 read-only B |
+
+### 13.5 Runner
+`verification/tools/sim_sram.py` (replacing the Step 1 skeleton): `--sim vcs|xcelium
+--proto ahb --lang sv --tech generic|saed90|saed32|saed14|sky130|all`. It writes
+`verification/work/results.log`. Other protocols and VHDL are added after the AHB SV
+bench is reviewed.
+
+### 13.6 Work list
+1. bus_matrix AHB HSIZE repair (SV + VHDL), its tb drives HSIZE, re-run its SV/VHDL sims
+   (VCS + Xcelium) and the AHB VC Formal proofs; note that the synthesis/STA/power reports
+   predate the change.
+2. `sram_model`: dual port, two clocks, WIDTH_B, power-of-two strides.
+3. BFM, package, bench, tests; GENERIC first, then the 4 PDKs.
+4. sim_sram.py; README / spec (24-bit stride, simulation results); plan §0 / §5.
+
+### 13.7 Progress log (2026-10-17 / 18)
+Paused and resumed via `.agents/handoff.md`, which holds the full state.
+- **bus_matrix AHB HSIZE repair** (SV): `M_HSIZE` / `S_HSIZE`; the initiator rebuilds HSIZE
+  from the lanes and the address offset. A bench-found bug in that rebuild is fixed. The VHDL
+  mirror and re-verification are still to do.
+- **SRAM RTL fix:** an all-zero-strobe write to an 8-bit SRAM wrote the word (sram_port
+  lane enables, SV + VHDL).
+- **sram_model:** dual port, two clocks, per-codeword faults, `set_fault()`.
+- **Bench:**
+  - `tb_sram_{ahb,apb,axi4l,wb}.sv` plus the shared `sram_tb_body.svh`;
+  - BFMs share `sram_tb_master_common.svh`;
+  - 12 SRAMs (widths 8/16/24/32/64, 2 dual ports) behind 5 bus matrices, plus 2 attached
+    directly.
+  - Tests done: reset, params, access, burst, pipeline, contention, ecc. Stubs: power, clear,
+    bist, dp.
+- **Backdoor:** user chose the DPI/VPI helper (`IP/common/verification/dpi/claude_backdoor.c`)
+  because VCS rejects `$deposit` on `always_ff` variables.
+- **`sim_sram.py`** implemented (user RULE: tools in the same step):
+  - VCS + Xcelium, `--proto`, `--tech`, `--test`, `--waves`, `--jobs`;
+  - `--coverage` (VCS, urg `-lca -flex_merge modules`).
+- **Results:** `--sim all --proto all --tech all`: **40/40 PASS**.
+- **Coverage baseline:** total 66.5 (line 78.5, cond 69.4, toggle 82.0, FSM 25.0, branch 77.7).
+  Weakest: sram_pwr_ctrl 22, sram_bist 25, sram_core 56, sram_clr 58, sram_cdc 79,
+  claude_axi4l_mem_if 81 (FSM 40, single-outstanding BFM). No targets agreed yet.
+- The coverage flow and its issues are documented for every agent in `Claude_IP.md` (Code
+  Coverage), `directed_tests.md` (§5b) and `reference_vcs_tools.md`.
+
+#### 13.7.1 Coverage push (2026-10-18, user target: 90% per component, each tech and bus)
+- **New tests:**
+  - test_power, test_clear, test_bist (stuck-at fault via force at two addresses), test_dp
+    (width packing, concurrency, same-word races, port B under the side-band, clear, ECC RMW from
+    B);
+  - test_reset_busy (reset during BIST / clears / stalled reads / power transitions, then clear
+    and check);
+  - every instance gets a power cycle and a clear;
+  - non-ECC / non-BIST instances check that `ecc_inj_i` / `bist_start_i` are ignored;
+  - read-only ports run walks and range errors.
+- **New bench instances:**
+  - dp2: 32/32 ECC, common clock, BANK_PG x2; on X32 with A on the CPU and B on the DMA;
+  - dp3: deep 8-bit dual port on X8, so the two-port leaves get several primitive rows;
+  - BIST on dp0;
+  - s16w now `PWR_GATE = 0`.
+- **Runner:** `-cm_noconst -cm_seqnoconst`; per-run reports (`coverage/per_run.txt`).
+- **Result:** 40/40 PASS; every module of every bus x technology run >= 92.95; run totals
+  94.3-95.6.
+- **Bench and expectation fixes found on the way** (no RTL bugs):
+  - `sram_clr` deliberately merges a request that arrives during a pass;
+  - a port-B read on its own clock may complete before a clear (CDC handshake latency);
+  - pulses from an async port B merge in `claude_pulse_sync`;
+  - RL2 also delays write responses.
+- **Not covered:** XILINX/ALTERA leaves (no vendor simulation libraries on csun). Xcelium runs
+  are functional only.
+- 2026-10-18: README Simulation Results written (bench, tests, 40-run matrix, per-run and merged
+  coverage tables, bugs found). spec.md corrected: a 24-bit word has a 4-byte stride, READ_LATENCY
+  also delays write responses, async port-B pulses can merge. Xcelium coverage: collection works
+  (`-coverage all -covfile`) but csun.edu has no IMC to report it.
