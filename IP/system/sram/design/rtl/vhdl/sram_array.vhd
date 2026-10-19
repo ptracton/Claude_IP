@@ -176,6 +176,9 @@ architecture rtl of sram_array is
 
 begin
 
+  -- Elaboration-time checks of constants: not coverable logic (VCS does not
+  -- filter constant VHDL assertions out of line / condition coverage).
+  --synopsys coverage_off
   assert_cap_a : assert DUAL_PORT = 0 or MW * DEPTH = MW_B * DEPTH_B
       report "sram_array: ports A and B must have the same capacity" severity failure;
   assert_ratio_a : assert 2 ** R_SH_C = R_C
@@ -183,6 +186,7 @@ begin
   assert_lanes_a : assert DUAL_PORT = 0 or ((LPS_A_C = SL_C or LPS_A_C = 1) and
                                             (LPS_B_C = SL_C or LPS_B_C = 1))
       report "sram_array: lanes per slice of the two ports do not match" severity failure;
+  --synopsys coverage_on
 
   -----------------------------------------------
   -- Port A decode and read multiplexer (clk)  --

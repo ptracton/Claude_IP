@@ -4,10 +4,14 @@
 -- transfer into one request on the core's internal handshake.
 --
 --   Address phase: accepted when HREADY is high and HSEL and HTRANS(1)
---     (NONSEQ or SEQ; every beat is treated as a single transfer).
+--     (NONSEQ or SEQ; every beat is treated as a single transfer). HSIZE and
+--     the low HADDR bits give the transfer's byte lanes (the naturally
+--     aligned 2**HSIZE-byte block holding the address; all lanes for a full
+--     bus word or more).
 --   Data phase:    req is held, HREADY low, until the core reports done.
 --     HWDATA/HWSTRB are passed through live: the master holds them for the
---     whole data phase.
+--     whole data phase. core_be is the lane mask, ANDed with HWSTRB on
+--     writes (AHB5 write strobes; a master without HWSTRB ties it high).
 --   Response:      OKAY ends the data phase in the done cycle. ERROR takes
 --     two cycles (HREADY low + HRESP high, then HREADY high + HRESP high).
 --
@@ -17,6 +21,7 @@
 
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 entity bus_matrix_ahb_tgt is
   generic (
@@ -32,6 +37,7 @@ entity bus_matrix_ahb_tgt is
     HADDR  : in  std_ulogic_vector(ADDR_W - 1 downto 0);     -- byte address
     HTRANS : in  std_ulogic_vector(1 downto 0);              -- transfer type
     HWRITE : in  std_ulogic;                                 -- 1 = write
+    HSIZE  : in  std_ulogic_vector(2 downto 0);              -- transfer size, 2**HSIZE bytes
     HWDATA : in  std_ulogic_vector(DATA_W - 1 downto 0);     -- write data (data phase)
     HWSTRB : in  std_ulogic_vector(DATA_W / 8 - 1 downto 0); -- byte strobes (data phase)
     HRDATA : out std_ulogic_vector(DATA_W - 1 downto 0);     -- read data
@@ -52,12 +58,49 @@ end entity bus_matrix_ahb_tgt;
 
 architecture rtl of bus_matrix_ahb_tgt is
 
+  constant STRB_W : positive := DATA_W / 8;
+
+  -- ceil(log2(n)), at least 1: byte-offset width (as OffW in the SV twin).
+  function off_width(n : positive) return positive is
+    variable k : natural := 1;
+  begin
+    while 2 ** k < n loop
+      k := k + 1;
+    end loop;
+    return k;
+  end function off_width;
+
+  constant OFF_W : positive := off_width(STRB_W);
+
+  -- lane_mask — lanes of a 2**size-byte transfer at byte offset `offset`:
+  -- lane b is on when it is in the same naturally aligned block.
+  function lane_mask(size : std_ulogic_vector(2 downto 0); offset : natural)
+    return std_ulogic_vector is
+    variable mask : std_ulogic_vector(STRB_W - 1 downto 0);
+    variable sz   : natural;
+  begin
+    sz := to_integer(unsigned(size));
+    for b in 0 to STRB_W - 1 loop
+      if b / (2 ** sz) = offset / (2 ** sz) then
+        mask(b) := '1';
+      else
+        mask(b) := '0';
+      end if;
+    end loop;
+    if STRB_W = 1 then
+      mask := (others => '1');
+    end if;
+    return mask;
+  end function lane_mask;
+
+
   type tgt_state_t is (TGT_IDLE, TGT_BUSY, TGT_ERR2);
 
   signal state_q : tgt_state_t;
   signal state_d : tgt_state_t;
   signal addr_q  : std_ulogic_vector(ADDR_W - 1 downto 0);
   signal we_q    : std_ulogic;
+  signal mask_q  : std_ulogic_vector(STRB_W - 1 downto 0);  -- byte lanes of the transfer
   signal aphase  : std_ulogic;  -- an address phase is presented
   signal hready_i: std_ulogic;
 
@@ -111,9 +154,11 @@ begin
       if rst_n = '0' then
         addr_q <= (others => '0');
         we_q   <= '0';
+        mask_q <= (others => '0');
       elsif hready_i = '1' and aphase = '1' then
         addr_q <= HADDR;
         we_q   <= HWRITE;
+        mask_q <= lane_mask(HSIZE, to_integer(unsigned(HADDR(OFF_W - 1 downto 0))));
       end if;
     end if;
   end process p_aphase;
@@ -122,7 +167,7 @@ begin
   core_addr  <= addr_q;
   core_we    <= we_q;
   core_wdata <= HWDATA;
-  core_be    <= HWSTRB;
+  core_be    <= (mask_q and HWSTRB) when we_q = '1' else mask_q;
   HRDATA     <= core_rdata;
   HREADY     <= hready_i;
 

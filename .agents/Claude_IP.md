@@ -92,7 +92,7 @@ IP/common/
 │   │   ├── claude_reg_fv.sv      # protocol-neutral register read-back checker
 │   │   └── vcf/claude_vcf_fpv.tcl # generic VC Formal FPV run script
 │   ├── dpi/              # DPI-C helpers for testbenches
-│   │   └── claude_backdoor.c # claude_bd_get / claude_bd_put: read / deposit any variable by path
+│   │   └── claude_backdoor.c # claude_bd_get/put (VPI), claude_bd_vget/vput (VHPI): read / deposit by path
 │   └── tools/            # Python base class and shared utilities for all tool scripts
 │       ├── ip_tool_base.py
 │       └── claude_vcf.py     # VC Formal driver (jobs, report parsing, waivers)
@@ -142,6 +142,11 @@ both must be driven from the same clock. The first user is the sram dual port
 **Backdoor access (`verification/dpi/claude_backdoor.c`)** reads or deposits any design
 variable by hierarchical path through VPI, the way UVM's `uvm_hdl_deposit` does. Values are
 binary strings, MSB first. Use it to preload, peek and poke memory arrays.
+- VHDL objects (a VHDL DUT under an SV bench): VPI finds but cannot read them. Use
+  `claude_bd_vget` / `claude_bd_vput` (VHPI, `vhpiLogicVecVal`), compiled with
+  `-DCLAUDE_BD_VHPI` (VCS: also `-DCLAUDE_BD_VHPI_ROOTS`, paths resolved below VHDL root
+  instances). Paths use VHDL syntax: `tb.u_x.gen_bank(1).u_leaf.mem(5)`. On VCS a deposit
+  is visible from the next delta: wait `#0` and re-read before the next backdoor access.
 - **Do not use `$deposit`.** VCS rejects it at compile time (ICPD, illegal combination of
   drivers) on any variable written in `always_ff`, and no option downgrades it. Xcelium
   accepts it, but the testbench must run on both.
@@ -513,8 +518,8 @@ python3 IP/system/sram/verification/tools/sim_sram.py --proto all --tech all --c
     with `ECC_EN = 0` is reported Unreachable instead of uncovered. Inputs the testbench could
     drive are not constant, so the tests drive them (e.g. `ecc_inj_i` / `bist_start_i` on
     instances without those features, checking they are ignored).
-  - It drops what is not our code: the vendor SRAM macro models (`-moduletree SRAM*`,
-    `sky130_sram_*`, ...).
+  - It drops what is not our code: the vendor SRAM macro models (`-moduletree SRAM1*`,
+    `SRAMLP*`, `sky130_sram_*`, ...; not a bare `SRAM*`, which matches upper-case VHDL tops).
   - Testbench, BFMs, reference model and bus_matrix are outside the trees, so they are not
     counted.
 - **Simulate:** with the same `-cm` / `-cm_dir`.
@@ -562,6 +567,54 @@ python3 IP/system/sram/verification/tools/sim_sram.py --proto all --tech all --c
 - **FSM reset transitions count.** VCS reports "state X -> reset state" for every state; they
   are covered only by asserting reset while the FSM is in X. The sram's `test_reset_busy`
   does that (reset during BIST, clears, stalled reads, power transitions).
+
+### VHDL DUTs (mixed language, 2026-10-18)
+The VHDL top-levels are verified with the **same SV bench** (BFMs, tests, reference models):
+`sim_sram.py --lang vhdl` compiles the VHDL tops *and* the VHDL bus_matrix, with
+`+define+VHDL_DUT`. Tool issues found, all handled in the runner or bench — reuse them:
+- **VCS flow:** `vlogan` (vendor Verilog models) → `vhdlan -vhdl08` (DUT) → `vlogan -sverilog`
+  (bench) → `vcs <tb_top>`, with `synopsys_sim.setup` (`WORK > DEFAULT`) in the run directory.
+  Xcelium: one `xrun` with `-v200x -inc_v200x_pkg`.
+- **Xcelium `-namemap_mixgen` is required.** Without it a VHDL generic map binds Verilog
+  parameters *by position*: the PDK wrappers' `VERBOSE => 0` set the SKY130 model's first
+  parameter (`NUM_WMASKS`) to 0 (2-bit mask, X in upper bytes). Warning: `*W,CUSENMP`.
+- **VCS evaluates a dependent VHDL generic default from the other generic's *default***
+  (`READ_LATENCY_B := READ_LATENCY` gave 1 with `READ_LATENCY => 2`) when SV instantiates the
+  VHDL top. Pure VHDL on VCS and Xcelium are correct. The bench passes port-B options
+  explicitly on VCS (`DP_B` macro); `sram_model` now checks every response's latency
+  (`READ_LATENCY` / `READ_LATENCY_B`), which is what exposed it.
+- **SV → VHDL XMRs (VCS):** reading internal VHDL signals works; a native `force` of a
+  VHDL bit-select, or of a signal the bench also reads, is a compile error
+  (`VHDLSEMEARR-NYS`). Use `$hdl_xmr_force(path, "0", "0 ns", "freeze", "", 0)` /
+  `$hdl_xmr_release`. Xcelium's native force works.
+- **Backdoor into VHDL storage needs VHPI** (VPI handles VHDL objects but cannot read them).
+  `claude_backdoor.c` has `claude_bd_vget/vput` (`-DCLAUDE_BD_VHPI`), using
+  `vhpiLogicVecVal`. VCS: compile with `-DCLAUDE_BD_VHPI_ROOTS` (each VHDL instance under SV
+  is a root instance named `\/tb/u_x\`; paths are resolved relative to it); a VHPI deposit is
+  visible from the next delta cycle (`bd_flip` waits `#0` and re-reads). VCS ships a pre-IEEE
+  `vhpi_user.h` (`numscalars`, `enums`); Xcelium the IEEE one (`numElems`, `enumvs`).
+- **Coverage of VHDL (VCS):**
+  - `+moduletree` of VHDL entities needs `-lca -cm_hier_enable_moduletree_vhdl` and
+    upper-case entity names; a bare `-moduletree SRAM*` then also matches `SRAM_AHB`.
+  - `+moduletree` does not descend below a VHDL instance inside an SV generate block: name it
+    with `+tree`, and then drop vendor models with `-module` (an explicit tree overrides
+    `-moduletree`).
+  - **Constant filtering does not apply to VHDL toggle** (VCS guide: line and condition
+    only). `sim_sram.py` carries the SV twin's constant analysis over: a VHDL bit that did not
+    toggle is excluded when the SV twin (same instance path, else same generics) has it
+    Unreachable (`<run>/vhdl_const.el`, audit list `vhdl_const_excl.txt`). A VHDL coverage
+    run therefore schedules its SV twin automatically.
+  - urg applies INSTANCE exclusions to each parameter set's score but **not** to the module
+    list; `_vhdl_toggle_fix()` recomputes each VHDL module's toggle from its parameter sets
+    (score = mean of metrics, as urg). MODULE exclusions with generics are not accepted, and
+    `-module_node` does not work on parameterized units.
+  - Concurrent `assert`s of generics (elaboration checks) and the `INIT_FILE` preload count as
+    uncovered conditions/lines: wrapped in `--synopsys coverage_off` / `--synopsys coverage_on`
+    (the SV twins' `initial` checks are filtered as constants). The pragma does not remove a
+    signal declaration from toggle coverage in this VCS; the GENERIC leaf's `MEM` array (SV
+    memories are not toggle-covered) has its untoggled bits excluded by the runner instead.
+  - urg merges parameter sets with identical toggle shape into one section whose header shows
+    one of them: do not trust section headers to identify an instance's parameters.
 
 ### Recording results (standard)
 **RULE (user, 2026-10-18) — Coverage results are recorded every time simulation results

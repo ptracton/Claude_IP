@@ -35,8 +35,12 @@ architecture rtl of claude_sync is
 
 begin
 
+  -- Elaboration-time checks of constants: not coverable logic (VCS does not
+  -- filter constant VHDL assertions out of line / condition coverage).
+  --synopsys coverage_off
   assert_stages_a : assert STAGES >= 2
       report "claude_sync: STAGES must be >= 2" severity failure;
+  --synopsys coverage_on
 
   -- Synchronizer chain.
   p_sync : process (clk) is

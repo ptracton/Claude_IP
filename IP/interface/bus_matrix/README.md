@@ -91,9 +91,17 @@ elaboration-time parameters (see Parameters above).
 | Module | Protocol | Master ports (`M_*`, matrix is the slave) | Slave ports (`S_*`, matrix is the master) |
 |--------|----------|------------------------------|-----------------------------|
 | `bus_matrix_apb`   | APB4        | `PSEL PENABLE PADDR PWRITE PWDATA PSTRB` → `PRDATA PREADY PSLVERR` | mirror image |
-| `bus_matrix_ahb`   | AHB-Lite    | `HSEL HADDR HTRANS HWRITE HWDATA HWSTRB` → `HREADY HRDATA HRESP` | `HSEL HADDR HTRANS HWRITE HWDATA HWSTRB` ← `HREADY HRDATA HRESP` |
+| `bus_matrix_ahb`   | AHB-Lite    | `HSEL HADDR HTRANS HWRITE HSIZE HWDATA HWSTRB` → `HREADY HRDATA HRESP` | `HSEL HADDR HTRANS HWRITE HSIZE HWDATA HWSTRB` ← `HREADY HRDATA HRESP` |
 | `bus_matrix_axi4l` | AXI4-Lite   | `AW*`, `W*`, `B*`, `AR*`, `R*` | mirror image |
 | `bus_matrix_wb`    | Wishbone B4 | `CYC STB WE ADR DAT_I SEL` → `DAT_O ACK ERR` | `CYC STB WE ADR DAT_O SEL` ← `DAT_I ACK ERR` |
+
+AHB HSIZE (added 2026-10-18, SV and VHDL, found by the sram system bench):
+the target adapter turns HSIZE and the low HADDR bits into the transfer's byte
+lanes (ANDed with HWSTRB on writes); the initiator rebuilds HSIZE from those
+lanes and the address (the naturally aligned 2^k-lane block holding the
+address gives HSIZE = k, any other lane set gives the bus size with the lanes
+in HWSTRB). DATA_W may be any multiple of 8 (the sram bench uses 8, 16, 24,
+32 and 64). A master without HWSTRB ties it high.
 
 Every signal is flat-packed: master `i` at `[i*W+:W]` of `M_<sig>`, and slave
 `j` at `[j*W+:W]` of `S_<sig>`. All variants use `clk` and a synchronous

@@ -34,6 +34,7 @@ entity bus_matrix_ahb is
     M_HADDR  : in  std_ulogic_vector(NUM_MASTERS * ADDR_W - 1 downto 0);     -- master i HADDR
     M_HTRANS : in  std_ulogic_vector(NUM_MASTERS * 2 - 1 downto 0);          -- master i HTRANS
     M_HWRITE : in  std_ulogic_vector(NUM_MASTERS - 1 downto 0);              -- master i HWRITE
+    M_HSIZE  : in  std_ulogic_vector(NUM_MASTERS * 3 - 1 downto 0);          -- master i HSIZE
     M_HWDATA : in  std_ulogic_vector(NUM_MASTERS * DATA_W - 1 downto 0);     -- master i HWDATA
     M_HWSTRB : in  std_ulogic_vector(NUM_MASTERS * DATA_W / 8 - 1 downto 0); -- master i HWSTRB
     M_HREADY : out std_ulogic_vector(NUM_MASTERS - 1 downto 0);              -- master i HREADY
@@ -44,6 +45,7 @@ entity bus_matrix_ahb is
     S_HADDR  : out std_ulogic_vector(NUM_SLAVES * ADDR_W - 1 downto 0);      -- slave j HADDR
     S_HTRANS : out std_ulogic_vector(NUM_SLAVES * 2 - 1 downto 0);           -- slave j HTRANS
     S_HWRITE : out std_ulogic_vector(NUM_SLAVES - 1 downto 0);               -- slave j HWRITE
+    S_HSIZE  : out std_ulogic_vector(NUM_SLAVES * 3 - 1 downto 0);           -- slave j HSIZE
     S_HWDATA : out std_ulogic_vector(NUM_SLAVES * DATA_W - 1 downto 0);      -- slave j HWDATA
     S_HWSTRB : out std_ulogic_vector(NUM_SLAVES * DATA_W / 8 - 1 downto 0);  -- slave j HWSTRB
     S_HREADY : in  std_ulogic_vector(NUM_SLAVES - 1 downto 0);               -- slave j HREADY
@@ -92,6 +94,7 @@ begin
         HADDR      => M_HADDR(gi * ADDR_W + ADDR_W - 1 downto gi * ADDR_W),
         HTRANS     => M_HTRANS(gi * 2 + 1 downto gi * 2),
         HWRITE     => M_HWRITE(gi),
+        HSIZE      => M_HSIZE(gi * 3 + 2 downto gi * 3),
         HWDATA     => M_HWDATA(gi * DATA_W + DATA_W - 1 downto gi * DATA_W),
         HWSTRB     => M_HWSTRB(gi * STRB_W + STRB_W - 1 downto gi * STRB_W),
         HREADY     => M_HREADY(gi),
@@ -132,6 +135,7 @@ begin
         HADDR      => S_HADDR(gj * ADDR_W + ADDR_W - 1 downto gj * ADDR_W),
         HTRANS     => S_HTRANS(gj * 2 + 1 downto gj * 2),
         HWRITE     => S_HWRITE(gj),
+        HSIZE      => S_HSIZE(gj * 3 + 2 downto gj * 3),
         HWDATA     => S_HWDATA(gj * DATA_W + DATA_W - 1 downto gj * DATA_W),
         HWSTRB     => S_HWSTRB(gj * STRB_W + STRB_W - 1 downto gj * STRB_W),
         HREADY     => S_HREADY(gj),

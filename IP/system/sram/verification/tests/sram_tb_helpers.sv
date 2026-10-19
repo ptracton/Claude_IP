@@ -458,7 +458,7 @@ task automatic tb_init();
   slv[SL_S32Q] = mk("s32q", 7, 32'h0000_0000, 32, 256,  SB_S32Q, .rl(2));
   slv[SL_DP2A] = mk("dp2.A", 0, 32'h0003_0000, 32, 256,  SB_DP2, 1, .rl(2), .npd(2),
                     .peer(SL_DP2B));
-  slv[SL_DP2B] = mk("dp2.B", 1, 32'h0004_0000, 32, 256,  SB_DP2, 1, .npd(2), .port_b(1),
+  slv[SL_DP2B] = mk("dp2.B", 1, 32'h0004_0000, 32, 256,  SB_DP2, 1, .rl(2), .npd(2), .port_b(1),
                     .ro(SKY130), .peer(SL_DP2A));
   slv[SL_DP3A] = mk("dp3.A", 2, 32'h0002_0000, 8, 4096,  SB_DP3, .on_b(1), .peer(SL_DP3B));
   slv[SL_DP3B] = mk("dp3.B", 2, 32'h0003_0000, 8, 4096,  SB_DP3, .port_b(1), .ro(SKY130),
@@ -514,8 +514,26 @@ endtask
 // through IP/common/verification/dpi/claude_backdoor.c. The reference model
 // is told about every change (set_fault).
 // ---------------------------------------------------------------------------
+`ifdef VHDL_DUT
+// VHDL storage: the VHPI entry points of the same helper
+import "DPI-C" function string claude_bd_vget(input string path);
+import "DPI-C" function int    claude_bd_vput(input string path, input string bits);
+function automatic string bd_get(input string path);
+  return claude_bd_vget(path);
+endfunction
+function automatic int bd_put(input string path, input string bits);
+  return claude_bd_vput(path, bits);
+endfunction
+`else
 import "DPI-C" function string claude_bd_get(input string path);
 import "DPI-C" function int    claude_bd_put(input string path, input string bits);
+function automatic string bd_get(input string path);
+  return claude_bd_get(path);
+endfunction
+function automatic int bd_put(input string path, input string bits);
+  return claude_bd_put(path, bits);
+endfunction
+`endif
 
 // Leaf array word holding word idx of instance sb (GENERIC leaf, one per bank).
 function automatic string bd_path(input int sb, input int idx);
@@ -530,19 +548,28 @@ function automatic string bd_path(input int sb, input int idx);
   // s32e has 2 banks; the others 1
   bank_d = (sb == SB_S32E) ? slv[a_slave[sb]].depth / 2 : slv[a_slave[sb]].depth;
   k      = idx / bank_d;
+`ifdef VHDL_DUT
+  return $sformatf("%s.%s.u_core.u_array.gen_bank(%0d).gen_port.u_macro.gen_tech.u_leaf.mem(%0d)",
+                   `TB_STR, u, k, idx % bank_d);
+`else
   return $sformatf("%s.%s.u_core.u_array.g_bank[%0d].g_sp.u_macro.g_generic.u_leaf.mem[%0d]",
                    `TB_STR, u, k, idx % bank_d);
+`endif
 endfunction
 
 // Flip stored bit `bitpos` (0 = LSB) of word idx; returns the stored width.
 task automatic bd_flip(input int sb, input int idx, input int bitpos, output int mw);
   string p, v;
   p  = bd_path(sb, idx);
-  v  = claude_bd_get(p);
+  v  = bd_get(p);
   mw = v.len();
   if (mw == 0) fail($sformatf("backdoor path not found: %s", p));
   v[mw - 1 - bitpos] = (v[mw - 1 - bitpos] == "1") ? "0" : "1";
-  if (claude_bd_put(p, v) == 0) fail($sformatf("backdoor deposit failed: %s", p));
+  if (bd_put(p, v) == 0) fail($sformatf("backdoor deposit failed: %s", p));
+  // A VHPI deposit on VCS is seen from the next delta cycle: wait for it, so
+  // that the next backdoor read (or flip) sees the new value.
+  for (int n = 0; n < 4 && bd_get(p) != v; n++) #0;
+  if (bd_get(p) != v) fail($sformatf("backdoor deposit not visible: %s", p));
 endtask
 
 task automatic mdl_fault(input int sb, input int u, input logic [1:0] f);

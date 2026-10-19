@@ -126,6 +126,16 @@ Each SV testbench:
 
 ### 2. Write VHDL testbenches — one per top-level
 
+**Alternative for system benches (sram reference, 2026-10-18):** when the SV bench carries
+reference models, a shadow memory, a backdoor or bus matrices, verify the VHDL top-levels
+with **the same SV bench** instead of a separate VHDL bench: `sim_IP_NAME.py --lang vhdl`
+compiles the VHDL DUT (and the VHDL twins of any IP around it) with the SV bench, BFMs, tests
+and models, mixed language. The DUT module names are the same in both languages; only the
+file list changes. A `+define+VHDL_DUT` may adapt tool details (generic vector widths,
+`$hdl_xmr_force`, VHPI backdoor paths) but must not select a different DUT. The VHDL runs then
+meet exactly the SV targets. Tool issues and fixes: `Claude_IP.md` "VHDL DUTs". The
+gold-standard per-protocol VHDL testbenches below remain the default for register-style IPs.
+
 Create one file per bus protocol under `verification/testbench/`:
 
 | File | DUT instantiated |
@@ -759,10 +769,15 @@ additions in `run_vcs()` and `merge_coverage()`:
 - Coverage is VCS only. Xcelium (`-coverage all` / IMC) is not set up.
 - Report the per-module table, not just the total: modules that no run instantiates are
   missing from the report, not shown at 0%.
+- **VHDL DUTs:** VCS does not filter constants out of VHDL toggle coverage. Copy
+  `vhdl_toggle_el()`, `_vhdl_toggle_fix()` and the split SV / VHDL merge from `sim_sram.py`
+  (the SV twin's Unreachable bits become VHDL toggle exclusions; a VHDL coverage run also runs
+  its SV twin). VHDL `+moduletree` needs `-lca -cm_hier_enable_moduletree_vhdl` and upper-case
+  entity names. Details: `Claude_IP.md` "VHDL DUTs".
 
-Run it with `--proto all --tech all --coverage --jobs 8` and put `summary.txt`'s total and
-weakest modules in the README Simulation Results section. There is no numeric coverage gate
-until the user sets targets.
+Run it with `--proto all --lang all --tech all --coverage --jobs 10` and put the per-run and
+merged tables in the README Simulation Results section. Target (user, 2026-10-18): 90% score
+for every component in every bus x language x technology run (`coverage/per_run.txt`).
 
 ### 6. Run and verify
 
@@ -872,14 +887,16 @@ tables whenever the simulation results are refreshed.
   clear error and exits non-zero without attempting to invoke the unavailable tool.
 - No testbench or task code resides in `design/rtl/`.
 - On csun.edu, `sim_IP_NAME.py --coverage` runs and writes
-  `verification/work/coverage/summary.txt`. `coverage_urg.log` shows a `-flex_merge modules`
-  merge with no `CMR-VCINF` (dropped instance) warnings. The numbers are reported in the README
-  (no threshold until the user sets one).
+  `verification/work/coverage/summary.txt` (SV), `coverage/vhdl/summary.txt` (VHDL) and
+  `coverage/per_run.txt`. `coverage_urg.log` shows a `-flex_merge modules` merge with no
+  `CMR-VCINF` (dropped instance) warnings. Every module of every run in `per_run.txt` scores
+  at least 90.
 - Every reported result comes from `sim_IP_NAME.py`, not from scratch scripts.
 - The README Simulation Results section holds the current coverage tables (per run and merged
-  per module), the target and its status. The target is 90% score for every component in
-  every bus x technology run (user, 2026-10-18).
-- No compile-time DUT-selection defines in any testbench — DUT is named explicitly.
+  per module, SV and VHDL), the target and its status. The target is 90% score for every
+  component in every bus x language x technology run (user, 2026-10-18).
+- No compile-time DUT-selection defines in any testbench — DUT is named explicitly. (A
+  shared SV bench may use `VHDL_DUT` for tool details only; see item 2.)
 - All four `verification/modelsim/tb_IP_NAME_<proto>.do` files exist and reference their
   corresponding `_wave.do` files.
 - All four `verification/vivado/create_project_<proto>.tcl` files exist, target

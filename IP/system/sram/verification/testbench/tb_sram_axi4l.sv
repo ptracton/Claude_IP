@@ -73,7 +73,8 @@
 `define XBAR(X, NM, NS, DW, CLK, RST, PRIO) \
   bus_matrix_axi4l #( \
     .NUM_MASTERS(NM), .NUM_SLAVES(NS), .DATA_W(DW), .ADDR_W(32), .ARB_MODE(1), \
-    .M_PRIORITY(PRIO), .S_BASE(slave_bases(NS)), .S_MASK({NS{32'hFFFF_0000}}) \
+    .M_PRIORITY(`BM_PW(NM)'(PRIO)), .S_BASE(`BM_SW(NS)'(slave_bases(NS))), \
+    .S_MASK(`BM_SW(NS)'({NS{32'hFFFF_0000}})) \
   ) u_``X ( \
     .clk(CLK), .rst_n(RST), \
     .M_AWVALID(X``_M_AWVALID), .M_AWREADY(X``_M_AWREADY), .M_AWADDR(X``_M_AWADDR), \

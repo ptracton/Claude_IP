@@ -46,6 +46,7 @@ architecture sim of tb_bus_matrix_ahb is
   signal M_HADDR    : std_ulogic_vector(N_MST * 32 - 1 downto 0);
   signal M_HTRANS   : std_ulogic_vector(N_MST * 2 - 1 downto 0);
   signal M_HWRITE   : std_ulogic_vector(N_MST - 1 downto 0);
+  signal M_HSIZE    : std_ulogic_vector(N_MST * 3 - 1 downto 0);
   signal M_HWDATA   : std_ulogic_vector(N_MST * 32 - 1 downto 0);
   signal M_HWSTRB   : std_ulogic_vector(N_MST * 4 - 1 downto 0);
   signal M_HREADY   : std_ulogic_vector(N_MST - 1 downto 0);
@@ -55,6 +56,7 @@ architecture sim of tb_bus_matrix_ahb is
   signal S_HADDR    : std_ulogic_vector(N_SLV * 32 - 1 downto 0);
   signal S_HTRANS   : std_ulogic_vector(N_SLV * 2 - 1 downto 0);
   signal S_HWRITE   : std_ulogic_vector(N_SLV - 1 downto 0);
+  signal S_HSIZE    : std_ulogic_vector(N_SLV * 3 - 1 downto 0);  -- not used by the memory slaves
   signal S_HWDATA   : std_ulogic_vector(N_SLV * 32 - 1 downto 0);
   signal S_HWSTRB   : std_ulogic_vector(N_SLV * 4 - 1 downto 0);
   signal S_HREADY   : std_ulogic_vector(N_SLV - 1 downto 0);
@@ -118,6 +120,7 @@ begin
       M_HADDR  => M_HADDR,
       M_HTRANS => M_HTRANS,
       M_HWRITE => M_HWRITE,
+      M_HSIZE  => M_HSIZE,
       M_HWDATA => M_HWDATA,
       M_HWSTRB => M_HWSTRB,
       M_HREADY => M_HREADY,
@@ -127,6 +130,7 @@ begin
       S_HADDR  => S_HADDR,
       S_HTRANS => S_HTRANS,
       S_HWRITE => S_HWRITE,
+      S_HSIZE  => S_HSIZE,
       S_HWDATA => S_HWDATA,
       S_HWSTRB => S_HWSTRB,
       S_HREADY => S_HREADY,
@@ -150,6 +154,7 @@ begin
         HADDR     => M_HADDR(gi * 32 + 31 downto gi * 32),
         HTRANS    => M_HTRANS(gi * 2 + 1 downto gi * 2),
         HWRITE    => M_HWRITE(gi),
+        HSIZE     => M_HSIZE(gi * 3 + 2 downto gi * 3),
         HWDATA    => M_HWDATA(gi * 32 + 31 downto gi * 32),
         HWSTRB    => M_HWSTRB(gi * 4 + 3 downto gi * 4),
         HREADY    => M_HREADY(gi),

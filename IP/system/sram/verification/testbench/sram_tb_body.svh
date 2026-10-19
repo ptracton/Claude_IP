@@ -5,6 +5,7 @@
 //   SRAM_TOP / SRAM_DP_TOP       sram_<proto> / sram_<proto>_dp
 //   XBAR_WIRES(X, NM, NS, DW)    wires X_M_* / X_S_* of a matrix (flat-packed)
 //   XBAR(X, NM, NS, DW, CLK, RST, PRIO)  bus_matrix_<proto> instance u_X
+//     (generic vectors sized with BM_PW / BM_SW below)
 //   MST(U, X, I, DW, CLK)        master BFM U on master port I of X
 //   SLV(P, X, J, DW)             bus pins (prefix P: none, A_ or B_) on slave port J of X
 //   CLKRST(P, CLK, RSTN)         clock / reset pins (RSTN active low)
@@ -13,9 +14,35 @@
 
   import sram_tb_pkg::*;
 
+  // +define+VHDL_DUT: the SRAM tops and the matrices are the VHDL twins
+  // (mixed-language; the bench, BFMs and models stay SystemVerilog). The VHDL
+  // matrix generics are full-width vectors (16 masters x 4 bits, 32 slaves x
+  // 32 bits); the SV parameters are sized by the port counts.
+`ifdef VHDL_DUT
+`define BM_PW(NM) (16 * 4)
+`define BM_SW(NS) (32 * 32)
+`else
+`define BM_PW(NM) (NM * 4)
+`define BM_SW(NS) (NS * 32)
+`endif
+
+  // Port-B options of a dual port default to port A's. VCS-MX evaluates such
+  // a dependent VHDL generic default (READ_LATENCY_B := READ_LATENCY, ...)
+  // from the other generic's default, not from its actual, when SV
+  // instantiates the VHDL top (pure VHDL and Xcelium are correct): on VCS the
+  // bench passes them to the VHDL tops explicitly.
+`ifdef VHDL_DUT
+`ifdef VCS
+`define DP_B(BE, PWE, RL) .BYTE_EN_B(BE), .PARTIAL_WR_ERR_B(PWE), .READ_LATENCY_B(RL),
+`endif
+`endif
+`ifndef DP_B
+`define DP_B(BE, PWE, RL)
+`endif
+
   localparam int unsigned TECH   = `TECH;
-  localparam bit          SKY130 = (TECH == sram_pkg::TECH_SKY130);
-  localparam bit          SAED14 = (TECH == sram_pkg::TECH_SAED14);
+  localparam bit          SKY130 = (TECH == TB_TECH_SKY130);
+  localparam bit          SAED14 = (TECH == TB_TECH_SAED14);
   localparam bit          DP0_CC = SAED14;   // dp0 COMMON_CLK
   localparam int unsigned SAW    = 16;       // SRAM byte-address width
 
@@ -111,7 +138,7 @@
     `CLKRST(, clk_a, rst_a_n), `SLV(, x32, 1, 32), `SB(SB_S32E, 2, 9));
 
   `SRAM_DP_TOP #(.TECH(TECH), .ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .WIDTH_B(8),
-                .BIST_EN(1), .COMMON_CLK(DP0_CC)) u_dp0 (
+                `DP_B(1, 1, 1) .BIST_EN(1), .COMMON_CLK(DP0_CC)) u_dp0 (
     `CLKRST(A_, clk_a, rst_a_n), `CLKRST(B_, clk_b, rst_b_n),
     `SLV(A_, x32, 2, 32), `SLV(B_, x8, 1, 8), `SB(SB_DP0, 1, 8));
 
@@ -132,14 +159,14 @@
     `SLV(A_, x16, 2, 16), `SLV(B_, x64, 1, 64), `SB(SB_DP1, 1, 10));
 
   `SRAM_DP_TOP #(.TECH(TECH), .ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .WIDTH_B(32),
-                .BANK_PG(1), .NUM_BANKS(2), .READ_LATENCY(2), .COMMON_CLK(1)) u_dp2 (
+                .BANK_PG(1), .NUM_BANKS(2), .READ_LATENCY(2), `DP_B(1, 1, 2) .COMMON_CLK(1)) u_dp2 (
     `CLKRST(A_, clk_a, rst_a_n), `CLKRST(B_, clk_a, rst_a_n),
     `SLV(A_, x32, 3, 32), `SLV(B_, x32, 4, 32), `SB(SB_DP2, 2, 8));
 
   // Deep 8-bit dual port, both ports on clk_b: several primitive rows in every
   // technology's two-port leaf.
   `SRAM_DP_TOP #(.TECH(TECH), .ADDR_W(SAW), .WIDTH(8), .DEPTH(4096), .WIDTH_B(8),
-                .COMMON_CLK(1)) u_dp3 (
+                `DP_B(1, 1, 1) .COMMON_CLK(1)) u_dp3 (
     `CLKRST(A_, clk_b, rst_b_n), `CLKRST(B_, clk_b, rst_b_n),
     `SLV(A_, x8, 2, 8), `SLV(B_, x8, 3, 8), `SB(SB_DP3, 1, 12));
 
@@ -192,12 +219,12 @@
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(1024)) u_mdl_s32 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s32, SB_S32));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(512), .ECC_EN(1), .BANK_PG(1),
-               .NUM_BANKS(2)) u_mdl_s32e (
+               .NUM_BANKS(2), .READ_LATENCY(2)) u_mdl_s32e (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s32e, SB_S32E));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .DUAL_PORT(1), .WIDTH_B(8),
                .READ_ONLY_B(SKY130)) u_mdl_dp0 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp0, SB_DP0, clk_b, rst_b_n));
-  sram_model #(.ADDR_W(SAW), .WIDTH(8), .DEPTH(2048)) u_mdl_s8 (
+  sram_model #(.ADDR_W(SAW), .WIDTH(8), .DEPTH(2048), .READ_LATENCY(2)) u_mdl_s8 (
     .clk(clk_b), .rst_n(rst_b_n), `MODEL_A(u_s8, SB_S8));
   sram_model #(.ADDR_W(SAW), .WIDTH(16), .DEPTH(4096), .BYTE_EN(0),
                .PARTIAL_WR_ERR(1)) u_mdl_s16 (
@@ -206,10 +233,11 @@
                .PARTIAL_WR_ERR(0), .PWR_GATE(0)) u_mdl_s16w (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s16w, SB_S16W));
   sram_model #(.ADDR_W(SAW), .WIDTH(16), .DEPTH(1024), .DUAL_PORT(1), .WIDTH_B(64),
-               .BYTE_EN_B(0), .PARTIAL_WR_ERR_B(1), .READ_ONLY_B(SKY130)) u_mdl_dp1 (
+               .BYTE_EN_B(0), .PARTIAL_WR_ERR_B(1), .READ_LATENCY_B(2),
+               .READ_ONLY_B(SKY130)) u_mdl_dp1 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp1, SB_DP1, clk_a, rst_a_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .BANK_PG(1), .NUM_BANKS(2),
-               .DUAL_PORT(1), .WIDTH_B(32), .READ_ONLY_B(SKY130)) u_mdl_dp2 (
+               .READ_LATENCY(2), .DUAL_PORT(1), .WIDTH_B(32), .READ_ONLY_B(SKY130)) u_mdl_dp2 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp2, SB_DP2, clk_a, rst_a_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(8), .DEPTH(4096), .DUAL_PORT(1), .WIDTH_B(8),
                .READ_ONLY_B(SKY130)) u_mdl_dp3 (
@@ -218,11 +246,11 @@
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s24, SB_S24));
   sram_model #(.ADDR_W(SAW), .WIDTH(24), .DEPTH(128), .BANK_PG(1), .NUM_BANKS(4)) u_mdl_s24b (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s24b, SB_S24B));
-  sram_model #(.ADDR_W(SAW), .WIDTH(64), .DEPTH(512), .ECC_EN(1)) u_mdl_s64 (
+  sram_model #(.ADDR_W(SAW), .WIDTH(64), .DEPTH(512), .ECC_EN(1), .READ_LATENCY(2)) u_mdl_s64 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s64, SB_S64));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256)) u_mdl_s32p (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(g_direct[0].u_s, SB_S32P));
-  sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256)) u_mdl_s32q (
+  sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .READ_LATENCY(2)) u_mdl_s32q (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(g_direct[1].u_s, SB_S32Q));
 
   // -------------------------------------------------------------------------
@@ -269,18 +297,39 @@
   // bf_addr[I] while bf_on[I]. A read of that word is seen at the clock edge
   // that issues it; the array output is forced from the following falling
   // edge for one cycle, so the compare at the next rising edge sees it.
+  // VHDL DUT on VCS: a native SV force cannot write a bit of a VHDL signal
+  // (nor a VHDL signal that the bench also reads), so $hdl_xmr_force does.
   // -------------------------------------------------------------------------
   int unsigned bf_addr [NSB];
   bit          bf_on   [NSB];
 
+`ifdef VHDL_DUT
+`ifdef VCS
+`define BF_FORCE(U) $hdl_xmr_force({`TB_STR, ".", `"U`", ".u_core.arr_rdata[3]"}, "0", "0 ns", \
+                                   "freeze", "", 0)
+`define BF_RELEASE(U) $hdl_xmr_release({`TB_STR, ".", `"U`", ".u_core.arr_rdata[3]"}, 0)
+`endif
+`endif
+`ifndef BF_FORCE
+`define BF_FORCE(U) force U.u_core.arr_rdata[3] = 1'b0
+`define BF_RELEASE(U) release U.u_core.arr_rdata[3]
+`endif
+
 `define BIST_FAULT(U, I) \
   if (1) begin : g_bf_``U \
     logic hit_q; \
+    logic forced; \
+    initial forced = 1'b0; \
     always @(posedge clk_a) hit_q <= bf_on[I] && U.u_core.arr_cs && !U.u_core.arr_we && \
-                                     (U.u_core.arr_idx == bf_addr[I]); \
+                                     (int'(U.u_core.arr_idx) == int'(bf_addr[I])); \
     always @(negedge clk_a) begin \
-      if (hit_q) force U.u_core.arr_rdata[3] = 1'b0; \
-      else release U.u_core.arr_rdata[3]; \
+      if (hit_q) begin \
+        `BF_FORCE(U); \
+        forced = 1'b1; \
+      end else if (forced) begin \
+        `BF_RELEASE(U); \
+        forced = 1'b0; \
+      end \
     end \
   end
 

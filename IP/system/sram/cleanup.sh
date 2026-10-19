@@ -28,7 +28,7 @@ _run_if_present() {
 
 # Simulator working directories (Icarus/GHDL/ModelSim/VCS/Xcelium), including
 # the code coverage databases and reports of sim_sram.py --coverage
-# (work/<sim>/<run>/cov.vdb, cov_report/, work/coverage/, coverage_merged.vdb,
+# (work/<sim>/<run>/cov.vdb, cov_report*/, vhdl_const.*, work/coverage/, coverage_merged*.vdb,
 # coverage_urg.log)
 rm -rf "${CLAUDE_SRAM_PATH}/verification/work"/*
 

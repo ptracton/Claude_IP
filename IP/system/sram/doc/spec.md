@@ -82,7 +82,7 @@ There is no register block: all control and status is side-band pins.
 | `BIST_EN` | 0/1 | 0 | March C- engine |
 | `DUAL_PORT` | 0/1 | 0 | second bus port (core parameter; *[Step 3]* exposed as the `sram_<proto>_dp` top-levels) |
 | `WIDTH_B` | 8..128, `WIDTH / WIDTH_B` a power of two | `WIDTH` | *[Step 3c]* port B width (dual port) |
-| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as port A | port A's | *[Step 3c]* port B options |
+| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as port A | port A's | *[Step 3c]* port B options. VCS-MX evaluates the VHDL default from port A's default, not its actual, when Verilog instantiates the VHDL top: set them explicitly there |
 | `COMMON_CLK` | 0/1 | 1 | *[Step 3c]* 1: one clock; 0: port B on its own clock (not SAED14) |
 | `INIT_FILE` | path | "" | FPGA / simulation preload (`$readmemh` format) |
 

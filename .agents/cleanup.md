@@ -18,7 +18,9 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
    - `verification/work/` contents (includes post-syn sims and power reports under
      `work/postsyn/<pdk>/<proto>/`, and the code coverage output of `sim_IP_NAME.py
      --coverage`: per-run `cov.vdb/` and `cov_report/`, `work/coverage/`,
-     `work/coverage_merged.vdb/`, `work/coverage_urg.log`).
+     `work/coverage_merged.vdb/`, `work/coverage_urg.log`; VHDL runs add `cov_report_raw/`,
+     `vhdl_const.el`, `vhdl_const_excl.txt`, `work_lib/`, `synopsys_sim.setup`, and
+     `work/coverage/vhdl/`, `work/coverage_merged_vhdl.vdb/`, `work/coverage_urg_vhdl.log`).
    - Code coverage outside `work/`:
      - `verification/work.vdb/`: urg writes `<dir>.vdb` beside the directory when `-dbname`
        has no `.vdb` suffix. The runner must pass `-dbname <work>/coverage_merged.vdb`;

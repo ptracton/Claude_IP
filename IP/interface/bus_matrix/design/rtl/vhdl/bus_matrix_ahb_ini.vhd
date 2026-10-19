@@ -7,6 +7,10 @@
 --     high; held until the slave's HREADY is high.
 --   Data phase:    HTRANS=IDLE, HWDATA/HWSTRB driven from the core; done
 --     pulses in the cycle the slave raises HREADY, with HRDATA and HRESP.
+--   HSIZE is rebuilt from core_be (the target adapter's lane mask) and
+--     HADDR: the naturally aligned block of 2**k lanes holding the address
+--     gives HSIZE = k; any other mask (a full word, or write strobes that do
+--     not form that block) gives the bus size, with the lanes in HWSTRB.
 --
 -- The core keeps req high until done and drops it on the following cycle,
 -- so a new address phase is never started for a finished request.
@@ -14,6 +18,7 @@
 
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 entity bus_matrix_ahb_ini is
   generic (
@@ -39,6 +44,7 @@ entity bus_matrix_ahb_ini is
     HADDR  : out std_ulogic_vector(ADDR_W - 1 downto 0);     -- byte address
     HTRANS : out std_ulogic_vector(1 downto 0);              -- transfer type
     HWRITE : out std_ulogic;                                 -- 1 = write
+    HSIZE  : out std_ulogic_vector(2 downto 0);              -- transfer size, 2**HSIZE bytes
     HWDATA : out std_ulogic_vector(DATA_W - 1 downto 0);     -- write data (data phase)
     HWSTRB : out std_ulogic_vector(DATA_W / 8 - 1 downto 0); -- byte strobes (data phase)
     HRDATA : in  std_ulogic_vector(DATA_W - 1 downto 0);     -- read data
@@ -51,6 +57,46 @@ architecture rtl of bus_matrix_ahb_ini is
 
   constant HTRANS_IDLE   : std_ulogic_vector(1 downto 0) := "00";
   constant HTRANS_NONSEQ : std_ulogic_vector(1 downto 0) := "10";
+
+  constant STRB_W : positive := DATA_W / 8;
+
+  -- ceil(log2(n)).
+  function log2(n : positive) return natural is
+    variable k : natural := 0;
+  begin
+    while 2 ** k < n loop
+      k := k + 1;
+    end loop;
+    return k;
+  end function log2;
+
+  constant BUS_SIZE : natural := log2(STRB_W);
+  -- Byte-offset width (at least 1 bit, as OffW in the SV twin).
+  constant OFF_W    : positive := maximum(1, BUS_SIZE);
+
+  -- be_size — HSIZE of a lane mask at byte offset `offset`: k when the mask
+  -- is the naturally aligned block of 2**k lanes holding the offset (as the
+  -- target adapter built it from the master's HSIZE), otherwise the bus size
+  -- (a full mask, or write strobes that do not form such a block).
+  function be_size(be : std_ulogic_vector(STRB_W - 1 downto 0); offset : natural)
+    return std_ulogic_vector is
+    variable size  : natural := BUS_SIZE;
+    variable blk   : std_ulogic_vector(STRB_W - 1 downto 0);
+    variable base  : natural;
+  begin
+    for k in 0 to BUS_SIZE - 1 loop
+      base := 0;
+      while base + 2 ** k <= STRB_W loop
+        blk := (others => '0');
+        blk(base + 2 ** k - 1 downto base) := (others => '1');
+        if be = blk and offset / (2 ** k) = base / (2 ** k) then
+          size := k;
+        end if;
+        base := base + 2 ** k;
+      end loop;
+    end loop;
+    return std_ulogic_vector(to_unsigned(size, 3));
+  end function be_size;
 
   signal dphase_q : std_ulogic;  -- data phase in progress
   signal aphase   : std_ulogic;  -- address phase presented this cycle
@@ -74,6 +120,7 @@ begin
   HTRANS <= HTRANS_NONSEQ when aphase = '1' else HTRANS_IDLE;
   HADDR  <= core_addr;
   HWRITE <= core_we;
+  HSIZE  <= be_size(core_be, to_integer(unsigned(core_addr(OFF_W - 1 downto 0))));
   HWDATA <= core_wdata;
   HWSTRB <= core_be when core_we = '1' else (others => '0');
 

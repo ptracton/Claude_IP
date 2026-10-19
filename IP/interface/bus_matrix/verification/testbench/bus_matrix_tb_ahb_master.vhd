@@ -24,6 +24,7 @@ entity bus_matrix_tb_ahb_master is
     HADDR     : out std_ulogic_vector(31 downto 0) := (others => '0');
     HTRANS    : out std_ulogic_vector(1 downto 0) := "00";
     HWRITE    : out std_ulogic := '0';
+    HSIZE     : out std_ulogic_vector(2 downto 0) := "010";  -- word; lanes in HWSTRB
     HWDATA    : out std_ulogic_vector(31 downto 0) := (others => '0');
     HWSTRB    : out std_ulogic_vector(3 downto 0) := (others => '0');
     HREADY    : in  std_ulogic;

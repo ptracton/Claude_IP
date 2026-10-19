@@ -32,6 +32,8 @@
 //     testbench keeps the two ports off the same word at the same time.
 //     Side-band effects on port B (power errors) are taken at B's grant;
 //     with separate clocks keep port B off a domain while its mode changes.
+//   - response timing: every response of port A (B) comes READ_LATENCY
+//     (READ_LATENCY_B) cycles of its clock after its grant
 // Word strides are powers of two (a 24-bit word takes 4 bytes of address).
 // Backdoor bit flips are reported with set_fault(unit, kind).
 // Unknown expected data (X bits) is not compared.
@@ -50,6 +52,7 @@ module sram_model #(
   parameter int unsigned DEPTH            = 1024,
   parameter bit          BYTE_EN          = 1,
   parameter bit          PARTIAL_WR_ERR   = 1,
+  parameter int unsigned READ_LATENCY     = 1,
   parameter bit          PWR_GATE         = 1,
   parameter bit          ECC_EN           = 0,
   parameter bit          BANK_PG          = 0,
@@ -58,6 +61,7 @@ module sram_model #(
   parameter int unsigned WIDTH_B          = WIDTH,
   parameter bit          BYTE_EN_B        = BYTE_EN,
   parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR,
+  parameter int unsigned READ_LATENCY_B   = READ_LATENCY,
   parameter bit          READ_ONLY_B      = 0,
   localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1
 ) (
@@ -121,13 +125,17 @@ module sram_model #(
   typedef struct {
     logic [WIDTH-1:0] rdata;
     logic             err;
+    int unsigned      t;      // cycle of the grant
   } exp_a_t;
   typedef struct {
     logic [WB-1:0] rdata;
     logic          err;
+    int unsigned   t;
   } exp_b_t;
   exp_a_t exp_a [$];
   exp_b_t exp_b [$];
+  int unsigned cyc_a;          // clk cycles
+  int unsigned cyc_b;          // clk_b cycles
 
   function automatic logic [1:0] dom_req(int unsigned d);
     return pwr_mode_req[2*d +: 2];
@@ -231,6 +239,8 @@ module sram_model #(
     end
     inj_armed  = 2'd0;
     clr_mask   = '0;
+    cyc_a      = 0;
+    cyc_b      = 0;
     n_checked  = 0;
     n_mismatch = 0;
   end
@@ -244,6 +254,7 @@ module sram_model #(
     exp_a_t        e;
 
     mismatch_o = 1'b0;
+    cyc_a++;
     if (!rst_n) begin
       exp_a.delete();
       inj_armed = 2'd0;
@@ -269,6 +280,11 @@ module sram_model #(
               (!e.err && ((mem_rdata ^ e.rdata) !== (e.rdata ^ e.rdata)))) begin
             $display("ERROR [sram_model] %m port A mismatch (%0t): err %b/%b data 0x%h/0x%h",
                      $time, mem_err, e.err, mem_rdata, e.rdata);
+            mismatch_o = 1'b1;
+          end
+          if (cyc_a - e.t != READ_LATENCY) begin
+            $display("ERROR [sram_model] %m port A response %0d cycles after the grant, expected %0d (%0t)",
+                     cyc_a - e.t, READ_LATENCY, $time);
             mismatch_o = 1'b1;
           end
         end
@@ -303,6 +319,7 @@ module sram_model #(
                BYTE_EN, PARTIAL_WR_ERR, 1'b0, 1'b1, rd, er);
         e.rdata = rd[WIDTH-1:0];
         e.err   = er;
+        e.t     = cyc_a;
         exp_a.push_back(e);
       end
     end
@@ -318,6 +335,7 @@ module sram_model #(
       exp_b_t        e;
 
       mismatch_b_o = 1'b0;
+      cyc_b++;
       if (!rst_b_n) begin
         exp_b.delete();
       end else begin
@@ -334,6 +352,11 @@ module sram_model #(
                        $time, mem_b_err, e.err, mem_b_rdata, e.rdata);
               mismatch_b_o = 1'b1;
             end
+            if (cyc_b - e.t != READ_LATENCY_B) begin
+              $display("ERROR [sram_model] %m port B response %0d cycles after the grant, expected %0d (%0t)",
+                       cyc_b - e.t, READ_LATENCY_B, $time);
+              mismatch_b_o = 1'b1;
+            end
           end
           if (mismatch_b_o) n_mismatch++;
         end
@@ -342,6 +365,7 @@ module sram_model #(
                  BYTE_EN_B, PARTIAL_WR_ERR_B, READ_ONLY_B, 1'b0, rd, er);
           e.rdata = rd[WB-1:0];
           e.err   = er;
+          e.t     = cyc_b;
           exp_b.push_back(e);
         end
       end

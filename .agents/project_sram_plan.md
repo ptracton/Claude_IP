@@ -21,7 +21,7 @@ instead of the `claude_*_if` register bridges.
 | 3 — RTL SV + VHDL, all options | **Done.** Scratch smoke tests PASS on GENERIC + all 4 PDKs, both languages |
 | 3b — macro tiling rework (§11) | **Done 2026-10-17** (D11 = A); uncommitted |
 | 3c — asymmetric / dual-clock DP (§12) | **Done 2026-10-17**, uncommitted (§12.9) |
-| 4 — directed tests | **In progress** (§13.7): SV bench, 12 tests, all 4 buses × 5 techs, 40/40 PASS; coverage ≥ 90 per module per run (min 92.95) |
+| 4 — directed tests | **Done 2026-10-18**, uncommitted (§13.7): one SV bench, 12 tests, SV and VHDL tops (mixed language), 4 buses × 5 techs × VCS/Xcelium, 80/80 PASS; coverage ≥ 90 per module per run (SV min 92.95, VHDL min 93.00) |
 | 5–12 | Not started |
 
 **Nothing is committed.** The working tree also holds the SKY130 PDK move to `$HOME` and the
@@ -832,3 +832,8 @@ Paused and resumed via `.agents/handoff.md`, which holds the full state.
   coverage tables, bugs found). spec.md corrected: a 24-bit word has a 4-byte stride, READ_LATENCY
   also delays write responses, async port-B pulses can merge. Xcelium coverage: collection works
   (`-coverage all -covfile`) but csun.edu has no IMC to report it.
+- 2026-10-18: **VHDL top-levels verified** with the same SV bench (mixed language), all 4 buses x
+  5 techs x VCS/Xcelium: 80/80 PASS with SV. VHDL coverage >= 93.00 per module per run (VCS
+  toggle constants mapped from the SV twin). Mixed-language tool issues and handling: see
+  `.agents/Claude_IP.md` "VHDL DUTs" and README Simulation Results. bus_matrix VHDL HSIZE mirror
+  done; its formal harness (M_HSIZE) still open.

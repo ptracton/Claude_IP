@@ -54,6 +54,9 @@ architecture rtl of sram_macro_dp_generic is
     variable word : std_ulogic_vector(W - 1 downto 0);
     variable m    : mem_t := (others => (others => 'U'));
   begin
+    -- Elaboration-time preload: not coverable logic (with INIT_FILE = "" the
+    -- branch is constant; VCS does not filter VHDL constants out of line coverage).
+    --synopsys coverage_off
     if INIT_FILE /= "" then
       file_open(f, INIT_FILE, read_mode);
       for i in 0 to D - 1 loop
@@ -64,6 +67,7 @@ architecture rtl of sram_macro_dp_generic is
       end loop;
       file_close(f);
     end if;
+    --synopsys coverage_on
     return m;
   end function init_mem;
 

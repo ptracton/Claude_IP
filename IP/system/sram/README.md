@@ -177,7 +177,7 @@ single-port top-levels. The dual-port top-levels add:
 | Parameter | Range | Default | Meaning |
 |---|---|---|---|
 | `WIDTH_B` | 8..128, multiple of 8, `WIDTH / WIDTH_B` a power of two | `WIDTH` | port B data width; port B has `WIDTH * DEPTH / WIDTH_B` words |
-| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as for port A | port A's | port B options |
+| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as for port A | port A's | port B options (VHDL top instantiated from Verilog on VCS: set them explicitly, VCS takes the default from port A's *default*) |
 | `COMMON_CLK` | 0/1 | 1 | 1: the B clock is the A clock; 0: unrelated clocks (not `TECH_SAED14`) |
 
 **Memory map.** Word `n` sits at byte offset `n * S` of the slave port,
@@ -256,17 +256,20 @@ domain is held in RUN. UPF files for SAED90, SAED14 and SKY130 belong in
 
 ## Simulation Results
 
-Directed simulation (Step 4), SystemVerilog testbenches, results generated
-2026-10-18 on a `*.csun.edu` host with Synopsys VCS Y-2026.03-SP1 and Cadence
-Xcelium 25.03. The VHDL top-levels are not simulated yet.
+Directed simulation (Step 4), results generated 2026-10-18 on a `*.csun.edu`
+host with Synopsys VCS Y-2026.03-SP1 and Cadence Xcelium 25.03. One
+SystemVerilog testbench verifies both the SystemVerilog and the VHDL
+top-levels: with `--lang vhdl` the SRAM tops and the bus matrices are the
+VHDL-2008 twins (mixed-language simulation), and the BFMs, tests and reference
+models are unchanged.
 
 ```bash
 source IP/system/sram/setup.sh
-python3 verification/tools/sim_sram.py --sim all --proto all --tech all --coverage --jobs 8
+python3 verification/tools/sim_sram.py --sim all --proto all --lang all --tech all --coverage --jobs 10
 ```
 
 Results: `verification/work/results.log` (one line per run),
-`verification/work/<sim>/<proto>_sv_<tech>/{compile,sim,results}.log`, and coverage
+`verification/work/<sim>/<proto>_<lang>_<tech>/{compile,sim,results}.log`, and coverage
 in `verification/work/coverage/` (below).
 
 ### Test bench
@@ -281,7 +284,7 @@ attached directly to a master:
 | s32 | 32 | 1024 | default | 32-bit matrix (2 masters) |
 | s32e | 32 | 512 | ECC, BIST, BANK_PG x2, READ_LATENCY 2 | 32-bit matrix |
 | dp0 | 32 / 8 | 256 | dual port, port B on its own clock, ECC (8-bit codewords), BIST | 32-bit / 8-bit matrices |
-| dp2 | 32 / 32 | 256 | dual port, one clock, ECC, BANK_PG x2, RL 2 / 1 | 32-bit matrix (CPU on A, DMA on B) |
+| dp2 | 32 / 32 | 256 | dual port, one clock, ECC, BANK_PG x2, RL 2 (B inherits A's) | 32-bit matrix (CPU on A, DMA on B) |
 | s8 | 8 | 2048 | READ_LATENCY 2, second clock domain | 8-bit matrix |
 | dp3 | 8 / 8 | 4096 | dual port, one clock (several primitive rows per leaf) | 8-bit matrix |
 | s16 | 16 | 4096 | BYTE_EN 0, partial write = ERROR | 16-bit matrix |
@@ -294,9 +297,12 @@ attached directly to a master:
 
 Checking: every read is compared with a byte-level shadow memory at the
 master, and one `sram_model` per SRAM (`design/behavioral/sram_model.sv`)
-checks every response on the memory bus inside the top-level. A run passes
-only with zero model mismatches. GENERIC runs also flip stored bits through a
-VPI backdoor (`IP/common/verification/dpi/claude_backdoor.c`).
+checks every response on the memory bus inside the top-level: its data, its
+error flag, and its timing (READ_LATENCY / READ_LATENCY_B cycles after the
+grant, on each port). A run passes only with zero model mismatches. GENERIC
+runs also flip stored bits through a backdoor
+(`IP/common/verification/dpi/claude_backdoor.c`: VPI for SV storage, VHPI for
+VHDL storage).
 
 ### Tests
 
@@ -317,14 +323,20 @@ VPI backdoor (`IP/common/verification/dpi/claude_backdoor.c`).
 
 ### Results (VCS / Xcelium, thousands of comparisons per run)
 
-| Bus | GENERIC | SAED90 | SAED32 | SAED14 | SKY130 |
-|---|---|---|---|---|---|
-| AHB-Lite | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| APB4 | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| AXI4-Lite | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| Wishbone | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+The same for both languages (identical comparison counts for SV and VHDL):
 
-40/40 runs pass. SKY130 runs make fewer comparisons because port B of its
+| Bus | Language | GENERIC | SAED90 | SAED32 | SAED14 | SKY130 |
+|---|---|---|---|---|---|---|
+| AHB-Lite | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AHB-Lite | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| APB4 | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| APB4 | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AXI4-Lite | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AXI4-Lite | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| Wishbone | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| Wishbone | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+
+80/80 runs pass. SKY130 runs make fewer comparisons because port B of its
 dual-port macro is read-only (B writes are checked to get ERROR); only GENERIC
 runs the backdoor checks.
 
@@ -344,10 +356,11 @@ macro models. Logic that is constant by construction (`-cm_noconst
 as unreachable. Runs are merged by module definition with
 `urg -lca -flex_merge modules`.
 
-**Target: at least 90% score for every component in every bus x technology
-run.** Met: the weakest module of any run scores 92.95.
+**Target: at least 90% score for every component in every bus x language x
+technology run.** Met: the weakest module of any SV run scores 92.95, of any
+VHDL run 93.00.
 
-Per run (`verification/work/coverage/per_run.txt`):
+Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
 
 | Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
 |---|---|---|---|---|---|---|---|
@@ -372,7 +385,7 @@ Per run (`verification/work/coverage/per_run.txt`):
 | WB / SAED90 | 95.03 | 97.36 | 96.07 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
 | WB / SKY130 | 94.54 | 97.36 | 94.13 | 98.67 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
 
-All 20 runs merged (`verification/work/coverage/summary.txt`), total
+All 20 SV runs merged (`verification/work/coverage/summary.txt`), total
 **95.78** (line 97.81, cond 94.13, toggle 99.19, FSM 93.75, branch 94.03):
 
 | Module | Score | Line | Cond | Toggle | FSM | Branch |
@@ -413,7 +426,104 @@ All 20 runs merged (`verification/work/coverage/summary.txt`), total
 | `sram_wb` | 100.00 | -- | -- | 100.00 | -- | -- |
 | `sram_wb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
 
-Below 90% inside modules that pass: condition coverage of the APB / Wishbone
+#### VHDL top-levels
+
+The same bench, tests and reference models drive the VHDL top-levels and the
+VHDL `bus_matrix` (`--lang vhdl`, mixed language). Measured the same way, with
+three differences forced by VCS's VHDL support:
+
+- VCS filters constants out of VHDL line and condition coverage but **not out
+  of VHDL toggle coverage**. `sim_sram.py` excludes a VHDL bit that did not
+  toggle when the SV twin of the same instance, compiled with the same
+  parameters, reports it Unreachable (urg exclusion file
+  `verification/work/vcs/<run>/vhdl_const.el`, every exclusion listed in
+  `vhdl_const_excl.txt`). A VHDL coverage run therefore also runs its SV twin.
+  urg applies those instance exclusions per parameter set but not in its
+  module list, so the runner recomputes each VHDL module's toggle (and score)
+  from its parameter sets.
+- The elaboration-time generic checks (concurrent `assert`s) and the
+  `INIT_FILE` preload are excluded with `--synopsys coverage_off/on`
+  (the SV twins' `initial` checks are removed as constants). The untoggled bits
+  of the GENERIC leaf's storage array `mem` are excluded (SV memories are not
+  toggle-covered).
+- VHDL arrays of vectors (e.g. `sram_array`'s per-bank read data) are toggle
+  covered; their SV twins are unpacked arrays, which VCS does not toggle-cover
+  by default. That is why `sram_array` has the lowest VHDL toggle (85%).
+
+**Target met:** the weakest VHDL module of any run scores 93.00.
+
+| Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
+|---|---|---|---|---|---|---|---|
+| AHB / GENERIC | 97.90 | 98.51 | 99.19 | 97.99 | 96.30 | 97.49 | sram_array (93.64) |
+| AHB / SAED14 | 96.97 | 98.30 | 97.80 | 96.29 | 96.30 | 96.18 | sram_array (93.64) |
+| AHB / SAED32 | 97.56 | 98.43 | 99.27 | 96.31 | 96.30 | 97.49 | sram_array (93.64) |
+| AHB / SAED90 | 97.57 | 98.43 | 99.27 | 96.36 | 96.30 | 97.49 | sram_array (93.64) |
+| AHB / SKY130 | 97.14 | 98.43 | 97.72 | 95.75 | 96.30 | 97.49 | sram_array (93.00) |
+| APB / GENERIC | 97.71 | 98.66 | 99.44 | 98.05 | 94.74 | 97.67 | sram_array (93.64) |
+| APB / SAED14 | 96.77 | 98.45 | 97.98 | 96.39 | 94.74 | 96.27 | sram_array (93.64) |
+| APB / SAED32 | 97.38 | 98.58 | 99.49 | 96.40 | 94.74 | 97.67 | sram_array (93.64) |
+| APB / SAED90 | 97.39 | 98.58 | 99.49 | 96.45 | 94.74 | 97.67 | sram_array (93.64) |
+| APB / SKY130 | 96.96 | 98.58 | 98.16 | 95.67 | 94.74 | 97.67 | sram_array (93.01) |
+| AXI4-Lite / GENERIC | 97.55 | 98.61 | 98.00 | 98.00 | 95.83 | 97.31 | sram_array (93.64) |
+| AXI4-Lite / SAED14 | 96.71 | 98.43 | 96.82 | 96.41 | 95.83 | 96.07 | sram_array (93.64) |
+| AXI4-Lite / SAED32 | 97.26 | 98.54 | 98.18 | 96.42 | 95.83 | 97.31 | sram_array (93.64) |
+| AXI4-Lite / SAED90 | 97.27 | 98.54 | 98.18 | 96.47 | 95.83 | 97.31 | sram_array (93.64) |
+| AXI4-Lite / SKY130 | 96.82 | 98.54 | 96.71 | 95.70 | 95.83 | 97.31 | sram_array (93.00) |
+| WB / GENERIC | 97.65 | 98.66 | 99.16 | 98.02 | 94.74 | 97.66 | sram_array (93.64) |
+| WB / SAED14 | 96.71 | 98.45 | 97.73 | 96.39 | 94.74 | 96.23 | sram_array (93.64) |
+| WB / SAED32 | 97.32 | 98.58 | 99.24 | 96.40 | 94.74 | 97.66 | sram_array (93.64) |
+| WB / SAED90 | 97.34 | 98.58 | 99.24 | 96.46 | 94.74 | 97.66 | sram_array (93.64) |
+| WB / SKY130 | 96.95 | 98.58 | 97.90 | 95.86 | 94.74 | 97.66 | sram_array (93.00) |
+
+All 20 VHDL runs merged (`verification/work/coverage/vhdl/summary.txt`), total
+**97.93** (line 98.64, cond 98.34, toggle 98.05, FSM 96.88, branch 97.73). The
+merge cannot apply per-instance exclusions (its instances are the first run's),
+so the merged toggle of each VHDL module is its best single run: a lower
+bound of the merged value.
+
+| Module | Score | Line | Cond | Toggle | FSM | Branch |
+|---|---|---|---|---|---|---|
+| `sram_array` | 93.64 | 94.87 | 100.00 | 84.96 | -- | 94.74 |
+| `sram_cdc` | 95.50 | 100.00 | -- | 86.49 | -- | 100.00 |
+| `claude_sync` | 95.56 | 100.00 | -- | 86.67 | -- | 100.00 |
+| `claude_axi4l_mem_if` | 96.42 | 98.46 | 89.83 | 98.15 | 100.00 | 95.65 |
+| `sram_bist` | 97.32 | 98.48 | 100.00 | 100.00 | 90.91 | 97.22 |
+| `claude_ahb_mem_if` | 97.87 | 97.22 | 96.55 | 99.17 | 100.00 | 96.43 |
+| `sram_pwr_ctrl` | 98.00 | 95.12 | 100.00 | 100.00 | 100.00 | 94.87 |
+| `sram_macro_dp_sky130` | 98.16 | 100.00 | 100.00 | 92.62 | -- | 100.00 |
+| `claude_wb_mem_if` | 98.33 | 100.00 | 93.33 | 100.00 | -- | 100.00 |
+| `sram_core` | 98.41 | 100.00 | 100.00 | 93.64 | -- | 100.00 |
+| `sram_clr` | 98.61 | 100.00 | 100.00 | 94.42 | -- | 100.00 |
+| `sram_ahb_dp` | 98.84 | -- | -- | 98.84 | -- | -- |
+| `sram_port` | 98.86 | 100.00 | 98.32 | 99.05 | -- | 98.08 |
+| `sram_ahb` | 99.23 | -- | -- | 99.23 | -- | -- |
+| `sram_macro_generic` | 99.49 | 100.00 | -- | 98.47 | -- | 100.00 |
+| `sram_macro_dp` | 99.52 | -- | -- | 99.52 | -- | -- |
+| `sram_macro_dp_saed14` | 99.53 | 100.00 | 100.00 | 98.10 | -- | 100.00 |
+| `sram_macro` | 99.56 | -- | -- | 99.56 | -- | -- |
+| `sram_macro_dp_saed32` | 99.57 | 100.00 | 100.00 | 98.29 | -- | 100.00 |
+| `sram_macro_sky130` | 99.59 | 100.00 | 100.00 | 98.38 | -- | 100.00 |
+| `sram_macro_dp_saed90` | 99.69 | 100.00 | 100.00 | 98.77 | -- | 100.00 |
+| `sram_axi4l` | 99.72 | -- | -- | 99.72 | -- | -- |
+| `sram_macro_saed32` | 99.82 | 100.00 | 100.00 | 99.28 | -- | 100.00 |
+| `sram_macro_saed90` | 99.82 | 100.00 | 100.00 | 99.28 | -- | 100.00 |
+| `sram_macro_saed14` | 99.85 | 100.00 | 100.00 | 99.40 | -- | 100.00 |
+| `sram_macro_dp_generic` | 99.88 | 100.00 | -- | 99.65 | -- | 100.00 |
+| `sram_apb` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_wb` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_axi4l_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_apb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_wb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
+| `sram_ecc_enc` | 100.00 | 100.00 | -- | 100.00 | -- | 100.00 |
+| `sram_ecc_dec` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
+| `claude_pulse_sync` | 100.00 | 100.00 | -- | 100.00 | -- | 100.00 |
+| `claude_apb_mem_if` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
+
+SV and VHDL percentages are not directly comparable: VCS counts VHDL
+conditions and FSM transitions differently (e.g. the APB adapter's condition
+coverage is 75% in SV and 100% in VHDL with the same stimulus).
+
+Below 90% inside modules that pass (SV): condition coverage of the APB / Wishbone
 adapters (73-75%; AHB 85, AXI4-Lite 83), `sram_pwr_ctrl` FSM 87.5%,
 `sram_cdc` toggle 88.5%, `sram_clr` condition 89.8%.
 
@@ -429,6 +539,16 @@ report it, so the Xcelium runs are functional checks.
 | `bus_matrix_ahb` | HSIZE was not carried through the matrix, so a 64-bit slave saw 4 lanes and sub-word transfers lost their size | `M_HSIZE` / `S_HSIZE`; the initiator rebuilds HSIZE from the lanes and the address |
 | `bus_matrix_ahb_ini` (first version of that fix) | sparse write strobes at a word address became a byte transfer at the wrong lane | HSIZE must contain the address offset, else the bus size with the lanes in HWSTRB |
 | `sram_port` (SV and VHDL) | an all-zero-strobe write to an 8-bit SRAM wrote the word | lane enables follow the strobes whenever BYTE_EN = 1 |
+
+Mixed-language (VHDL top-levels) tool behaviour found and handled in the
+bench and `sim_sram.py`:
+
+| Tool | Behaviour | Handling |
+|---|---|---|
+| VCS | a VHDL generic whose default refers to another generic (`READ_LATENCY_B := READ_LATENCY`, and `BYTE_EN_B`, `PARTIAL_WR_ERR_B`) takes that generic's *default* when SystemVerilog instantiates the VHDL top (pure VHDL and Xcelium are correct); found by the model's new latency check (dp2 port B answered after 1 cycle instead of 2) | instantiate the VHDL dual-port tops from Verilog with the port-B options set explicitly; the bench does so on VCS |
+| Xcelium | VHDL generic maps bind Verilog parameters by position unless `-namemap_mixgen` (the SKY130 wrapper's `VERBOSE => 0` set the model's `NUM_WMASKS`) | `-namemap_mixgen` |
+| VCS | SV `force` of a VHDL bit (or of a VHDL signal the bench also reads) is not supported | `$hdl_xmr_force` for the BIST stuck-at fault |
+| both | VPI cannot read VHDL storage | VHPI entry points in `claude_backdoor.c` |
 
 Behaviour confirmed and documented while writing the tests: every response
 (writes too) comes READ_LATENCY cycles after the grant; a clear requested
@@ -491,7 +611,12 @@ sram/
 ├── doc/                        specification
 ├── firmware/                   memory-test and power-mode helpers (C99)
 ├── synthesis/                  Yosys, Vivado, Quartus, Design Compiler, PrimeTime
-└── verification/               testbenches, tests, formal, lint, UVM, regression, tools
+└── verification/
+    ├── testbench/              SV system bench (tb_sram_<proto>.sv + shared body), BFMs
+    ├── tests/                  directed tests and helpers (shared by SV and VHDL tops)
+    ├── tools/sim_sram.py       simulation and coverage runner
+    ├── formal/ lint/ regression/ tasks/uvm/ modelsim/ vivado/   later steps
+    └── work/                   run outputs (results, logs, coverage); removed by cleanup.sh
 ```
 
 ## Getting Started
@@ -501,3 +626,19 @@ source IP/system/sram/setup.sh      # sets CLAUDE_SRAM_PATH, IP_COMMON_PATH (and
                                     # csun.edu CLAUDE_SKY130_PDK_PATH)
 bash $CLAUDE_SRAM_PATH/cleanup.sh   # remove generated files
 ```
+
+Directed simulation (csun.edu: VCS and Xcelium):
+
+```bash
+cd $CLAUDE_SRAM_PATH/verification/tools
+python3 sim_sram.py                                    # VCS, AHB, SV top, GENERIC
+python3 sim_sram.py --lang vhdl --tech sky130          # VHDL top under the same SV bench
+python3 sim_sram.py --sim xcelium --proto wb --test ecc
+python3 sim_sram.py --sim all --proto all --lang all --tech all --coverage --jobs 10
+                                                       # all 80 runs + coverage reports
+```
+
+Options: `--sim vcs|xcelium|all`, `--proto ahb|apb|axi4l|wb|all`,
+`--lang sv|vhdl|all`, `--tech generic|saed90|saed32|saed14|sky130|all`,
+`--test <name>` (see Tests), `--waves`, `--coverage`, `--jobs N`. Results and
+coverage files are listed under Simulation Results.

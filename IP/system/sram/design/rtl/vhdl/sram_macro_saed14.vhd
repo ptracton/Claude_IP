@@ -210,6 +210,9 @@ architecture rtl of sram_macro_saed14 is
 
 begin
 
+  -- Elaboration-time checks of constants: not coverable logic (VCS does not
+  -- filter constant VHDL assertions out of line / condition coverage).
+  --synopsys coverage_off
   assert_d_a : assert D >= 2 and 2 ** clog2(D) = D
       report "sram_macro_saed14: D must be a power of two >= 2" severity failure;
   assert_lanes_a : assert W mod NLANES = 0
@@ -227,6 +230,7 @@ begin
                          (PRIM_W_C = 32 and PRIM_D_C = 128) or
                          (PRIM_W_C = 32 and PRIM_D_C = 256) or (PRIM_W_C = 32 and PRIM_D_C = 512)
       report "sram_macro_saed14: no primitive of this size" severity failure;
+  --synopsys coverage_on
 
   -- Low address bits go to every primitive (zero-extended when D < PRIM_D).
   paddr     <= std_ulogic_vector(resize(unsigned(addr_i), PRIM_AW_C));

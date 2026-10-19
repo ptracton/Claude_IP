@@ -223,6 +223,9 @@ architecture rtl of sram_core is
 begin
 
   -- Parameter checks (elaboration time).
+  -- Elaboration-time checks of constants: not coverable logic (VCS does not
+  -- filter constant VHDL assertions out of line / condition coverage).
+  --synopsys coverage_off
   assert_width_a : assert WIDTH mod 8 = 0 and WIDTH >= 8 and WIDTH <= 128
       report "sram_core: WIDTH must be a multiple of 8 in 8..128" severity failure;
   assert_depth_a : assert DEPTH >= 2 and 2 ** clog2(DEPTH) = DEPTH
@@ -247,6 +250,7 @@ begin
   -- SAED14 SRAM2RW: CE1 clocks both ports' writes, CE2 both ports' reads.
   assert_saed14_a : assert not ASYNC_C or TECH /= TECH_SAED14_C
       report "sram_core: TECH_SAED14 two-port macros need COMMON_CLK = 1" severity failure;
+  --synopsys coverage_on
 
   ---------------
   -- Bus port --

@@ -13,6 +13,14 @@
 
 package sram_tb_pkg;
 
+  // sram_pkg::TECH_* values (the bench does not import the RTL package, so it
+  // runs unchanged on the VHDL tops)
+  localparam int unsigned TB_TECH_GENERIC = 0;
+  localparam int unsigned TB_TECH_SAED90  = 3;
+  localparam int unsigned TB_TECH_SAED32  = 4;
+  localparam int unsigned TB_TECH_SAED14  = 5;
+  localparam int unsigned TB_TECH_SKY130  = 6;
+
   // SRAM instances
   localparam int SB_S32  = 0;
   localparam int SB_S32E = 1;
