@@ -12,6 +12,13 @@
 //     of the write before it
 // Through the bus_matrix: s32 (RL1) and s32e (RL2) single-read cycle counts
 // differ by the extra output register.
+// AXI4-Lite only, with the BFM in pipelined mode (several transactions in
+// flight, sram_tb_axi4l_master.sv) on s32p and s32q:
+//   - 16 writes and 16 reads back to back: no slower than one at a time
+//   - 16 writes interleaved with 16 reads of other words: the read and write
+//     channels overlap, so the stream is faster than one at a time
+//   - write -> read of the same word x8: the BFM's ordering keeps the read
+//     behind the write, so every read returns the new data
 
 task automatic latency(input int s, output int unsigned c_rd, output int unsigned c_wr);
   logic [63:0] rd;
@@ -20,6 +27,75 @@ task automatic latency(input int s, output int unsigned c_rd, output int unsigne
   c_wr = m_cycles(slv[s].m);
   rd_chk(s, 5, 0, "latency");
   c_rd = m_cycles(slv[s].m);
+endtask
+
+// mixed — 16 writes (words wbase..) interleaved with 16 reads (words
+// rbase.., all different from the written ones) on s's direct master,
+// pipelined or one at a time; checks every response, returns the cycles.
+task automatic mixed(input int s, input int wbase, input int rbase, input bit pipe,
+                     output int unsigned cycles);
+  int          m;
+  logic [63:0] rd;
+  logic        er;
+  m = slv[s].m;
+  for (int i = 0; i < 16; i++) begin
+    m_set(m, 2 * i, 1'b1, slv[s].base + woff(s, wbase + i), fsz(s), NONSEQ, B_SINGLE, rnd(s), '1);
+    m_set(m, 2 * i + 1, 1'b0, slv[s].base + woff(s, rbase + i), fsz(s), NONSEQ, B_SINGLE, '0, '0);
+  end
+  m_pipe(m, pipe);
+  m_run(m, 32);
+  m_pipe(m, 1'b0);
+  cycles = m_cycles(m);
+  for (int i = 0; i < 16; i++) begin
+    m_get(m, 2 * i, rd, er);
+    chk(er === 1'b0, $sformatf("%s mixed write %0d OKAY", slv[s].name, i));
+    sh_put(s, wbase + i, m_wdata(m, 2 * i), '1);
+    m_get(m, 2 * i + 1, rd, er);
+    chk(er === 1'b0, $sformatf("%s mixed read %0d OKAY", slv[s].name, i));
+    cmp_lanes(s, rbase + i, rd, '1, "mixed read");
+  end
+endtask
+
+// axi_pipelined — the AXI4-Lite pipelined-mode checks (see the header).
+task automatic axi_pipelined(input int s);
+  int unsigned sw, sr, pw, pr, sm, pm, c;
+  int          m;
+  logic [63:0] d, rd;
+  logic        er;
+  m = slv[s].m;
+  burst(s, 1'b1, woff(s, 128), fsz(s), B_INCR16, 16, '0, "serial writes", sw);
+  burst(s, 1'b0, woff(s, 128), fsz(s), B_INCR16, 16, '0, "serial reads", sr);
+  m_pipe(m, 1'b1);
+  burst(s, 1'b1, woff(s, 128), fsz(s), B_INCR16, 16, '0, "pipelined writes", pw);
+  burst(s, 1'b0, woff(s, 128), fsz(s), B_INCR16, 16, '0, "pipelined reads", pr);
+  m_pipe(m, 1'b0);
+  chk(pw <= sw && pr <= sr, $sformatf("%s pipelined 16 writes / reads no slower (%0d/%0d vs %0d/%0d)",
+                                      slv[s].name, pw, pr, sw, sr));
+  mixed(s, 144, 128, 1'b0, sm);
+  mixed(s, 160, 144, 1'b1, pm);
+  chk(pm < sm, $sformatf("%s pipelined mixed stream faster (%0d vs %0d cycles)",
+                         slv[s].name, pm, sm));
+  row($sformatf("%-6s AXI pipelined: 16 writes %0d (serial %0d), 16 reads %0d (serial %0d), 16w+16r interleaved %0d (serial %0d) cycles",
+                slv[s].name, pw, sw, pr, sr, pm, sm));
+  // Same-word write -> read: program order kept
+  for (int i = 0; i < 8; i++) begin
+    m_set(m, 2 * i, 1'b1, slv[s].base + woff(s, 176 + i), fsz(s), NONSEQ, B_SINGLE, rnd(s), '1);
+    m_set(m, 2 * i + 1, 1'b0, slv[s].base + woff(s, 176 + i), fsz(s), NONSEQ, B_SINGLE, '0, '0);
+  end
+  m_pipe(m, 1'b1);
+  m_run(m, 16);
+  m_pipe(m, 1'b0);
+  c = m_cycles(m);
+  for (int i = 0; i < 8; i++) begin
+    m_get(m, 2 * i, rd, er);
+    chk(er === 1'b0, "pipelined same-word write OKAY");
+    sh_put(s, 176 + i, m_wdata(m, 2 * i), '1);
+    m_get(m, 2 * i + 1, rd, er);
+    chk(er === 1'b0, "pipelined same-word read OKAY");
+    cmp_lanes(s, 176 + i, rd, '1, "pipelined write->read");
+  end
+  row($sformatf("%-6s AXI pipelined write->read of one word x8 (%0d cycles): reads see the writes",
+                slv[s].name, c));
 endtask
 
 task automatic test_pipeline();
@@ -99,6 +175,10 @@ task automatic test_pipeline();
     end
   end
   row("s32p/q error beats followed at once by good ones: errors, then right data");
+  if (IS_AXI) begin
+    axi_pipelined(SL_S32P);
+    axi_pipelined(SL_S32Q);
+  end
   // Through the matrix
   latency(SL_S32, r1, w1);
   latency(SL_S32E, r2, w2);

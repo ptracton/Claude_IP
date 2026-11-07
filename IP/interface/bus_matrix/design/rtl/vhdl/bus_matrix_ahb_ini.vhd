@@ -11,6 +11,9 @@
 --     HADDR: the naturally aligned block of 2**k lanes holding the address
 --     gives HSIZE = k; any other mask (a full word, or write strobes that do
 --     not form that block) gives the bus size, with the lanes in HWSTRB.
+--     HADDR is aligned to HSIZE (the low address bits below HSIZE are
+--     cleared), so a bus-size fallback for a sub-word transfer with sparse
+--     strobes is a legal, word-aligned transfer.
 --
 -- The core keeps req high until done and drops it on the following cycle,
 -- so a new address phase is never started for a finished request.
@@ -100,6 +103,7 @@ architecture rtl of bus_matrix_ahb_ini is
 
   signal dphase_q : std_ulogic;  -- data phase in progress
   signal aphase   : std_ulogic;  -- address phase presented this cycle
+  signal size     : std_ulogic_vector(2 downto 0);  -- HSIZE of this transfer
 
 begin
 
@@ -118,9 +122,23 @@ begin
 
   HSEL   <= aphase;
   HTRANS <= HTRANS_NONSEQ when aphase = '1' else HTRANS_IDLE;
-  HADDR  <= core_addr;
+  size   <= be_size(core_be, to_integer(unsigned(core_addr(OFF_W - 1 downto 0))));
+
+  -- HADDR aligned to 2**size bytes
+  p_haddr : process (all) is
+    variable addr : std_ulogic_vector(ADDR_W - 1 downto 0);
+  begin
+    addr := core_addr;
+    for b in 0 to OFF_W - 1 loop
+      if b < to_integer(unsigned(size)) then
+        addr(b) := '0';
+      end if;
+    end loop;
+    HADDR <= addr;
+  end process p_haddr;
+
   HWRITE <= core_we;
-  HSIZE  <= be_size(core_be, to_integer(unsigned(core_addr(OFF_W - 1 downto 0))));
+  HSIZE  <= size;
   HWDATA <= core_wdata;
   HWSTRB <= core_be when core_we = '1' else (others => '0');
 

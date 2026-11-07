@@ -100,7 +100,10 @@ the target adapter turns HSIZE and the low HADDR bits into the transfer's byte
 lanes (ANDed with HWSTRB on writes); the initiator rebuilds HSIZE from those
 lanes and the address (the naturally aligned 2^k-lane block holding the
 address gives HSIZE = k, any other lane set gives the bus size with the lanes
-in HWSTRB). DATA_W may be any multiple of 8 (the sram bench uses 8, 16, 24,
+in HWSTRB). The initiator aligns HADDR to the HSIZE it sends (added
+2026-11-07, found while writing the HSIZE formal checks; `a_hsize_aligned` proves it): a sub-word write whose strobes do not form
+an aligned block, e.g. a halfword at offset 2 with only byte 3 enabled, goes
+out as a word-aligned full-word transfer with those strobes. DATA_W may be any multiple of 8 (the sram bench uses 8, 16, 24,
 32 and 64). A master without HWSTRB ties it high.
 
 Every signal is flat-packed: master `i` at `[i*W+:W]` of `M_<sig>`, and slave
@@ -214,16 +217,18 @@ python3 verification/tools/formal_bus_matrix.py --tool vcf
 | arbiter harness (FP + RR, 4 masters) | VHDL | 17/17 | 14/14 | 0  | PASS |
 | `bus_matrix_apb`   | SV   | 88/88 | 56/60 | 4  | PASS |
 | `bus_matrix_apb`   | VHDL | 88/88 | 56/60 | 4  | PASS |
-| `bus_matrix_ahb`   | SV   | 72/76 | 58/66 | 12 | PASS |
-| `bus_matrix_ahb`   | VHDL | 72/76 | 58/66 | 12 | PASS |
+| `bus_matrix_ahb`   | SV   | 88/96 | 70/78 | 16 | PASS |
+| `bus_matrix_ahb`   | VHDL | 88/96 | 70/78 | 16 | PASS |
 | `bus_matrix_axi4l` | SV   | 96/96 | 60/72 | 12 | PASS |
 | `bus_matrix_axi4l` | VHDL | 96/96 | 60/72 | 12 | PASS |
 | `bus_matrix_wb`    | SV   | 72/72 | 56/60 | 4  | PASS |
 | `bus_matrix_wb`    | VHDL | 72/72 | 56/60 | 4  | PASS |
 
-On AHB the 4 assertions that are not "proven" are vacuous and waived
-(`g_m_addr_hold.*`): the initiator never presents an address phase that a
-slave could stall.
+On AHB the 8 assertions that are not "proven" are vacuous and waived
+(`g_m_addr_hold.*` and `a_hsize_hold`): the initiator never presents an
+address phase that a slave could stall. The AHB jobs also check HSIZE
+(legal, aligned, strobes inside the transfer's lanes, same read lanes end to
+end); writing them exposed the unaligned-HADDR bug fixed on 2026-11-07 (see Interfaces).
 
 **AXI4-Lite needs a longer budget.** Its master-port response bounds
 (`s_b_bounded` / `s_r_bounded`: B and R within `M_WAIT` = 64 cycles) take
@@ -235,7 +240,7 @@ All waived results follow from two design choices: one single transfer per
 grant, and one idle cycle between grants. Examples: back-to-back and pipelined
 slave-side covers, and AXI back-pressure covers.
 
-Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-10-10.
+Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-10-10 (AHB jobs re-run 2026-11-07 with HSIZE).
 
 ### SymbiYosys (standard hosts) — SV
 
@@ -374,6 +379,9 @@ matrix on each side of every port.
 ### Yosys / Vivado / Quartus (standard hosts)
 
 Default configuration, 100 MHz clock. Results generated 2026-10-11.
+The AHB-Lite row predates the HSIZE ports (2026-10-18) and the HADDR alignment
+fix (2026-11-07); re-run these tools on a standard host to refresh it (Design
+Compiler shows 8 more flops).
 
 | Variant | Yosys 0.60 cells / DFFs (SV) | Yosys cells / DFFs (VHDL) | Vivado 2023.2 LUTs / FFs | Vivado WNS | Quartus 23.1std registers |
 |---------|------------|------------|-----------|----------|-----|
@@ -412,13 +420,15 @@ All 4 SV + 4 VHDL variants are synthesized per PDK.
 
 | PDK | APB cells | AHB cells | AXI4-Lite cells | WB cells | Flip-flops (APB/AHB/AXI/WB) | Worst WNS | Result |
 |-----|-----------|-----------|-----------------|----------|-----------------------------|-----------|--------|
-| SAED90 (90nm)  | 1024 | 1221 | 1962 | 965 | 18 / 88 / 316 / 14 | -0.56 ns | VIOLATED (accepted) |
-| SAED32 (32nm)  | 704  | 875  | 1781 | 674 | 18 / 88 / 316 / 14 | +3.58 ns | MET |
-| SAED14 (14nm)  | 937  | 1090 | 1724 | 898 | 18 / 88 / 316 / 14 | +1.83 ns | MET |
-| SKY130 (130nm) | 849  | 1020 | 1668 | 819 | 18 / 88 / 316 / 14 | +2.54 ns | MET |
+| SAED90 (90nm)  | 1024 | 1361 | 1962 | 965 | 18 / 96 / 316 / 14 | -0.56 ns | VIOLATED (accepted) |
+| SAED32 (32nm)  | 704  | 985  | 1781 | 674 | 18 / 96 / 316 / 14 | +3.39 ns | MET |
+| SAED14 (14nm)  | 937  | 1208 | 1724 | 898 | 18 / 96 / 316 / 14 | +0.95 ns | MET |
+| SKY130 (130nm) | 849  | 1132 | 1668 | 819 | 18 / 96 / 316 / 14 | +1.95 ns | MET |
 
-The cell counts are for the SV variants; the VHDL twins are within about 9 %.
-Results generated 2026-10-10. Tool: Design Compiler Y-2026.03-SP1. Per-variant
+The cell counts are for the SV variants; the VHDL twins are within about 17 %.
+Results generated 2026-10-10; the AHB variants were re-synthesized on 2026-11-07
+after the HSIZE change (8 more flops for the registered HSIZE / lane mask; AHB
+now meets timing on SAED90, the other variants are unchanged). Tool: Design Compiler Y-2026.03-SP1. Per-variant
 area and timing are in `synthesis/designcompiler/report_<pdk>.txt`.
 
 **SAED90 misses 100 MHz by up to 0.56 ns, and this is accepted.** The
@@ -441,14 +451,21 @@ variants per target.
 
 | Target | Corner | Worst setup WNS | Worst hold WNS | Setup TNS | DRV violators | Result |
 |--------|--------|-----------------|----------------|-----------|---------------|--------|
-| SAED90 (90nm) | `saed90nm_max` | -0.560 ns | +0.910 ns | -210.16 ns | 0 | VIOLATED (accepted) |
-| SAED32 (32nm) | SS 0.95 V 125 °C | +3.580 ns | +0.220 ns | 0 | 168 max_capacitance | MET (DRV open) |
-| SAED14 (14nm) | SS 0.72 V 125 °C | +1.830 ns | +0.130 ns | 0 | 0 | MET |
-| SKY130 `ss_100C_1v60` | 1.60 V, 100 °C | +2.540 ns | +0.850 ns | 0 | 0 | MET |
-| SKY130 `tt_025C_1v80` | 1.80 V, 25 °C  | +3.250 ns | +0.440 ns | 0 | 0 | MET |
-| SKY130 `ff_n40C_1v95` | 1.95 V, -40 °C | +3.570 ns | +0.290 ns | 0 | 0 | MET |
+| SAED90 (90nm) | `saed90nm_max` | -0.560 ns | +0.920 ns | -192.75 ns | 0 | VIOLATED (accepted) |
+| SAED32 (32nm) | SS 0.95 V 125 °C | +3.390 ns | +0.220 ns | 0 | 174 max_capacitance | MET (DRV open) |
+| SAED14 (14nm) | SS 0.72 V 125 °C | +0.950 ns | +0.130 ns | 0 | 280 min_capacitance | MET (DRV open) |
+| SKY130 `ss_100C_1v60` | 1.60 V, 100 °C | +1.950 ns | +0.850 ns | 0 | 0 | MET |
+| SKY130 `tt_025C_1v80` | 1.80 V, 25 °C  | +2.940 ns | +0.440 ns | 0 | 0 | MET |
+| SKY130 `ff_n40C_1v95` | 1.95 V, -40 °C | +3.340 ns | +0.290 ns | 0 | 0 | MET |
 
-Results generated 2026-10-10. Tool: PrimeTime Y-2026.03-SP1.
+Results generated 2026-10-10; all targets re-run 2026-11-07 after the AHB
+HSIZE change (only the AHB rows moved). Tool: PrimeTime Y-2026.03-SP1.
+- SAED14's 280 min_capacitance violators (new 2026-11-07, `bus_matrix_ahb_vhdl`
+  only) are core cells that drive the slave-side output ports directly
+  (`S_HADDR`, `S_HWDATA`, `S_HWSTRB`, `S_HWRITE`): the STA puts no load on
+  output ports, so a weak cell driving only its wire sits just under the
+  library's minimum (slack 0.00 at two decimals). A pre-layout constraint
+  artifact, an open item with the SAED32 one below.
 - SAED32's max-capacitance violators (19.7 fF against a 16 fF limit, on the
   grant/select nets) are an open item. Timing and gate-level simulation are
   unaffected.
@@ -472,7 +489,7 @@ Verilog whichever RTL language was synthesized.
 | SAED14 (14nm)  | PASS | PASS | PASS | PASS |
 | SKY130 (130nm) | PASS | PASS | PASS | PASS |
 
-Results generated 2026-10-10.
+Results generated 2026-10-10; AHB re-run on all four PDKs 2026-11-07 (PASS).
 - SAED90 passes despite its STA violation, because its failing paths end at
   output ports against an assumed 3 ns external budget. The testbench's slaves
   have no logic between those ports and their flops.
@@ -495,10 +512,10 @@ Total power in mW at 100 MHz (typical corners):
 
 | PDK (corner) | APB | AHB | AXI4-Lite | Wishbone |
 |--------------|-----|-----|-----------|----------|
-| SAED90 (typ)              | 0.063 | 0.104 | 0.202 | 0.060 |
-| SAED32 (tt 1.05 V 25 °C)  | 0.133 | 0.283 | 0.868 | 0.123 |
-| SAED14 (tt 0.8 V 25 °C)   | 0.028 | 0.048 | 0.085 | 0.026 |
-| SKY130 (tt 1.8 V 25 °C)   | 0.125 | 0.424 | 1.340 | 0.104 |
+| SAED90 (typ)              | 0.063 | 0.119 | 0.202 | 0.060 |
+| SAED32 (tt 1.05 V 25 °C)  | 0.133 | 0.316 | 0.868 | 0.123 |
+| SAED14 (tt 0.8 V 25 °C)   | 0.028 | 0.052 | 0.085 | 0.026 |
+| SKY130 (tt 1.8 V 25 °C)   | 0.125 | 0.465 | 1.340 | 0.104 |
 
 APB breakdown (mW):
 
@@ -509,7 +526,8 @@ APB breakdown (mW):
 | SAED14 | 0.004 | 0.024 | 0.00005 |
 | SKY130 | 0.092 | 0.032 | 0.000002 |
 
-Results generated 2026-10-10. Tool: PrimePower Y-2026.03-SP1.
+Results generated 2026-10-10; AHB re-run 2026-11-07 after the HSIZE change
+(+8-14 %, from the 8 extra flops). Tool: PrimePower Y-2026.03-SP1.
 
 How to read these numbers:
 - **Power follows flip-flop count.** AXI4-Lite has 316 flops, because its

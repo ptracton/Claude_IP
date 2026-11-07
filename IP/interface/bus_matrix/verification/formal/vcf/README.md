@@ -74,6 +74,17 @@ and VHDL builds get identical checks.
   master with the same word address, data and strobes.
 - `a_slv_region_wr` / `a_slv_region_rd`: slave `j` only completes transfers
   inside its own region, so decode errors never reach a slave.
+- AHB only, HSIZE (the shared `claude_ahb_fv` has no HSIZE, so
+  `bus_matrix_ahb_fv` handles it). On master ports the master's HSIZE is
+  assumed legal: at most the bus size, HADDR aligned to it, and held while
+  the address phase is stalled. On slave ports the matrix must obey the same
+  rules (`a_hsize_max`, `a_hsize_aligned`, `a_hsize_hold`), and its write
+  strobes must stay inside the transfer's byte lanes (`a_hsize_strb`).
+  `a_e2e_write` compares a slave's strobes with the master's HWSTRB limited
+  to the lanes of the master's HSIZE. `a_e2e_rd_lanes`: a slave-side read
+  covers the same byte lanes as a read in progress at some master to that
+  word. Covers: a byte write, a halfword read, and a sub-word write with
+  sparse strobes that goes out as a full-word transfer.
 
 **Core** (`bus_matrix_core_fv`):
 - `a_route`: a slave request carries the fields of a requesting master whose
@@ -102,7 +113,7 @@ and VHDL builds get identical checks.
 - arbiter waits and back-to-back grants;
 - the bus scenarios of the shared checkers, except the ones waived below.
 
-## Results (2026-10-10)
+## Results (2026-10-10; AHB re-run 2026-11-07)
 
 All ten jobs pass, SV and VHDL: every assertion is proven, and every cover is
 covered or waived. See the top-level README for the per-job table.
@@ -123,6 +134,7 @@ VHDL bind adds a second `u_fv` level, which the `u_fv*` glob matches.
 |----------|--------|-----|
 | `bus_matrix_apb.u_fv*.g_slv*.u_bus.c_back2back` | uncoverable | the arbiter leaves one idle cycle on a slave between grants, so a SETUP never directly follows a completed transfer |
 | `bus_matrix_ahb.u_fv*.g_slv*.u_bus.g_m_addr_hold.*` | vacuous | the initiator presents an address phase only when no data phase is in flight, and a slave holds HREADY high outside data phases, so an address phase is never stalled |
+| `bus_matrix_ahb.u_fv*.g_slv_size*.a_hsize_hold` | vacuous | same reason: the initiator's address phase is never stalled, so HSIZE never has to be held |
 | `bus_matrix_ahb.u_fv*.g_slv*.u_bus.c_pipelined` | uncoverable | one transfer per grant plus the idle cycle between grants: slave-side transfers never overlap |
 | `bus_matrix_ahb.u_fv*.g_slv*.u_bus.c_wr_then_rd` | uncoverable | same reason as `c_pipelined` |
 | `bus_matrix_axi4l.u_fv*.g_slv*.u_bus.c_b_backpressure` | uncoverable | the initiator holds BREADY high for the whole write |
@@ -149,3 +161,11 @@ violation.
    names its checker `BUS_MATRIX_<PROTO>.U_FV.u_fv…`, one level deeper than
    SV, so the SV-only waiver globs reported the waived covers as failures on
    VHDL. The globs now use `u_fv*`.
+4. **Unaligned HADDR on sub-word writes with sparse strobes (RTL fix,
+   2026-11-07).** Found while adding the HSIZE checks to `bus_matrix_ahb_fv`.
+   The initiator rebuilds HSIZE from the lane mask, and falls back to the
+   bus size when the strobes do not form an aligned block (e.g. a halfword at
+   offset 2 with only byte 3 enabled), but it passed the master's HADDR
+   through unchanged, so the slave saw a word transfer at offset 2. The
+   initiator now clears the HADDR bits below HSIZE (SV and VHDL);
+   `a_hsize_aligned` and `c_hsize_sparse` show the fixed behaviour.

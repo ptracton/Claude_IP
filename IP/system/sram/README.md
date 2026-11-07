@@ -295,6 +295,13 @@ attached directly to a master:
 | s64 | 64 | 512 | ECC, BIST, READ_LATENCY 2 | 64-bit matrix |
 | s32p / s32q | 32 | 256 | READ_LATENCY 1 / 2 | direct (no matrix) |
 
+Masters (`sram_tb_<proto>_master.sv`) run a beat list one transfer at a
+time; AHB pipelines address and data phases. The AXI4-Lite master also has a
+pipelined mode (`set_pipelined(1)`): beats issue in order without waiting for
+earlier responses, reads and writes overlap, and a beat waits while a
+transaction of the other direction to the same word is in flight (program
+order, as a real AXI master keeps it).
+
 Checking: every read is compared with a byte-level shadow memory at the
 master, and one `sram_model` per SRAM (`design/behavioral/sram_model.sv`)
 checks every response on the memory bus inside the top-level: its data, its
@@ -312,7 +319,7 @@ VHDL storage).
 | test_params | data and address walks, power-of-two boundaries, full sweep of every port, range error (SRAM) and decode error (matrix), `err_irq_o` | 18 rows, 90k comparisons |
 | test_access | every size at every aligned offset, all write-strobe patterns, unaligned address (AHB), unaligned stores/loads split into legal transfers, BYTE_EN 0 behaviour | 54 |
 | test_burst | INCR4/8/16, WRAP4/8/16, undefined-length INCR, BUSY, byte bursts (AHB); same address sequences back to back on the other buses | 68 |
-| test_pipeline | READ_LATENCY 1 vs 2, pipelined write→read of one word, an error beat followed at once by a good one | 6 |
+| test_pipeline | READ_LATENCY 1 vs 2, pipelined write→read of one word, an error beat followed at once by a good one; AXI4-Lite: the master's pipelined mode (16 writes / 16 reads / 16 writes interleaved with 16 reads, faster than one at a time; same-word write→read keeps its order) | 6 (AHB), more on AXI4-Lite |
 | test_contention | two masters on one SRAM and on two SRAMs at once | 3 |
 | test_ecc | injected 1-bit (corrected, `ecc_corr_o`) and 2-bit (ERROR, `ecc_uncorr_o`) errors, RMW on clean / 1-bit / 2-bit words, backdoor flip of every stored bit and of bit pairs, dual-port codewords | 26 |
 | test_power | LS auto-wake, DS (ERROR, kept), SD (ERROR, cleared), sleep-to-sleep moves, per-bank modes, PWR_GATE 0 | 28 |
@@ -331,8 +338,8 @@ The same for both languages (identical comparison counts for SV and VHDL):
 | AHB-Lite | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
 | APB4 | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
 | APB4 | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| AXI4-Lite | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| AXI4-Lite | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AXI4-Lite | SV | PASS / PASS (118k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (91k) |
+| AXI4-Lite | VHDL | PASS / PASS (118k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (91k) |
 | Wishbone | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
 | Wishbone | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
 
@@ -342,8 +349,24 @@ runs the backdoor checks.
 
 Throughput, 32-bit SRAM at READ_LATENCY 1, attached directly: AHB 16-beat
 INCR burst 33 cycles (2 per beat); APB 32 and Wishbone 32 cycles for 16
-transfers; AXI4-Lite 64 cycles (the bench's AXI master runs one transaction
-at a time). Through a bus matrix every beat is a single transfer (AHB: 4
+transfers; AXI4-Lite 64 cycles with one transaction at a time.
+
+AXI4-Lite with the bench master in pipelined mode (several transactions in
+flight; `test_pipeline`), cycles:
+
+| SRAM | 16 writes | 16 reads | 16 writes + 16 reads interleaved | same-word write→read x8 |
+|---|---|---|---|---|
+| s32p (RL 1), one at a time | 64 | 64 | 128 | 64 |
+| s32p (RL 1), pipelined | 64 | 64 | 66 | 50 |
+| s32q (RL 2), one at a time | 80 | 80 | 160 | 80 |
+| s32q (RL 2), pipelined | 80 | 80 | 98 | 66 |
+
+A mixed read/write stream runs about twice as fast: `claude_axi4l_mem_if`
+holds one write and one read at once, so the read and write channels
+overlap. Writes alone (or reads alone) gain nothing: the adapter frees its
+AW/W (or AR) slot only on the B (or R) handshake, so it accepts the next
+request of the same kind only after the previous response. Deeper slots
+would be an adapter change (`IP/common`), not made. Through a bus matrix every beat is a single transfer (AHB: 4
 cycles per beat).
 
 ### Code coverage
@@ -358,7 +381,7 @@ as unreachable. Runs are merged by module definition with
 
 **Target: at least 90% score for every component in every bus x language x
 technology run.** Met: the weakest module of any SV run scores 92.95, of any
-VHDL run 93.00.
+VHDL run 92.98.
 
 Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
 
@@ -374,11 +397,11 @@ Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
 | APB / SAED32 | 94.82 | 97.36 | 94.99 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
 | APB / SAED90 | 94.84 | 97.36 | 95.05 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
 | APB / SKY130 | 94.30 | 97.36 | 93.06 | 98.47 | 89.47 | 93.12 | sram_cdc (92.95) |
-| AXI4-Lite / GENERIC | 95.04 | 97.54 | 93.42 | 99.17 | 91.67 | 93.41 | sram_cdc (92.95) |
-| AXI4-Lite / SAED14 | 94.96 | 97.44 | 93.56 | 99.13 | 91.67 | 92.99 | sram_pwr_ctrl (94.18) |
-| AXI4-Lite / SAED32 | 95.16 | 97.50 | 94.18 | 99.12 | 91.67 | 93.35 | sram_cdc (92.95) |
-| AXI4-Lite / SAED90 | 95.18 | 97.50 | 94.25 | 99.12 | 91.67 | 93.35 | sram_cdc (92.95) |
-| AXI4-Lite / SKY130 | 94.63 | 97.50 | 92.22 | 98.43 | 91.67 | 93.35 | sram_cdc (92.95) |
+| AXI4-Lite / GENERIC | 95.12 | 97.54 | 93.59 | 99.17 | 91.67 | 93.61 | sram_cdc (92.95) |
+| AXI4-Lite / SAED14 | 95.03 | 97.44 | 93.71 | 99.13 | 91.67 | 93.20 | sram_pwr_ctrl (94.18) |
+| AXI4-Lite / SAED32 | 95.23 | 97.50 | 94.33 | 99.12 | 91.67 | 93.55 | sram_cdc (92.95) |
+| AXI4-Lite / SAED90 | 95.25 | 97.50 | 94.40 | 99.12 | 91.67 | 93.55 | sram_cdc (92.95) |
+| AXI4-Lite / SKY130 | 94.71 | 97.50 | 92.38 | 98.43 | 91.67 | 93.55 | sram_cdc (92.95) |
 | WB / GENERIC | 94.94 | 97.40 | 95.44 | 99.23 | 89.47 | 93.16 | claude_wb_mem_if (93.33) |
 | WB / SAED14 | 94.81 | 97.28 | 95.42 | 99.19 | 89.47 | 92.70 | claude_wb_mem_if (93.33) |
 | WB / SAED32 | 95.02 | 97.36 | 96.02 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
@@ -386,7 +409,7 @@ Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
 | WB / SKY130 | 94.54 | 97.36 | 94.13 | 98.67 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
 
 All 20 SV runs merged (`verification/work/coverage/summary.txt`), total
-**95.78** (line 97.81, cond 94.13, toggle 99.19, FSM 93.75, branch 94.03):
+**95.84** (line 97.81, cond 94.23, toggle 99.19, FSM 93.75, branch 94.21):
 
 | Module | Score | Line | Cond | Toggle | FSM | Branch |
 |---|---|---|---|---|---|---|
@@ -395,7 +418,7 @@ All 20 SV runs merged (`verification/work/coverage/summary.txt`), total
 | `sram_clr` | 94.29 | 92.79 | 89.75 | 94.62 | -- | 100.00 |
 | `sram_pwr_ctrl` | 94.65 | 97.44 | 100.00 | 92.86 | 87.50 | 95.45 |
 | `sram_port` | 95.40 | 98.51 | 93.45 | 98.66 | -- | 90.97 |
-| `claude_axi4l_mem_if` | 95.80 | 100.00 | 82.90 | 98.83 | 100.00 | 97.30 |
+| `claude_axi4l_mem_if` | 96.64 | 100.00 | 84.35 | 98.83 | 100.00 | 100.00 |
 | `claude_ahb_mem_if` | 96.80 | 100.00 | 85.11 | 98.89 | 100.00 | 100.00 |
 | `sram_cdc` | 97.12 | 100.00 | 100.00 | 88.46 | -- | 100.00 |
 | `claude_sync` | 97.22 | 100.00 | -- | 91.67 | -- | 100.00 |
@@ -450,7 +473,7 @@ three differences forced by VCS's VHDL support:
   covered; their SV twins are unpacked arrays, which VCS does not toggle-cover
   by default. That is why `sram_array` has the lowest VHDL toggle (85%).
 
-**Target met:** the weakest VHDL module of any run scores 93.00.
+**Target met:** the weakest VHDL module of any run scores 92.98.
 
 | Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
 |---|---|---|---|---|---|---|---|
@@ -464,11 +487,11 @@ three differences forced by VCS's VHDL support:
 | APB / SAED32 | 97.38 | 98.58 | 99.49 | 96.40 | 94.74 | 97.67 | sram_array (93.64) |
 | APB / SAED90 | 97.39 | 98.58 | 99.49 | 96.45 | 94.74 | 97.67 | sram_array (93.64) |
 | APB / SKY130 | 96.96 | 98.58 | 98.16 | 95.67 | 94.74 | 97.67 | sram_array (93.01) |
-| AXI4-Lite / GENERIC | 97.55 | 98.61 | 98.00 | 98.00 | 95.83 | 97.31 | sram_array (93.64) |
-| AXI4-Lite / SAED14 | 96.71 | 98.43 | 96.82 | 96.41 | 95.83 | 96.07 | sram_array (93.64) |
-| AXI4-Lite / SAED32 | 97.26 | 98.54 | 98.18 | 96.42 | 95.83 | 97.31 | sram_array (93.64) |
-| AXI4-Lite / SAED90 | 97.27 | 98.54 | 98.18 | 96.47 | 95.83 | 97.31 | sram_array (93.64) |
-| AXI4-Lite / SKY130 | 96.82 | 98.54 | 96.71 | 95.70 | 95.83 | 97.31 | sram_array (93.00) |
+| AXI4-Lite / GENERIC | 97.70 | 98.61 | 98.50 | 97.94 | 95.83 | 97.64 | sram_array (93.64) |
+| AXI4-Lite / SAED14 | 96.87 | 98.43 | 97.27 | 96.41 | 95.83 | 96.43 | sram_array (93.64) |
+| AXI4-Lite / SAED32 | 97.41 | 98.54 | 98.64 | 96.42 | 95.83 | 97.64 | sram_array (93.64) |
+| AXI4-Lite / SAED90 | 97.42 | 98.54 | 98.64 | 96.47 | 95.83 | 97.64 | sram_array (93.64) |
+| AXI4-Lite / SKY130 | 96.98 | 98.54 | 97.18 | 95.69 | 95.83 | 97.64 | sram_array (92.98) |
 | WB / GENERIC | 97.65 | 98.66 | 99.16 | 98.02 | 94.74 | 97.66 | sram_array (93.64) |
 | WB / SAED14 | 96.71 | 98.45 | 97.73 | 96.39 | 94.74 | 96.23 | sram_array (93.64) |
 | WB / SAED32 | 97.32 | 98.58 | 99.24 | 96.40 | 94.74 | 97.66 | sram_array (93.64) |
@@ -476,7 +499,7 @@ three differences forced by VCS's VHDL support:
 | WB / SKY130 | 96.95 | 98.58 | 97.90 | 95.86 | 94.74 | 97.66 | sram_array (93.00) |
 
 All 20 VHDL runs merged (`verification/work/coverage/vhdl/summary.txt`), total
-**97.93** (line 98.64, cond 98.34, toggle 98.05, FSM 96.88, branch 97.73). The
+**98.04** (line 98.64, cond 98.67, toggle 98.05, FSM 96.88, branch 97.98). The
 merge cannot apply per-instance exclusions (its instances are the first run's),
 so the merged toggle of each VHDL module is its best single run: a lower
 bound of the merged value.
@@ -486,7 +509,7 @@ bound of the merged value.
 | `sram_array` | 93.64 | 94.87 | 100.00 | 84.96 | -- | 94.74 |
 | `sram_cdc` | 95.50 | 100.00 | -- | 86.49 | -- | 100.00 |
 | `claude_sync` | 95.56 | 100.00 | -- | 86.67 | -- | 100.00 |
-| `claude_axi4l_mem_if` | 96.42 | 98.46 | 89.83 | 98.15 | 100.00 | 95.65 |
+| `claude_axi4l_mem_if` | 97.53 | 98.46 | 93.22 | 98.15 | 100.00 | 97.83 |
 | `sram_bist` | 97.32 | 98.48 | 100.00 | 100.00 | 90.91 | 97.22 |
 | `claude_ahb_mem_if` | 97.87 | 97.22 | 96.55 | 99.17 | 100.00 | 96.43 |
 | `sram_pwr_ctrl` | 98.00 | 95.12 | 100.00 | 100.00 | 100.00 | 94.87 |
@@ -524,7 +547,7 @@ conditions and FSM transitions differently (e.g. the APB adapter's condition
 coverage is 75% in SV and 100% in VHDL with the same stimulus).
 
 Below 90% inside modules that pass (SV): condition coverage of the APB / Wishbone
-adapters (73-75%; AHB 85, AXI4-Lite 83), `sram_pwr_ctrl` FSM 87.5%,
+adapters (73-75%; AHB 85, AXI4-Lite 84), `sram_pwr_ctrl` FSM 87.5%,
 `sram_cdc` toggle 88.5%, `sram_clr` condition 89.8%.
 
 Not covered: the XILINX and ALTERA leaves (no vendor simulation libraries on
@@ -538,6 +561,7 @@ report it, so the Xcelium runs are functional checks.
 |---|---|---|
 | `bus_matrix_ahb` | HSIZE was not carried through the matrix, so a 64-bit slave saw 4 lanes and sub-word transfers lost their size | `M_HSIZE` / `S_HSIZE`; the initiator rebuilds HSIZE from the lanes and the address |
 | `bus_matrix_ahb_ini` (first version of that fix) | sparse write strobes at a word address became a byte transfer at the wrong lane | HSIZE must contain the address offset, else the bus size with the lanes in HWSTRB |
+| `bus_matrix_ahb_ini` (found 2026-11-07 while adding HSIZE to the bus_matrix formal harness) | a sub-word write whose strobes are not an aligned block (halfword at offset 2, only byte 3 on) went out as a word transfer at an unaligned HADDR | HADDR is aligned to the HSIZE sent (SV and VHDL); proven by VC Formal |
 | `sram_port` (SV and VHDL) | an all-zero-strobe write to an 8-bit SRAM wrote the word | lane enables follow the strobes whenever BYTE_EN = 1 |
 
 Mixed-language (VHDL top-levels) tool behaviour found and handled in the

@@ -16,6 +16,7 @@ int unsigned t_rows;         // rows printed in the current test
 int unsigned t_cmp0;         // n_cmp at test start
 int unsigned n_tests;
 localparam bit IS_AHB = (`TB_PROTO == "ahb");  // HSIZE, HTRANS bursts and BUSY on the bus
+localparam bit IS_AXI = (`TB_PROTO == "axi4l"); // separate read and write channels
 string       cur_test;
 int          a_slave [NSB];  // port-A (or only) slave of each instance
 
@@ -133,6 +134,17 @@ endtask
 task automatic m_run(input int m, input int n);
   `MCASE(run_beats(n))
 endtask
+
+// m_pipe — pipelined mode of master m (AXI4-Lite BFM only; others ignore it).
+task automatic m_pipe(input int m, input bit on);
+  `MCASE(set_pipelined(on))
+endtask
+
+function automatic logic [63:0] m_wdata(input int m, input int i);
+  logic [63:0] d;
+  `MGET(d, bt_wdata[i])
+  return d;
+endfunction
 
 task automatic m_get(input int m, input int i, output logic [63:0] rdata, output logic err);
   logic [63:0] e;

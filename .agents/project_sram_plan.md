@@ -176,7 +176,7 @@ simulations sweep a config matrix on GENERIC and on each PDK's macro models.
 | 3 | RTL SV + VHDL, all options, 16 tops, behavioral model | done |
 | 3b | Macro tiling rework: each `sram_macro[_dp]_<tech>` builds any W x D from primitives with generate (§11) | done |
 | 3c | Dual port with different widths and clocks (§12) | done |
-| 4 | Directed tests, SV + VHDL x 4 protos x single/dual: rw, byte enables, back2back, March sweep, AHB bursts, errors, power retention/loss/wake, clear, ECC (corr/uncorr/RMW), BIST (incl. fault injection), dual-port conflicts, config sweep incl. small DEPTHs (exercises SAED14 32x8); reference model as checker; backdoor preload/peek tasks. Also, from 3b/3c: tiler sweep (`macro/tb_macro.sv`), different widths and separate clocks on **every** protocol (AHB/AXI pipelining catches the surviving narrow-slice mutant), dual-clock `sram_model`, port-B-during-engine monitor | next |
+| 4 | Directed tests, SV + VHDL x 4 protos x single/dual: rw, byte enables, back2back, March sweep, AHB bursts, errors, power retention/loss/wake, clear, ECC (corr/uncorr/RMW), BIST (incl. fault injection), dual-port conflicts, config sweep incl. small DEPTHs (exercises SAED14 32x8); reference model as checker; backdoor preload/peek tasks. Also, from 3b/3c: tiler sweep (`macro/tb_macro.sv`), different widths and separate clocks on **every** protocol (AHB/AXI pipelining catches the surviving narrow-slice mutant), dual-clock `sram_model`, port-B-during-engine monitor | done |
 | 5 | Formal (VC Formal): protocol checkers, `claude_mem_fv` with `INITIATOR_IS_DUT=0` on the core, symbolic-address data integrity with byte merge, power FSM legality, dual-port conflict ordering (incl. A waiting for B's RMW — not hit in smoke). From 3c: `sram_cdc` handshake ("port B never uses the array while an engine runs or pins are on"; the four-phase mutant survived simulation), codeword-lane write-back | |
 | 6 | UVM (VCS): random R/W + power-mode sequences, `sram_model` scoreboard | |
 | 7 | Regression runner/report | |
@@ -837,3 +837,8 @@ Paused and resumed via `.agents/handoff.md`, which holds the full state.
   toggle constants mapped from the SV twin). Mixed-language tool issues and handling: see
   `.agents/Claude_IP.md` "VHDL DUTs" and README Simulation Results. bus_matrix VHDL HSIZE mirror
   done; its formal harness (M_HSIZE) still open.
+- 2026-11-07: Step 4 follow-ups. bus_matrix AHB formal harness has HSIZE (found and fixed an
+  unaligned-HADDR bug in `bus_matrix_ahb_ini`, SV + VHDL); bus_matrix AHB DC/PT/postsyn/power
+  re-run. AXI4-Lite bench master gained a pipelined mode; `test_pipeline` shows R/W overlap
+  (66 vs 128 cycles for 16w+16r at RL1). Details: `.agents/handoff.md`. Step 4 closed; next
+  Step 5.

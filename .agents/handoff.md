@@ -1,4 +1,4 @@
-# Handoff — SRAM Step 4 (directed tests), updated 2026-10-19
+# Handoff — SRAM Step 4 (directed tests), updated 2026-11-07
 
 The plan and full log are in `.agents/project_sram_plan.md` §13 (request, bench architecture,
 tests, §13.7 logs). The IP README "Simulation Results" holds the current results and coverage.
@@ -12,14 +12,39 @@ Step 4 is **done** for both languages:
   language, `+define+VHDL_DUT`).
 - `sim_sram.py --sim all --proto all --lang all --tech all --coverage --jobs 10`: **80/80 PASS**
   (4 buses x 2 languages x 5 technologies x VCS/Xcelium), identical comparison counts SV vs VHDL.
-- Coverage (VCS): every module of every run >= 90 (SV min 92.95, VHDL min 93.00). Merged SV
-  95.78 (`coverage/summary.txt`), VHDL 97.93 (`coverage/vhdl/summary.txt`, toggle = best run).
+- Coverage (VCS): every module of every run >= 90 (SV min 92.95, VHDL min 92.98 as of 2026-11-07). Merged SV
+  95.84 (`coverage/summary.txt`), VHDL 98.04 (`coverage/vhdl/summary.txt`, toggle = best run).
 
 ## Git state
-HEAD `8b218db` ("SRAM Testing looks good") has the SV bench and coverage work. The VHDL work
-below is **uncommitted**. Commit only when asked.
+HEAD `b6b2e17` ("SRAM VHDL testing and verification framework") has the SV bench, the VHDL
+flow and the coverage work. The 2026-11-07 follow-ups below are **uncommitted**. Commit only
+when asked.
 
-## Uncommitted changes (2026-10-18/19)
+## Step 4 follow-ups (2026-11-07, uncommitted)
+- **bus_matrix AHB HSIZE formal (old open item 1):** `bus_matrix_ahb_fv.sv` + bind take
+  `M_HSIZE`/`S_HSIZE`: master-side assumptions (<= bus size, aligned, held), slave-side
+  asserts (`a_hsize_max/aligned/hold/strb`), `a_e2e_write` uses the master's HWSTRB limited
+  to its HSIZE lanes, new `a_e2e_rd_lanes`, covers byte / half / sparse. New waiver:
+  `a_hsize_hold` vacuous (initiator address phase never stalled).
+  **RTL bug fixed** (found writing the harness): `bus_matrix_ahb_ini` (SV + VHDL) sent a
+  bus-size HSIZE with an unaligned HADDR for sparse sub-word strobes; HADDR is now aligned
+  to HSIZE. VCF AHB SV+VHDL PASS (88/96 proven + 8 waived vacuous, 70/78 covers + 8 waived).
+  bus_matrix AHB sims 4/4, DC 4 PDKs PASS (AHB 96 FFs, now MET on SAED90), PT 6 targets PASS
+  (new: SAED14 ahb_vhdl 280 min_capacitance on unloaded output-port drivers, documented as
+  open), postsyn + PrimePower 4 PDKs PASS (AHB +8-14 %). bus_matrix README + formal README
+  updated. Yosys/Vivado/Quartus AHB row is stale (standard host).
+- **AXI pipelined master (old open item 2):** `sram_tb_axi4l_master.sv` pipelined mode
+  (`set_pipelined`, `m_pipe` helper; in-order issue, R/W overlap, same-word program order).
+  `test_pipeline` AXI section: interleaved 16w+16r 66 vs 128 cycles (RL1), 98 vs 160 (RL2);
+  same-type streams gain nothing because `claude_axi4l_mem_if` frees its slot on B/R.
+  SRAM README throughput table + bugs table updated.
+- **Full SRAM regression re-run** (`--sim all --proto all --lang all --tech all --coverage
+  --jobs 2`): **80/80 PASS**, SV = VHDL comparison counts (AXI now 118k/117k/91k). Coverage:
+  merged SV 95.84, VHDL 98.04; weakest module of any run still 92.95 (SV) / 92.98 (VHDL);
+  only `claude_axi4l_mem_if` moved (SV 96.64, VHDL 97.53). Throughput rows identical in all
+  20 AXI runs. README results/coverage tables updated.
+
+## Changes in b6b2e17 (2026-10-18/19, committed)
 - **bus_matrix:** VHDL AHB HSIZE mirror (`bus_matrix_ahb{,_tgt,_ini}.vhd`, VHDL tb master
   drives HSIZE); README documents HSIZE. bus_matrix AHB sims SV+VHDL on VCS+Xcelium PASS.
 - **sram RTL (VHDL, comments only):** `--synopsys coverage_off/on` around elaboration-time
@@ -58,10 +83,9 @@ Logs: `verification/work/<sim>/<proto>_<lang>_<tech>/`; summary `verification/wo
 coverage `verification/work/coverage/`. `cleanup.sh` removes all of it.
 
 ## Open items
-1. bus_matrix AHB VC Formal harness needs `M_HSIZE`; re-run its proofs. Its DC/STA/power
-   results predate the HSIZE change.
-2. AXI throughput: the bench's AXI4-Lite master runs one transaction at a time; an
-   outstanding-transaction BFM would show pipelined throughput.
-3. Xcelium coverage needs IMC (not on csun.edu).
-4. XILINX / ALTERA leaves are not simulated (no vendor libraries on csun.edu).
-5. Next plan step: Step 5 (formal), see plan §6.
+1. Xcelium coverage needs IMC (not on csun.edu) — not needed (user, 2026-11-07).
+2. XILINX / ALTERA leaves are not simulated here; FPGA tools are on another PC (user,
+   2026-11-07). Re-run Yosys/Vivado/Quartus for bus_matrix AHB there too.
+3. Optional: deeper AW/W/AR slots in `claude_axi4l_mem_if` would let same-type AXI streams
+   pipeline (not requested).
+4. Next plan step: Step 5 (formal), see plan §5.

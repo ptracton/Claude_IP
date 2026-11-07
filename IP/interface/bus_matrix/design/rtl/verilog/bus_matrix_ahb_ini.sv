@@ -11,6 +11,9 @@
 //     HADDR: the naturally aligned block of 2**k lanes holding the address
 //     gives HSIZE = k; any other mask (a full word, or write strobes that do
 //     not form that block) gives the bus size, with the lanes in HWSTRB.
+//     HADDR is aligned to HSIZE (the low address bits below HSIZE are
+//     cleared), so a bus-size fallback for a sub-word transfer with sparse
+//     strobes is a legal, word-aligned transfer.
 //
 // The core keeps req high until done and drops it on the following cycle,
 // so a new address phase is never started for a finished request.
@@ -72,8 +75,9 @@ module bus_matrix_ahb_ini #(
     return size;
   endfunction
 
-  logic dphase_q; // data phase in progress
-  logic aphase;   // address phase presented this cycle
+  logic       dphase_q; // data phase in progress
+  logic       aphase;   // address phase presented this cycle
+  logic [2:0] size;     // HSIZE of this transfer
 
   assign aphase = core_req & ~dphase_q;
 
@@ -87,9 +91,20 @@ module bus_matrix_ahb_ini #(
 
   assign HSEL   = aphase;
   assign HTRANS = aphase ? HTRANS_NONSEQ : HTRANS_IDLE;
-  assign HADDR  = core_addr;
+  assign size   = be_size(core_be, core_addr[OffW-1:0]);
+
+  // HADDR aligned to 2**size bytes
+  always_comb begin : p_haddr
+    HADDR = core_addr;
+    for (int unsigned b = 0; b < OffW; b++) begin
+      if (b < 32'(size)) begin
+        HADDR[b] = 1'b0;
+      end
+    end
+  end
+
   assign HWRITE = core_we;
-  assign HSIZE  = be_size(core_be, core_addr[OffW-1:0]);
+  assign HSIZE  = size;
   assign HWDATA = core_wdata;
   assign HWSTRB = core_we ? core_be : '0;
 

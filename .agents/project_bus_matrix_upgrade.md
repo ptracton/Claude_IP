@@ -168,3 +168,7 @@ Was checking timer RTL style (timer uses per-register always_ff, no loop accumul
   GUI (.do loads _wave.do via ${BM} not [info script]; create_project add_files -fileset sim_1;
   xsim wave uses u_core/gnt). RTL edits postdate the csun runs: re-run VCS/Xcelium/SpyGlass/
   VCF/DC there. Timer has the same [info script] and -sim_only bugs (not fixed).
+- 2026-11-07 AHB HSIZE follow-up: formal harness takes M_HSIZE/S_HSIZE (assumptions,
+  asserts, e2e lanes); fixed `bus_matrix_ahb_ini` unaligned HADDR for sparse sub-word
+  strobes (SV + VHDL). VCF AHB SV/VHDL PASS, sims 4/4, DC/PT/postsyn/power re-run PASS on
+  csun. SAED14 ahb_vhdl: 280 min_capacitance (unloaded output ports), open. Uncommitted.

@@ -2,7 +2,7 @@
 PrimeTime STA Report — bus_matrix IP
 Target        : SAED90 (90nm) — saed90nm_max — single corner shipped by this EDK
 Tool version  : PrimeTime (pt_shell)
-Run date      : 2026-10-10
+Run date      : 2026-11-07
 ========================================================================
 
 STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
@@ -12,12 +12,12 @@ STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
 Timing Summary (across all variants, 100 MHz / 10 ns target)
 ------------------------------------------------------------------------
   Worst-case WNS : -0.560 ns
-  Total TNS      : -210.160 ns
+  Total TNS      : -192.750 ns
   Timing         : VIOLATED
 
   Variant                   Setup WNS   Hold WNS  DRV viol.
-  bus_matrix_ahb               -0.200      0.910         50
-  bus_matrix_ahb_vhdl          -0.400      0.990         67
+  bus_matrix_ahb                0.000      0.920          0
+  bus_matrix_ahb_vhdl           0.020      0.960          0
   bus_matrix_apb               -0.560      1.270        239
   bus_matrix_apb_vhdl          -0.540      1.160        224
   bus_matrix_axi4l             -0.440      0.940        299

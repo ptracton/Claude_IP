@@ -33,6 +33,14 @@
   int unsigned last_cycles;
   int unsigned last_wait;
 
+  // Pipelined mode: the AXI4-Lite BFM keeps several transactions in flight
+  // (see sram_tb_axi4l_master.sv). The other BFMs ignore it.
+  bit          pipelined = 1'b0;
+
+  task automatic set_pipelined(input bit on);
+    pipelined = on;
+  endtask
+
 
   // lane_mask — byte lanes of a 2**size-byte transfer at addr (the naturally
   // aligned block holding the address; a full word or more: every lane).
