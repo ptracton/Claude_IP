@@ -1,0 +1,10 @@
+`verilator_config
+// sram_tb.vlt: configuration for tb_sram_<proto> (sim_sram.py --sim verilator).
+//
+// The backdoor (IP/common/verification/dpi/claude_backdoor.c) reaches the
+// GENERIC leaf arrays by name through VPI, so those arrays must be public.
+// Only they are: making the whole design public (--public-flat-rw) breaks
+// the C++ build of the std::process class in version 5.043.
+
+public_flat_rw -module "sram_macro_generic" -var "mem"
+public_flat_rw -module "sram_macro_dp_generic" -var "mem"

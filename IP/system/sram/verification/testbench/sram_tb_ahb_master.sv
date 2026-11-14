@@ -73,6 +73,7 @@ module sram_tb_ahb_master #(
     busy_left   = 0;
     cyc         = 0;
     @(posedge HCLK);
+    `TB_DRV;
     // First address phase (BUSY cycles before beat 0 are not allowed).
     present(0);
     apb = 0;
@@ -96,6 +97,7 @@ module sram_tb_ahb_master #(
         bt_rdata[dpb] = HRDATA;
         bt_err[dpb]   = (HRESP === 1'b1);
       end
+      `TB_DRV;
       // The address phase presented (if a transfer) becomes the data phase.
       dpb = apb;
       if (dpb >= 0) begin

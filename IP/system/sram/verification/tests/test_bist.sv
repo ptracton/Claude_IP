@@ -16,9 +16,9 @@ task automatic run_bist(input int sb, output int unsigned cycles);
   int unsigned d0;
   d0 = n_bist_done[sb];
   sb_cyc(sb, 1);
-  bist_start[sb] <= 1'b1;
+  `TB_DRV; bist_start[sb] <= 1'b1;
   sb_cyc(sb, 1);
-  bist_start[sb] <= 1'b0;
+  `TB_DRV; bist_start[sb] <= 1'b0;
   cycles = 1;
   while (n_bist_done[sb] == d0) begin
     sb_cyc(sb, 1);
@@ -111,9 +111,9 @@ task automatic test_bist();
     b0 = n_busy[sbi];
     wr(s, 2, rnd(s));
     sb_cyc(sbi, 1);
-    bist_start[sbi] <= 1'b1;
+    `TB_DRV; bist_start[sbi] <= 1'b1;
     sb_cyc(sbi, 1);
-    bist_start[sbi] <= 1'b0;
+    `TB_DRV; bist_start[sbi] <= 1'b0;
     sb_cyc(sbi, 10);
     chk(n_bist_done[sbi] == d0 && n_busy[sbi] == b0 && bist_fail[sbi] !== 1'b1,
         $sformatf("%s (BIST_EN = 0): bist_start_i ignored", slv[s].name));

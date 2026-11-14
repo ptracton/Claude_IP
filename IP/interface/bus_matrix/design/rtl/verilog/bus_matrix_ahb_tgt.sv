@@ -68,7 +68,7 @@ module bus_matrix_ahb_tgt #(
     if (StrbW == 1) begin
       mask = '1;
     end
-    return mask;
+    lane_mask = mask;  // not "return": Yosys 0.60 cannot parse it
   endfunction
 
   typedef enum logic [1:0] {

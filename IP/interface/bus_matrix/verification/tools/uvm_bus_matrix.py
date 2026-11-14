@@ -165,7 +165,7 @@ def main():
     if rc != 0:
         print(f"  xvlog RTL FAILED (rc={rc})")
         print(out[-500:] if len(out) > 500 else out)
-        write_result(work_dir, False, out)
+        write_result(work_dir, False, out, args.test)
         sys.exit(1)
     print("  RTL compile: OK")
 
@@ -187,7 +187,7 @@ def main():
     if rc != 0:
         print(f"  xvlog UVM FAILED (rc={rc})")
         print(out[-500:] if len(out) > 500 else out)
-        write_result(work_dir, False, out)
+        write_result(work_dir, False, out, args.test)
         sys.exit(1)
     print("  UVM compile: OK")
 
@@ -212,7 +212,7 @@ def main():
     if rc != 0:
         print(f"  xelab FAILED (rc={rc})")
         print(out[-500:] if len(out) > 500 else out)
-        write_result(work_dir, False, out)
+        write_result(work_dir, False, out, args.test)
         sys.exit(1)
     print("  Elaborate: OK")
 
@@ -275,7 +275,7 @@ def main():
         for line in lines[-20:]:
             print(f"    {line}")
 
-    write_result(work_dir, passed, sim_out)
+    write_result(work_dir, passed, sim_out, args.test)
 
     print(f"\n{'='*50}")
     print(f"UVM {'PASSED' if passed else 'FAILED'}: {args.test}")
@@ -325,12 +325,18 @@ def run_vcs(ip_path, tests, verbosity):
     return 0 if all_pass else 1
 
 
-def write_result(work_dir, passed, sim_out):
-    """Write results.log: first line PASS/FAIL, rest is sim output."""
-    result_path = os.path.join(work_dir, "results.log")
-    with open(result_path, "w") as fh:
-        fh.write("PASS\n" if passed else "FAIL\n")
-        fh.write(sim_out)
+def write_result(work_dir, passed, sim_out, test=None):
+    """Write results.log: first line PASS/FAIL, rest is sim output.
+
+    xsim runs one test per invocation, so it also passes `test` and gets a
+    results_<test>.log that the next test does not overwrite (run_regression.py
+    collects those).
+    """
+    names = ["results.log"] + ([f"results_{test}.log"] if test else [])
+    for name in names:
+        with open(os.path.join(work_dir, name), "w") as fh:
+            fh.write("PASS\n" if passed else "FAIL\n")
+            fh.write(sim_out)
 
 
 if __name__ == "__main__":

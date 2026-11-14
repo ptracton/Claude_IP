@@ -1408,7 +1408,7 @@ def main() -> None:
         choices=["icarus", "ghdl", "modelsim", "xsim", "vcs", "xcelium", "all"],
         default=None,
         help="Simulator to use. On *.csun.edu only vcs and xcelium are "
-             "available. 'all' selects icarus+ghdl on standard hosts and "
+             "available. 'all' selects icarus+ghdl+modelsim+xsim on standard hosts and "
              "vcs+xcelium on csun.edu. (default: icarus on standard hosts, vcs on csun.edu)",
     )
     parser.add_argument(

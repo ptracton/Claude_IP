@@ -67,6 +67,9 @@ module sram_tb_axi4l_master #(
   task automatic run_beats(input int unsigned n);
     bit          aw_done, w_done, ar_done;
     int unsigned w;
+    logic        awr, wr, bv, arr, rv;  // inputs sampled at the edge
+    logic [1:0]  br, rr;
+    logic [DW-1:0] rd;
     if (pipelined) begin
       run_beats_pipelined(n);
       return;
@@ -74,11 +77,13 @@ module sram_tb_axi4l_master #(
     last_cycles = 0;
     last_wait   = 0;
     @(posedge ACLK);
+    `TB_DRV;
     for (int unsigned i = 0; i < n; i++) begin
       repeat (bt_busy[i]) begin
         @(posedge ACLK);
         last_cycles++;
       end
+      if (bt_busy[i] > 0) `TB_DRV;
       w = 0;
       if (bt_we[i]) begin
         AWVALID <= 1'b1;
@@ -91,16 +96,21 @@ module sram_tb_axi4l_master #(
         forever begin
           @(posedge ACLK);
           last_cycles++;
-          if (!aw_done && AWREADY === 1'b1) begin
+          awr = AWREADY;
+          wr  = WREADY;
+          bv  = BVALID;
+          br  = BRESP;
+          `TB_DRV;
+          if (!aw_done && awr === 1'b1) begin
             aw_done = 1'b1;
             AWVALID <= 1'b0;
           end
-          if (!w_done && WREADY === 1'b1) begin
+          if (!w_done && wr === 1'b1) begin
             w_done = 1'b1;
             WVALID <= 1'b0;
           end
-          if (BVALID === 1'b1) begin
-            bt_err[i]   = (BRESP !== 2'b00);
+          if (bv === 1'b1) begin
+            bt_err[i]   = (br !== 2'b00);
             bt_rdata[i] = '0;
             break;
           end
@@ -117,13 +127,18 @@ module sram_tb_axi4l_master #(
         forever begin
           @(posedge ACLK);
           last_cycles++;
-          if (!ar_done && ARREADY === 1'b1) begin
+          arr = ARREADY;
+          rv  = RVALID;
+          rr  = RRESP;
+          rd  = RDATA;
+          `TB_DRV;
+          if (!ar_done && arr === 1'b1) begin
             ar_done = 1'b1;
             ARVALID <= 1'b0;
           end
-          if (RVALID === 1'b1) begin
-            bt_err[i]   = (RRESP !== 2'b00);
-            bt_rdata[i] = RDATA;
+          if (rv === 1'b1) begin
+            bt_err[i]   = (rr !== 2'b00);
+            bt_rdata[i] = rd;
             break;
           end
           last_wait++;
@@ -150,6 +165,9 @@ module sram_tb_axi4l_master #(
     int unsigned busy;    // idle cycles left before beat ni
     int unsigned idle;    // cycles without a response, for the timeout
     bit          aw_v, w_v, ar_v, resp, hazard;
+    logic        awr, wr, bv, arr, rv;  // inputs sampled at the edge
+    logic [1:0]  br, rr;
+    logic [DW-1:0] rd;
     last_cycles = 0;
     last_wait   = 0;
     ni   = 0;
@@ -161,18 +179,27 @@ module sram_tb_axi4l_master #(
     busy = (n > 0) ? bt_busy[0] : 0;
     @(posedge ACLK);
     while (done < n) begin
+      awr = AWREADY;
+      wr  = WREADY;
+      arr = ARREADY;
+      bv  = BVALID;
+      br  = BRESP;
+      rv  = RVALID;
+      rr  = RRESP;
+      rd  = RDATA;
+      `TB_DRV;
       // Responses (BREADY / RREADY are always high)
       resp = 1'b0;
-      if (BVALID === 1'b1 && wq.size() > 0) begin
-        bt_err[wq[0]]   = (BRESP !== 2'b00);
+      if (bv === 1'b1 && wq.size() > 0) begin
+        bt_err[wq[0]]   = (br !== 2'b00);
         bt_rdata[wq[0]] = '0;
         void'(wq.pop_front());
         done++;
         resp = 1'b1;
       end
-      if (RVALID === 1'b1 && rq.size() > 0) begin
-        bt_err[rq[0]]   = (RRESP !== 2'b00);
-        bt_rdata[rq[0]] = RDATA;
+      if (rv === 1'b1 && rq.size() > 0) begin
+        bt_err[rq[0]]   = (rr !== 2'b00);
+        bt_rdata[rq[0]] = rd;
         void'(rq.pop_front());
         done++;
         resp = 1'b1;
@@ -186,15 +213,15 @@ module sram_tb_axi4l_master #(
         end
       end
       // Address / data handshakes of the previous cycle's requests
-      if (aw_v && AWREADY === 1'b1) begin
+      if (aw_v && awr === 1'b1) begin
         aw_v = 1'b0;
         AWVALID <= 1'b0;
       end
-      if (w_v && WREADY === 1'b1) begin
+      if (w_v && wr === 1'b1) begin
         w_v = 1'b0;
         WVALID <= 1'b0;
       end
-      if (ar_v && ARREADY === 1'b1) begin
+      if (ar_v && arr === 1'b1) begin
         ar_v = 1'b0;
         ARVALID <= 1'b0;
       end

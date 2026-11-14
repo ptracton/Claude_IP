@@ -369,6 +369,39 @@ request of the same kind only after the previous response. Deeper slots
 would be an adapter change (`IP/common`), not made. Through a bus matrix every beat is a single transfer (AHB: 4
 cycles per beat).
 
+### Results (Verilator, standard host)
+
+The SV bench also runs on Verilator 5.043 (`--sim verilator`, SV tops,
+GENERIC only: the PDK cell models are on csun.edu). 4/4 pass with the same
+comparison counts as VCS / Xcelium:
+
+| Bus | Result | Comparisons | Model-checked responses | Build (wall) |
+|---|---|---|---|---|
+| AHB-Lite | PASS | 117,663 | 53,826 | ~5 min |
+| APB4 | PASS | 117,492 | 53,762 | ~6 min |
+| AXI4-Lite | PASS | 118,360 | 54,045 | ~29 min |
+| Wishbone | PASS | 117,492 | 53,762 | ~5 min |
+
+Each run simulates in 3-6 s. The build and run are capped at 8 GB
+(`systemd-run --user --scope -p MemoryMax=8G`; `SRAM_VERILATOR_MEM`
+overrides) and Verilator runs go one at a time; Verilator itself allocates
+0.9-1.9 GB. The AXI4-Lite build is slow in Verilator's conversion step
+(about 1000 s against 140 s for the other buses). Bench adaptations, all
+inactive on VCS / Xcelium:
+
+- drives 1 ns after the clock edge (`sram_tb_drv.svh`): with `--timing`, a
+  nonblocking assignment from a process resumed by the edge reaches flops
+  clocked by that same edge;
+- `sram_model` tracks known bits explicitly (two-state, no X);
+- the leaf arrays are public (`sram_tb.vlt`) and the backdoor retries a
+  path under Verilator's `TOP.` root and resolves a trailing `[N]` with
+  `vpi_handle_by_index`.
+
+The ECC encoder / decoder build their Hamming position tables at
+elaboration (constant functions, O(K)). Calling the 1024-step
+`sram_pkg::ecc_data_pos()` per bit in `always_comb` ran on every evaluation
+in Verilator, and unrolling it ran Verilator out of memory (> 10 GB).
+
 ### Code coverage
 
 VCS code coverage (line, condition, toggle, FSM, branch) of the sram RTL:
@@ -662,7 +695,13 @@ python3 sim_sram.py --sim all --proto all --lang all --tech all --coverage --job
                                                        # all 80 runs + coverage reports
 ```
 
-Options: `--sim vcs|xcelium|all`, `--proto ahb|apb|axi4l|wb|all`,
+Standard host (Verilator, SV tops, GENERIC):
+
+```bash
+python3 sim_sram.py --sim verilator --proto all        # 4 builds, one at a time, 8 GB cap
+```
+
+Options: `--sim vcs|xcelium|verilator|all`, `--proto ahb|apb|axi4l|wb|all`,
 `--lang sv|vhdl|all`, `--tech generic|saed90|saed32|saed14|sky130|all`,
 `--test <name>` (see Tests), `--waves`, `--coverage`, `--jobs N`. Results and
 coverage files are listed under Simulation Results.

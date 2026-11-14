@@ -107,8 +107,12 @@ task automatic test_ecc();
     rd_chk(s, idx, 0, "healed");
     row($sformatf("%-6s RMW of a 2-bit word: ERROR, unchanged, armed injection not used up",
                   slv[s].name));
-    // ---- backdoor: every stored bit
-    if (TECH == 0) begin
+    // ---- backdoor: every stored bit (GENERIC, simulators with VPI / VHPI)
+    if (TECH == 0 && !BD_OK) begin
+      row($sformatf("%-6s backdoor bit flips SKIPPED (no VPI/VHPI backdoor on this simulator)",
+                    slv[s].name));
+    end
+    if (TECH == 0 && BD_OK) begin
       wr(s, idx, rnd(s));
       bd_flip(sb, idx, 0, mw);
       bd_flip(sb, idx, 0, mw);

@@ -91,8 +91,30 @@ target except SAED90 the "WNS" column was therefore the hold slack. The
 summary now reports setup WNS, hold WNS and the `report_constraint`
 violator count separately.
 
-## Other tools
+## Yosys / Vivado / Quartus (standard hosts)
 
-Yosys, Vivado and Quartus have not been re-run since the 2026-10-09 RTL
-redesign. They run on standard hosts only, and their scripts still list the
-old file set.
+All 8 variants (4 protocols x SV/VHDL) pass in all three tools as of
+2026-11-13; see the README Synthesis Results for the numbers. No open issues.
+
+### Fixed 2026-11-13: AHB failed or blew up after the HSIZE changes
+
+- **Yosys 0.60 rejected `return <expr>;`** in the SV functions `lane_mask`
+  (`bus_matrix_ahb_tgt.sv`) and `be_size` (`bus_matrix_ahb_ini.sv`), so the
+  SV `bus_matrix_ahb` synthesis failed. Both now assign the function name.
+  Keep `return` out of SV functions in synthesizable RTL.
+- **VHDL `lane_mask` built a 32-bit divider.** `b / (2 ** sz)` with `sz`
+  taken from `HSIZE` is a division by a signal-dependent value, which the
+  GHDL plugin built as a full integer divider (22,980 Yosys cells for the VHDL
+  AHB top against 1,839 for SV). It now shifts an `OFF_W`-bit `unsigned`,
+  like the SV, and `be_size` does the same. The new functions were compared
+  exhaustively with the old ones for `DATA_W` 8/16/32/64 and are identical.
+- **Quartus 23.1std has no VHDL-2008 `maximum()`.**
+  `bus_matrix_ahb_ini.vhd` uses a local `at_least_1()` instead.
+
+### Accepted: Yosys counts 2 more flops on the VHDL AHB top (98 vs 96)
+
+Yosys' FSM pass extracts the 3-state enum in each of the 2 VHDL
+`bus_matrix_ahb_tgt` instances and re-encodes it one-hot (3 flops instead
+of 2). The SV twin uses an enum with explicit encodings, which Yosys leaves
+alone. Vivado and Quartus report 96 for both languages, so the logic is the
+same; only Yosys' encoding choice differs.

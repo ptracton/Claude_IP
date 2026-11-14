@@ -215,3 +215,4 @@ virtualenv/CLAUDE_IP/*
 *.cf
 *.vvp
 */*/*/verification/work/*
+CrossCompilers/

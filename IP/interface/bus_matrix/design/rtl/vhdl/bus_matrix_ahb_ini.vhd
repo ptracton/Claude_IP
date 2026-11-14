@@ -73,15 +73,24 @@ architecture rtl of bus_matrix_ahb_ini is
     return k;
   end function log2;
 
+  -- n, but at least 1. (Not VHDL-2008 maximum(): Quartus 23.1std lacks it.)
+  function at_least_1(n : natural) return positive is
+  begin
+    if n > 1 then
+      return n;
+    end if;
+    return 1;
+  end function at_least_1;
+
   constant BUS_SIZE : natural := log2(STRB_W);
   -- Byte-offset width (at least 1 bit, as OffW in the SV twin).
-  constant OFF_W    : positive := maximum(1, BUS_SIZE);
+  constant OFF_W    : positive := at_least_1(BUS_SIZE);
 
   -- be_size — HSIZE of a lane mask at byte offset `offset`: k when the mask
   -- is the naturally aligned block of 2**k lanes holding the offset (as the
   -- target adapter built it from the master's HSIZE), otherwise the bus size
   -- (a full mask, or write strobes that do not form such a block).
-  function be_size(be : std_ulogic_vector(STRB_W - 1 downto 0); offset : natural)
+  function be_size(be : std_ulogic_vector(STRB_W - 1 downto 0); offset : unsigned(OFF_W - 1 downto 0))
     return std_ulogic_vector is
     variable size  : natural := BUS_SIZE;
     variable blk   : std_ulogic_vector(STRB_W - 1 downto 0);
@@ -92,7 +101,7 @@ architecture rtl of bus_matrix_ahb_ini is
       while base + 2 ** k <= STRB_W loop
         blk := (others => '0');
         blk(base + 2 ** k - 1 downto base) := (others => '1');
-        if be = blk and offset / (2 ** k) = base / (2 ** k) then
+        if be = blk and shift_right(offset, k) = to_unsigned((base mod 2 ** OFF_W) / 2 ** k, OFF_W) then
           size := k;
         end if;
         base := base + 2 ** k;
@@ -122,7 +131,7 @@ begin
 
   HSEL   <= aphase;
   HTRANS <= HTRANS_NONSEQ when aphase = '1' else HTRANS_IDLE;
-  size   <= be_size(core_be, to_integer(unsigned(core_addr(OFF_W - 1 downto 0))));
+  size   <= be_size(core_be, unsigned(core_addr(OFF_W - 1 downto 0)));
 
   -- HADDR aligned to 2**size bytes
   p_haddr : process (all) is

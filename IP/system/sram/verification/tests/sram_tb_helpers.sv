@@ -237,10 +237,12 @@ endtask
 
 // Fill storage bytes [p0, p1) of an instance (X: unknown).
 task automatic sh_fill(input int sb, input int p0, input int p1, input logic [7:0] v);
-  for (int p = p0; p < p1; p++) begin
-    if (v === 8'hxx) shadow[sb].delete(p);
-    else shadow[sb][p] = v;
-  end
+  for (int p = p0; p < p1; p++) shadow[sb][p] = v;
+endtask
+
+// Forget storage bytes p0..p1-1 (contents unknown, e.g. after shutdown).
+task automatic sh_forget(input int sb, input int p0, input int p1);
+  for (int p = p0; p < p1; p++) shadow[sb].delete(p);
 endtask
 
 // Fill power domain d of an instance.
@@ -251,13 +253,21 @@ task automatic sh_fill_dom(input int sb, input int d, input logic [7:0] v);
   sh_fill(sb, d * n / npd, (d + 1) * n / npd, v);
 endtask
 
+// Forget power domain d of an instance (shut down: contents lost).
+task automatic sh_forget_dom(input int sb, input int d);
+  int n, npd;
+  n   = st_bytes(sb);
+  npd = slv[a_slave[sb]].npd;
+  sh_forget(sb, d * n / npd, (d + 1) * n / npd);
+endtask
+
 // Compare read data with the shadow on the given lanes (X bytes skipped).
 task automatic cmp_lanes(input int s, input int idx, input logic [63:0] got,
                          input logic [7:0] lanes, input string what);
   logic [63:0] exp;
   exp = sh_word(s, idx);
   for (int b = 0; b < nb(s); b++) begin
-    if (lanes[b] && exp[8*b +: 8] !== 8'hxx) begin
+    if (lanes[b] && sh_known(slv[s].sb, idx * nb(s) + b)) begin
       chk(got[8*b +: 8] === exp[8*b +: 8],
           $sformatf("%s: %s word %0d lane %0d got %h exp %h (word got %h exp %h)",
                     what, slv[s].name, idx, b, got[8*b +: 8], exp[8*b +: 8],
@@ -397,7 +407,7 @@ endfunction
 
 task automatic set_mode(input int sb, input int d, input logic [1:0] mode);
   sb_cyc(sb, 1);
-  pwr_req[sb][2*d +: 2] <= mode;
+  `TB_DRV; pwr_req[sb][2*d +: 2] <= mode;
 endtask
 
 task automatic wait_mode(input int sb, input int d, input logic [1:0] mode,
@@ -421,9 +431,9 @@ endtask
 
 task automatic inject(input int sb, input logic [1:0] kind);
   sb_cyc(sb, 1);
-  ecc_inj[sb] <= kind;
+  `TB_DRV; ecc_inj[sb] <= kind;
   sb_cyc(sb, 1);
-  ecc_inj[sb] <= 2'b00;
+  `TB_DRV; ecc_inj[sb] <= 2'b00;
 endtask
 
 // Wait (in the instance's clock) until busy_o is low.
@@ -494,8 +504,10 @@ task automatic reset_all();
   rst_b_n = 1'b0;
   cyc_a(10);
   cyc_b(10);
-  @(posedge clk_a) rst_a_n <= 1'b1;
-  @(posedge clk_b) rst_b_n <= 1'b1;
+  @(posedge clk_a);
+  `TB_DRV; rst_a_n <= 1'b1;
+  @(posedge clk_b);
+  `TB_DRV; rst_b_n <= 1'b1;
   sh_reset();
   for (int sb = 0; sb < NSB; sb++) wait_idle(sb);
   cyc_a(4);
@@ -526,7 +538,17 @@ endtask
 // through IP/common/verification/dpi/claude_backdoor.c. The reference model
 // is told about every change (set_fault).
 // ---------------------------------------------------------------------------
-`ifdef VHDL_DUT
+`ifdef TB_NO_BACKDOOR
+// No VPI / VHPI on this simulator (xsim; ModelSim with a VHDL DUT): the
+// backdoor bit flips in test_ecc are skipped and reported as SKIPPED.
+localparam bit BD_OK = 1'b0;
+function automatic string bd_get(input string path);
+  return "";
+endfunction
+function automatic int bd_put(input string path, input string bits);
+  return 0;
+endfunction
+`elsif VHDL_DUT
 // VHDL storage: the VHPI entry points of the same helper
 import "DPI-C" function string claude_bd_vget(input string path);
 import "DPI-C" function int    claude_bd_vput(input string path, input string bits);
@@ -545,6 +567,9 @@ endfunction
 function automatic int bd_put(input string path, input string bits);
   return claude_bd_put(path, bits);
 endfunction
+`endif
+`ifndef TB_NO_BACKDOOR
+localparam bit BD_OK = 1'b1;
 `endif
 
 // Leaf array word holding word idx of instance sb (GENERIC leaf, one per bank).

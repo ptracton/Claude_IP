@@ -36,9 +36,11 @@ set WORK   ${BM}/verification/work/modelsim/axi4l_sv
 # ---------------------------------------------------------------------------
 # Create work library
 # ---------------------------------------------------------------------------
+# Work from ${WORK} with a local "work" library (as sim_bus_matrix.py does):
+# no vmap, so no modelsim.ini is written and each run gets its own library.
 file mkdir ${WORK}
-vlib ${WORK}/work
-vmap work ${WORK}/work
+cd ${WORK}
+vlib work
 
 # ---------------------------------------------------------------------------
 # Compile RTL and testbench

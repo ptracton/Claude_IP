@@ -27,19 +27,71 @@
  *   Xcelium  add this file to the xrun command, -access +rw
  *            (VHDL: -ccargs -DCLAUDE_BD_VHPI)
  *   Questa   vlog this file with the sources, vsim +acc (untested)
+ *   Verilator add this file to the verilator command with --vpi, and make the
+ *            target variables public (public_flat_rw in a .vlt file)
  *   Icarus   no DPI-C support: backdoor tests are skipped
  */
+#include <stdlib.h>
 #include <string.h>
 #include "vpi_user.h"
 #ifdef CLAUDE_BD_VHPI
 #include "vhpi_user.h"
 #endif
 
+/* C linkage when compiled as C++ (Verilator builds .c files with the C++
+ * compiler), so the DPI imports resolve. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static char claude_bd_buf[8192];
+
+/* VPI handle of a dotted path, element selects included. When the simulator
+ * cannot resolve a trailing array element by name ("...mem[5]": Verilator
+ * 5.x), the array is looked up without it and the element taken with
+ * vpi_handle_by_index. */
+static vpiHandle claude_bd_lookup(const char *path)
+{
+  static char base[4096];
+  vpiHandle   h = vpi_handle_by_name((PLI_BYTE8 *)path, NULL);
+  size_t      n = strlen(path);
+  const char *lb;
+  char       *end;
+  long        idx;
+  if (h != NULL || n == 0 || n >= sizeof(base) || path[n - 1] != ']') {
+    return h;
+  }
+  lb = strrchr(path, '[');
+  if (lb == NULL || lb == path) {
+    return NULL;
+  }
+  idx = strtol(lb + 1, &end, 10);
+  if (end == lb + 1 || *end != ']') {
+    return NULL;
+  }
+  memcpy(base, path, (size_t)(lb - path));
+  base[lb - path] = '\0';
+  h = vpi_handle_by_name((PLI_BYTE8 *)base, NULL);
+  return (h == NULL) ? NULL : vpi_handle_by_index(h, (PLI_INT32)idx);
+}
+
+/* As given, then under "TOP." (Verilator roots the design hierarchy in a
+ * scope named TOP: tb.u_dut is TOP.tb.u_dut). */
+static vpiHandle claude_bd_handle(const char *path)
+{
+  static char top[4096];
+  vpiHandle   h = claude_bd_lookup(path);
+  if (h != NULL || strlen(path) + 5 > sizeof(top)) {
+    return h;
+  }
+  strcpy(top, "TOP.");
+  strcat(top, path);
+  return claude_bd_lookup(top);
+}
 
 const char *claude_bd_get(const char *path)
 {
-  vpiHandle   h = vpi_handle_by_name((PLI_BYTE8 *)path, NULL);
+  vpiHandle   h = claude_bd_handle(path);
   s_vpi_value v;
   if (h == NULL) {
     return "";
@@ -53,7 +105,7 @@ const char *claude_bd_get(const char *path)
 
 int claude_bd_put(const char *path, const char *bits)
 {
-  vpiHandle   h = vpi_handle_by_name((PLI_BYTE8 *)path, NULL);
+  vpiHandle   h = claude_bd_handle(path);
   s_vpi_value v;
   if (h == NULL) {
     return 0;
@@ -188,5 +240,9 @@ int claude_bd_vput(const char *path, const char *bits)
   CLAUDE_BD_NUM(v) = n;
   v.value.str      = (void *)claude_bd_enums;
   return vhpi_put_value(h, &v, vhpiDepositPropagate) == 0;
+}
+#endif
+
+#ifdef __cplusplus
 }
 #endif

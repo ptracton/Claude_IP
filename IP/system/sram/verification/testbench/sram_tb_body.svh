@@ -341,6 +341,7 @@
   // -------------------------------------------------------------------------
   // Tests
   // -------------------------------------------------------------------------
+  `include "sram_tb_drv.svh"
   `include "sram_tb_helpers.sv"
   `include "test_reset.sv"
   `include "test_params.sv"
@@ -357,6 +358,13 @@
 
 `ifdef VCS
   initial if ($test$plusargs("waves")) $vcdpluson(0, `TB_NAME);
+`endif
+`ifdef VERILATOR
+  // needs a --trace-fst build (sim_sram.py --sim verilator --waves)
+  initial if ($test$plusargs("waves")) begin
+    $dumpfile("waves.fst");
+    $dumpvars(0, `TB_NAME);
+  end
 `endif
 
   string only;

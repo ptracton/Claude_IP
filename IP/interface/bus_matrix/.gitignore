@@ -52,6 +52,13 @@ verification/lint/spyglass/spyglass.out
 verification/lint/spyglass/report_hdl.txt
 verification/lint/spyglass/VCSOptFile.txt
 
+# Tool droppings in the IP root (vsim / vivado started from here)
+/transcript
+/vsim.wlf
+/modelsim.ini
+/vivado*.jou
+/vivado*.log
+
 # Waveform dumps
 *.vcd
 *.vpd

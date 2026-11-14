@@ -45,6 +45,7 @@ module sram_tb_wb_master #(
     last_cycles = 0;
     last_wait   = 0;
     @(posedge CLK_I);
+    `TB_DRV;
     CYC_O <= 1'b1;
     for (int unsigned i = 0; i < n; i++) begin
       if (bt_busy[i] > 0) begin
@@ -53,6 +54,7 @@ module sram_tb_wb_master #(
           @(posedge CLK_I);
           last_cycles++;
         end
+        `TB_DRV;
       end
       STB_O <= 1'b1;
       WE_O  <= bt_we[i];
@@ -73,6 +75,7 @@ module sram_tb_wb_master #(
       end while (ACK_I !== 1'b1 && ERR_I !== 1'b1);
       bt_rdata[i] = DAT_I;
       bt_err[i]   = (ERR_I === 1'b1);
+      `TB_DRV;
     end
     STB_O <= 1'b0;
     CYC_O <= 1'b0;

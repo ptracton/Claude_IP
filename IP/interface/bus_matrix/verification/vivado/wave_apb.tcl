@@ -2,7 +2,7 @@
 #
 # Sourced automatically when simulation runs (xsim.simulate.custom_tcl).
 # Can also be sourced manually from the Vivado Tcl console after
-# launching simulation.
+# launching simulation (`restart` first: the script ends with `run -all`).
 
 add_wave_divider "Clock & Reset"
 add_wave /tb_bus_matrix_apb/clk
@@ -46,3 +46,7 @@ add_wave_divider "Arbiters"
 # xsim names generate scopes "\gen_arb[j].u_arb ", so add the core's grant
 # array (one entry per slave) instead of each arbiter's gnt.
 add_wave {/tb_bus_matrix_apb/u_dut/u_core/gnt}
+
+# xsim.simulate.custom_tcl replaces Vivado's default simulate script, which
+# would otherwise issue the run command, so run the testbench to its end here.
+run -all

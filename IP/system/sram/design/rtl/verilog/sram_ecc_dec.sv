@@ -20,6 +20,40 @@ module sram_ecc_dec #(
 
   localparam int unsigned R = sram_pkg::ecc_hamming_bits(K);
 
+  // POS[j*R +: R] = Hamming position of data bit j (as sram_pkg::ecc_data_pos(j)),
+  // computed at elaboration in O(K); COVER[i*K +: K] = data bits whose position has
+  // bit i set. Constants, so no simulator runs a position search at run time.
+  function automatic logic [K*R-1:0] data_positions();
+    logic [K*R-1:0] p;
+    int unsigned pos;
+    pos = 2;
+    for (int unsigned j = 0; j < K; j++) begin
+      pos++;                                    // next position ...
+      if ((pos & (pos - 1)) == 0) pos++;        // ... that is not a power of two
+      p[j*R +: R] = R'(pos);
+    end
+    return p;
+  endfunction
+
+  localparam logic [K*R-1:0] POS = data_positions();   // POS[j*R +: R]
+
+  // (Recomputes the positions instead of reading POS: some tools reject a
+  // localparam indexed by a loop variable inside a constant function.)
+  function automatic logic [R*K-1:0] cover_masks();
+    logic [R*K-1:0] m;
+    int unsigned pos;
+    m   = '0;
+    pos = 2;
+    for (int unsigned j = 0; j < K; j++) begin
+      pos++;
+      if ((pos & (pos - 1)) == 0) pos++;
+      for (int unsigned i = 0; i < R; i++) m[i*K + j] = ((pos >> i) & 1) != 0;
+    end
+    return m;
+  endfunction
+
+  localparam logic [R*K-1:0] COVER = cover_masks();  // COVER[i*K +: K]
+
   logic [K-1:0] data;
   logic [R-1:0] stored_check;
   logic         stored_overall;
@@ -30,25 +64,19 @@ module sram_ecc_dec #(
   assign stored_check   = code_i[K+R-1:K];
   assign stored_overall = code_i[K+R];
 
-  // Syndrome, overall parity and single-bit correction.
-  always_comb begin : p_decode
-    syndrome = stored_check;
-    for (int unsigned j = 0; j < K; j++) begin
-      for (int unsigned i = 0; i < R; i++) begin
-        if (((sram_pkg::ecc_data_pos(j) >> i) & 1) != 0) begin
-          syndrome[i] = syndrome[i] ^ data[j];
-        end
-      end
-    end
-    parity = (^code_i);
-    data_o = data;
-    for (int unsigned j = 0; j < K; j++) begin
-      if (parity && (syndrome == R'(sram_pkg::ecc_data_pos(j)))) begin
-        data_o[j] = ~data[j];
-      end
-    end
-    single_o = parity;
-    double_o = !parity && (syndrome != '0);
+  // Syndrome and overall parity.
+  for (genvar i = 0; i < R; i++) begin : g_syn
+    assign syndrome[i] = stored_check[i] ^ (^(data & COVER[i*K +: K]));
   end
+  assign parity = ^code_i;
+
+  // Single-bit correction: flip the data bit whose position equals the
+  // syndrome (a flipped check or parity bit leaves the data intact).
+  for (genvar j = 0; j < K; j++) begin : g_fix
+    assign data_o[j] = data[j] ^ (parity && (syndrome == POS[j*R +: R]));
+  end
+
+  assign single_o = parity;
+  assign double_o = !parity && (syndrome != '0);
 
 endmodule : sram_ecc_dec

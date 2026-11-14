@@ -2,7 +2,7 @@
 #
 # Sourced automatically when simulation runs (xsim.simulate.custom_tcl).
 # Can also be sourced manually from the Vivado Tcl console after
-# launching simulation.
+# launching simulation (`restart` first: the script ends with `run -all`).
 
 add_wave_divider "Clock & Reset"
 add_wave /tb_bus_matrix_ahb/clk
@@ -12,6 +12,7 @@ add_wave_divider "Master ports"
 add_wave -radix hex /tb_bus_matrix_ahb/M_HSEL
 add_wave -radix hex /tb_bus_matrix_ahb/M_HADDR
 add_wave -radix hex /tb_bus_matrix_ahb/M_HTRANS
+add_wave -radix hex /tb_bus_matrix_ahb/M_HSIZE
 add_wave -radix hex /tb_bus_matrix_ahb/M_HWRITE
 add_wave -radix hex /tb_bus_matrix_ahb/M_HWDATA
 add_wave -radix hex /tb_bus_matrix_ahb/M_HWSTRB
@@ -23,6 +24,7 @@ add_wave_divider "Slave ports"
 add_wave -radix hex /tb_bus_matrix_ahb/S_HSEL
 add_wave -radix hex /tb_bus_matrix_ahb/S_HADDR
 add_wave -radix hex /tb_bus_matrix_ahb/S_HTRANS
+add_wave -radix hex /tb_bus_matrix_ahb/S_HSIZE
 add_wave -radix hex /tb_bus_matrix_ahb/S_HWRITE
 add_wave -radix hex /tb_bus_matrix_ahb/S_HWDATA
 add_wave -radix hex /tb_bus_matrix_ahb/S_HWSTRB
@@ -46,3 +48,7 @@ add_wave_divider "Arbiters"
 # xsim names generate scopes "\gen_arb[j].u_arb ", so add the core's grant
 # array (one entry per slave) instead of each arbiter's gnt.
 add_wave {/tb_bus_matrix_ahb/u_dut/u_core/gnt}
+
+# xsim.simulate.custom_tcl replaces Vivado's default simulate script, which
+# would otherwise issue the run command, so run the testbench to its end here.
+run -all

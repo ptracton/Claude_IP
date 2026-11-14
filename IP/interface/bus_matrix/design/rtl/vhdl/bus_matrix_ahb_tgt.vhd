@@ -74,14 +74,16 @@ architecture rtl of bus_matrix_ahb_tgt is
 
   -- lane_mask — lanes of a 2**size-byte transfer at byte offset `offset`:
   -- lane b is on when it is in the same naturally aligned block.
-  function lane_mask(size : std_ulogic_vector(2 downto 0); offset : natural)
+  -- Shifts of OFF_W-bit values (not integer division by 2**size, which
+  -- synthesizes to a full divider) keep this as small as the SV twin.
+  function lane_mask(size : std_ulogic_vector(2 downto 0); offset : unsigned(OFF_W - 1 downto 0))
     return std_ulogic_vector is
     variable mask : std_ulogic_vector(STRB_W - 1 downto 0);
-    variable sz   : natural;
+    variable sz   : natural range 0 to 7;
   begin
     sz := to_integer(unsigned(size));
     for b in 0 to STRB_W - 1 loop
-      if b / (2 ** sz) = offset / (2 ** sz) then
+      if shift_right(to_unsigned(b mod 2 ** OFF_W, OFF_W), sz) = shift_right(offset, sz) then
         mask(b) := '1';
       else
         mask(b) := '0';
@@ -158,7 +160,7 @@ begin
       elsif hready_i = '1' and aphase = '1' then
         addr_q <= HADDR;
         we_q   <= HWRITE;
-        mask_q <= lane_mask(HSIZE, to_integer(unsigned(HADDR(OFF_W - 1 downto 0))));
+        mask_q <= lane_mask(HSIZE, unsigned(HADDR(OFF_W - 1 downto 0)));
       end if;
     end if;
   end process p_aphase;

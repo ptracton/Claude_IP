@@ -6,8 +6,9 @@ Automatically detects the host environment and runs appropriate tools:
   - On *.csun.edu: Design Compiler with the SAED90/32/14 and SKY130 PDKs
 
 Every protocol variant (APB4, AHB-Lite, AXI4-Lite, Wishbone) is synthesized
-with its default parameters (bus_matrix_pkg), in SV and, for Design
-Compiler, also in VHDL.
+with its default parameters (bus_matrix_pkg), in SV and in VHDL-2008
+(Vivado: synth_<top>_vhdl.tcl, Quartus: synth_<top>_vhdl.tcl, Design
+Compiler: synth.tcl).
 
 STA (PrimeTime, csun.edu only) is a separate step — see
 synthesis/run_primetime_sta.py — run after synthesizing whichever PDK(s)
@@ -118,6 +119,9 @@ PDK_CONFIGS = {
 
 
 PROTOS = ["apb", "ahb", "axi4l", "wb"]
+# Vivado and Quartus synthesize both the SV and the VHDL-2008 top-levels;
+# the VHDL scripts are synth_<top>_vhdl.tcl and name their outputs <top>_vhdl.
+LANGS = ["sv", "vhdl"]
 LANG_SUFFIX = {"sv": "", "vhdl": "_vhdl"}
 
 
@@ -422,14 +426,14 @@ def run_vivado(ip_path):
     all_pass = True
     results = []
 
-    for proto in PROTOS:
-        top = f"bus_matrix_{proto}"
+    for lang, proto in [(l, p) for l in LANGS for p in PROTOS]:
+        top = f"bus_matrix_{proto}" + ("_vhdl" if lang == "vhdl" else "")
         tcl_file = os.path.join(synth_dir, f"synth_{top}.tcl")
         log_file = os.path.join(work_dir, f"{top}_vivado.log")
 
         print(f"\n  [Vivado] Synthesizing {top}...")
         rc, out = run_cmd(
-            ["vivado", "-mode", "batch", "-source", tcl_file],
+            ["vivado", "-mode", "batch", "-nojournal", "-nolog", "-source", tcl_file],
             cwd=ip_path,
             logfile=log_file,
             timeout=600,
@@ -449,6 +453,7 @@ def run_vivado(ip_path):
 
         results.append({
             "variant": proto.upper(),
+            "lang": lang.upper(),
             "top": top,
             "luts": luts,
             "ffs": ffs,
@@ -462,10 +467,10 @@ def run_vivado(ip_path):
     with open(report_path, "w") as fh:
         fh.write("Vivado Synthesis Report — bus_matrix (Zynq-7010 xc7z010clg400-1)\n")
         fh.write("=" * 70 + "\n\n")
-        fh.write(f"{'Variant':<10} {'LUTs':<8} {'FFs':<8} {'BRAM':<6} {'DSP':<6} {'WNS':<10} {'Result'}\n")
-        fh.write("-" * 60 + "\n")
+        fh.write(f"{'Variant':<10} {'Lang':<6} {'LUTs':<8} {'FFs':<8} {'BRAM':<6} {'DSP':<6} {'WNS':<10} {'Result'}\n")
+        fh.write("-" * 67 + "\n")
         for r in results:
-            fh.write(f"{r['variant']:<10} {r['luts']:<8} {r['ffs']:<8} {r['bram']:<6} {r['dsp']:<6} {r['wns']:<10} {r['status']}\n")
+            fh.write(f"{r['variant']:<10} {r['lang']:<6} {r['luts']:<8} {r['ffs']:<8} {r['bram']:<6} {r['dsp']:<6} {r['wns']:<10} {r['status']}\n")
 
     return all_pass, results
 
@@ -498,8 +503,8 @@ def run_quartus(ip_path):
     all_pass = True
     results = []
 
-    for proto in PROTOS:
-        top = f"bus_matrix_{proto}"
+    for lang, proto in [(l, p) for l in LANGS for p in PROTOS]:
+        top = f"bus_matrix_{proto}" + ("_vhdl" if lang == "vhdl" else "")
         tcl_file = os.path.join(synth_dir, f"synth_{top}.tcl")
         log_file = os.path.join(work_dir, f"{top}_quartus.log")
 
@@ -525,6 +530,7 @@ def run_quartus(ip_path):
 
         results.append({
             "variant": proto.upper(),
+            "lang": lang.upper(),
             "top": top,
             "registers": regs,
             "status": status,
@@ -534,10 +540,10 @@ def run_quartus(ip_path):
     with open(report_path, "w") as fh:
         fh.write("Quartus Synthesis Report — bus_matrix (Cyclone V SE 5CSEMA4U23C6)\n")
         fh.write("=" * 60 + "\n\n")
-        fh.write(f"{'Variant':<10} {'Registers':<12} {'Result'}\n")
-        fh.write("-" * 35 + "\n")
+        fh.write(f"{'Variant':<10} {'Lang':<6} {'Registers':<12} {'Result'}\n")
+        fh.write("-" * 42 + "\n")
         for r in results:
-            fh.write(f"{r['variant']:<10} {r['registers']:<12} {r['status']}\n")
+            fh.write(f"{r['variant']:<10} {r['lang']:<6} {r['registers']:<12} {r['status']}\n")
 
     return all_pass, results
 

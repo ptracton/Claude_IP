@@ -2,9 +2,9 @@
 """run_regression.py — Full regression harness for the bus_matrix IP.
 
 Runs directed simulation (VCS + Xcelium on csun.edu; Icarus, GHDL, ModelSim
-and Vivado xsim elsewhere), UVM (VCS on csun.edu, Vivado xsim elsewhere), formal
-verification (VC Formal where `vcf` is on PATH, e.g. csun.edu; SymbiYosys
-otherwise), and collects lint results; prints a consolidated pass/fail table.
+and Vivado xsim elsewhere), UVM (VCS on csun.edu; Vivado xsim elsewhere, all five tests one at a time),
+formal verification (VC Formal where `vcf` is on PATH, e.g. csun.edu;
+SymbiYosys otherwise), and lint (lint_bus_matrix.py); prints a consolidated pass/fail table.
 Ported from IP/system/timer/verification/tools/run_regression.py.
 
 Usage:
@@ -52,6 +52,8 @@ LANGS = ["sv", "vhdl"]
 KNOWN_TESTS = ["test_reset", "test_route", "test_strobe", "test_decode_err",
                "test_contention", "test_arb"]
 
+UVM_TESTS = ["bus_matrix_base_test", "bus_matrix_rw_test", "bus_matrix_contention_test",
+             "bus_matrix_map_test", "bus_matrix_decerr_test"]
 STEP_TIMEOUT = 600
 # Formal runs sequentially: 8 jobs at up to 30 minutes plus the two AXI4-Lite
 # jobs at up to 3 hours each (formal_bus_matrix.py budgets).
@@ -185,8 +187,9 @@ def collect_results(ip_path: str) -> list:
     else:
         uvm_work = work / "xsim" / "uvm"
         if uvm_work.exists():
-            status = read_result_log(str(uvm_work / "results.log"))
-            entries.append(("uvm/xsim/bus_matrix_base_test", status))
+            for test in UVM_TESTS:
+                status = read_result_log(str(uvm_work / f"results_{test}.log"))
+                entries.append((f"uvm/xsim/{test}", status))
 
     return entries
 
@@ -246,12 +249,14 @@ def main():
                  "--sim", "vcs", "--test", "all"],
             )
         else:
-            run_step(
-                "UVM simulation — bus_matrix_base_test (Vivado xsim)",
-                [sys.executable,
-                 os.path.join(tools_dir, "uvm_bus_matrix.py"),
-                 "--sim", "xsim", "--test", "bus_matrix_base_test"],
-            )
+            # xsim runs one UVM test per invocation
+            for test in UVM_TESTS:
+                run_step(
+                    f"UVM simulation — {test} (Vivado xsim)",
+                    [sys.executable,
+                     os.path.join(tools_dir, "uvm_bus_matrix.py"),
+                     "--sim", "xsim", "--test", test],
+                )
 
     # ------------------------------------------------------------------ #
     # 2. Formal verification
@@ -267,11 +272,18 @@ def main():
         )
 
     # ------------------------------------------------------------------ #
+    # 2b. Lint — re-run so the collected lint_results.log is never stale
+    # ------------------------------------------------------------------ #
+    if not args.skip_lint:
+        run_step("Lint (all languages)",
+                 [sys.executable, os.path.join(tools_dir, "lint_bus_matrix.py")])
+
+    # ------------------------------------------------------------------ #
     # 3. Collect all results
     # ------------------------------------------------------------------ #
     results = collect_results(ip_path)
 
-    # Lint
+    # Lint (SpyGlass on csun.edu, Verilator + GHDL elsewhere)
     if not args.skip_lint:
         lint_log = os.path.join(ip_path, "verification", "lint", "lint_results.log")
         results.append(("lint", read_result_log(lint_log)))

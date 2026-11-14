@@ -72,7 +72,7 @@ module bus_matrix_ahb_ini #(
         end
       end
     end
-    return size;
+    be_size = size;  // not "return": Yosys 0.60 cannot parse it
   endfunction
 
   logic       dphase_q; // data phase in progress

@@ -186,7 +186,7 @@ task automatic test_dp();
       wait_mode(sb, d, LS, c);
       set_mode(sb, d, SD);
       wait_mode(sb, d, SD, c);
-      sh_fill_dom(sb, d, 8'hxx);
+      sh_forget_dom(sb, d);
       cyc_b(8);
       rd_chk(b, ib, 1, "B in SD");
       set_mode(sb, d, RUN);
@@ -205,9 +205,9 @@ task automatic test_dp();
     wr(slv[b].peer, 5, rnd(slv[b].peer));
     wr(slv[b].peer, 6, rnd(slv[b].peer));
     sb_cyc(sb, 1);
-    clr_req[sb] <= 1'b1;
+    `TB_DRV; clr_req[sb] <= 1'b1;
     sb_cyc(sb, 1);
-    clr_req[sb] <= 1'b0;
+    `TB_DRV; clr_req[sb] <= 1'b0;
     if (n == 0) begin
       // Port B on its own clock: a read issued with the request may be
       // granted before the CDC takes B's permission away, so it returns the
@@ -223,9 +223,9 @@ task automatic test_dp();
       sh_fill(sb, 0, st_bytes(sb), 8'h00);
       wr(slv[b].peer, 6, rnd(slv[b].peer));
       sb_cyc(sb, 1);
-      clr_req[sb] <= 1'b1;
+      `TB_DRV; clr_req[sb] <= 1'b1;
       sb_cyc(sb, 1);
-      clr_req[sb] <= 1'b0;
+      `TB_DRV; clr_req[sb] <= 1'b0;
       cyc_b(8);
     end
     sh_fill(sb, 0, st_bytes(sb), 8'h00);

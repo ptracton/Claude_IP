@@ -140,9 +140,12 @@ bridge plus a 4 KB memory per slave (`bus_matrix_tb_mem`).
 | AXI4-Lite | Cadence Xcelium 25.03   | PASS (82) | PASS (82) |
 | Wishbone  | Cadence Xcelium 25.03   | PASS (82) | PASS (82) |
 
-Results generated 2026-10-10 on a `*.csun.edu` host.
+Results generated 2026-10-10 on a `*.csun.edu` host (AHB-Lite re-run
+2026-11-07 with HSIZE). **The 2026-11-13 AHB RTL edits (see Synthesis
+Results) postdate these runs; re-run VCS/Xcelium there to confirm them.**
 
-Standard host (`salvage`), 2026-10-11:
+Standard host (`salvage`), 2026-11-13 (OSS CAD Suite 2025-12-13, ModelSim
+Intel FPGA Edition 2021.1, Vivado 2023.2):
 
 | Variant | Icarus 13.0 (SV) | GHDL 6.0.0-dev (VHDL) | ModelSim 2021.1 SV | ModelSim 2021.1 VHDL | xsim 2023.2 SV | xsim 2023.2 VHDL |
 |---------|------|------|------|------|------|------|
@@ -151,8 +154,8 @@ Standard host (`salvage`), 2026-10-11:
 | AXI4-Lite | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
 | Wishbone  | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) | PASS (82) |
 
-Getting there took these tool-portability fixes (2026-10-11). **They were made
-after the csun.edu runs above, so re-run the csun.edu flows to confirm them.**
+Getting there took these tool-portability fixes (2026-10-11; the csun.edu
+runs of 2026-11-07 include them):
 - Tests: `UNMAPPED_ADDR` (an unpacked-array `localparam`, which Icarus does
   not support) became the function `unmapped_addr()`. In `test_contention`,
   the forked threads use task-level loop counters: declaring a variable inside
@@ -174,20 +177,33 @@ VCS dumps waveforms to `vcdplus.vpd` and Xcelium to `waves.shm/`, in
 
 ## Interactive Simulation (GUI)
 
-Scripts for waveform-based simulation of the SV testbenches. They require
-`source IP/interface/bus_matrix/setup.sh`. All 4 protocols tested 2026-10-11
-(ModelSim 2021.1 via `vsim -c -do`, Vivado 2023.2 batch `launch_simulation`):
-they compile, load every wave signal, and pass the 82 checks.
+Scripts for waveform-based simulation of the SV and the VHDL testbenches.
+They require `source IP/interface/bus_matrix/setup.sh`. All 16 (4 protocols
+x 2 languages x 2 tools) were tested 2026-11-13, with ModelSim 2021.1 via
+`vsim -c -do` and Vivado 2023.2 via batch `launch_simulation`. Each one
+compiles, loads every wave signal and passes the 82 checks.
 
-| Tool | Script | Notes |
+| Tool | Script (`<v>` = `<proto>` for SV, `<proto>_vhdl` for VHDL) | Notes |
 |------|--------|-------|
-| ModelSim | `verification/modelsim/tb_bus_matrix_<proto>.do` | `do` it from the ModelSim transcript; loads `tb_bus_matrix_<proto>_wave.do` |
-| Vivado   | `verification/vivado/create_project_<proto>.tcl` | creates `verification/vivado/work/<proto>/tb_bus_matrix_<proto>.xpr`; `wave_<proto>.tcl` runs on simulation start |
+| ModelSim | `verification/modelsim/tb_bus_matrix_<v>.do` | `do` it from the ModelSim transcript; loads `tb_bus_matrix_<v>_wave.do` |
+| Vivado   | `verification/vivado/create_project_<v>.tcl` | creates `verification/vivado/work/<v>/tb_bus_matrix_<v>.xpr`; `wave_<v>.tcl` runs on simulation start |
 
 Wave groups: Clock & Reset, Master ports, Slave ports, Core handshake
 (`mst_req/done`, `slv_req/done`, …) and Arbiters (the four grant vectors).
 xsim names generate scopes `\gen_arb[j].u_arb `, so the Vivado wave script
 shows the core's `gnt` array instead of each arbiter's `gnt`.
+
+Fixed 2026-11-13:
+- The ModelSim scripts `cd` into `verification/work/modelsim/<proto>_<lang>/`
+  and use a local `work` library. They used to call `vmap`, which writes a
+  `modelsim.ini`. From the IP root that was the read-only install copy, so
+  the script stopped or loaded a stale library.
+- The Vivado wave scripts end with `run -all`. `xsim.simulate.custom_tcl`
+  replaces Vivado's default simulate script, which is what issues the run.
+  Without it, the project loaded the waves and never ran the testbench, even
+  though Vivado still printed "ran for 1ms". To re-source a wave script by
+  hand, `restart` first.
+- The AHB wave scripts show `M_HSIZE` / `S_HSIZE`.
 
 ## Formal Verification Results
 
@@ -258,7 +274,7 @@ answer only when requested. It asserts these properties:
 | `rr` (round robin) | BMC | 24 | PASS |
 | `fp` (fixed priority) | BMC | 24 | PASS |
 
-SBY v0.60 / Yosys 0.60, boolector. Results generated 2026-10-11 on a standard
+SBY v0.60 / Yosys 0.60, boolector. Results generated 2026-11-13 on a standard
 host (about 10 s per task).
 
 ```bash
@@ -325,9 +341,11 @@ new tests and missed by the older RW and contention tests:
   caught the overwritten slave words.
 
 Results generated 2026-10-10 on Synopsys VCS Y-2026.03. All 5 tests also
-pass on Vivado xsim 2023.2 (standard host, 2026-10-11), with the same
+pass on Vivado xsim 2023.2 (standard host, re-run 2026-11-13), with the same
 transfer, error and coverage counts and 0 scoreboard mismatches. xsim runs one
-test per invocation.
+test per invocation. Each xsim run writes `results.log` and
+`results_<test>.log` in `verification/work/xsim/uvm/`; the regression runs
+all five and collects the per-test files.
 
 ```bash
 python3 verification/tools/uvm_bus_matrix.py --test all --sim vcs     # csun.edu
@@ -354,7 +372,7 @@ The redesigned RTL was written to be SpyGlass-clean without waivers:
 The VHDL mirrors the same structure. VHDL lint has no working path on csun.edu
 (see `.agents/reference_spyglass_lint.md`).
 
-**On standard hosts** (2026-10-11):
+**On standard hosts** (2026-11-13):
 
 | Language | Tool      | Version     | Findings | Waivers | Result |
 |----------|-----------|-------------|----------|---------|--------|
@@ -378,27 +396,56 @@ matrix on each side of every port.
 
 ### Yosys / Vivado / Quartus (standard hosts)
 
-Default configuration, 100 MHz clock. Results generated 2026-10-11.
-The AHB-Lite row predates the HSIZE ports (2026-10-18) and the HADDR alignment
-fix (2026-11-07); re-run these tools on a standard host to refresh it (Design
-Compiler shows 8 more flops).
+Default configuration, 100 MHz clock. Results generated 2026-11-13 (Yosys
+0.60, Vivado 2023.2, Quartus Prime Lite 23.1std). All three tools now
+synthesize both the SV and the VHDL-2008 top-levels.
 
-| Variant | Yosys 0.60 cells / DFFs (SV) | Yosys cells / DFFs (VHDL) | Vivado 2023.2 LUTs / FFs | Vivado WNS | Quartus 23.1std registers |
-|---------|------------|------------|-----------|----------|-----|
-| APB4      | 1514 / 18  | 1517 / 18  | 463 / 18  | +7.07 ns | 18  |
-| AHB-Lite  | 1611 / 88  | 1632 / 90  | 474 / 88  | +5.60 ns | 88  |
-| AXI4-Lite | 2135 / 320 | 2099 / 320 | 555 / 320 | +5.20 ns | 322 |
-| Wishbone  | 1491 / 14  | 1494 / 14  | 459 / 14  | +7.54 ns | 14  |
+| Variant | Lang | Yosys cells / DFFs | Vivado LUTs / FFs | Vivado WNS | Quartus registers |
+|---------|------|-------------|-----------|----------|-----|
+| APB4      | SV   | 1514 / 18  | 463 / 18  | +7.07 ns | 18  |
+| APB4      | VHDL | 1517 / 18  | 471 / 18  | +7.08 ns | 18  |
+| AHB-Lite  | SV   | 1839 / 96  | 503 / 96  | +5.24 ns | 96  |
+| AHB-Lite  | VHDL | 1886 / 98  | 505 / 96  | +5.13 ns | 96  |
+| AXI4-Lite | SV   | 2135 / 320 | 555 / 320 | +5.20 ns | 322 |
+| AXI4-Lite | VHDL | 2099 / 320 | 566 / 320 | +4.89 ns | 322 |
+| Wishbone  | SV   | 1491 / 14  | 459 / 14  | +7.54 ns | 14  |
+| Wishbone  | VHDL | 1494 / 14  | 465 / 14  | +7.54 ns | 14  |
 
 - Vivado: Zynq-7010 (`xc7z010clg400-1`), out-of-context, all MET.
 - Quartus: Cyclone V SE (`5CSEMA4U23C6`), Analysis & Synthesis only.
 - Yosys: generic `synth -flatten`; VHDL via the ghdl plugin.
-- Vivado and Quartus synthesize the SV tops.
+- AHB-Lite has 96 flops since the HSIZE ports, against 88 before; Design
+  Compiler shows the same 8. Yosys counts 98 for the VHDL top because its
+  FSM pass re-encodes each target adapter's 3-state VHDL enum one-hot (3 flops
+  instead of 2). It leaves the SV FSM, which has explicit encodings, alone.
+  Vivado and Quartus count 96 for both languages.
+- VHDL scripts: `synthesis/vivado/synth_<top>_vhdl.tcl` and
+  `synthesis/quartus/synth_<top>_vhdl.tcl`, next to the SV ones. Reports:
+  `synthesis/vivado/report.txt`, `synthesis/quartus/report.txt` (one row per
+  variant and language).
 
 ```bash
 python3 synthesis/yosys/run_synth.py
 python3 synthesis/run_vendor_synth.py --vivado     # or --quartus
 ```
+
+**RTL fixes for the open-source and FPGA tools (2026-11-13).** These came
+with the AHB HSIZE work (2026-10-18) and the HADDR fix (2026-11-07), and were
+found by re-running Yosys, Vivado and Quartus on a standard host:
+- **SV `return` in functions:** Yosys 0.60 cannot parse `return <expr>;`, so
+  Yosys failed on `bus_matrix_ahb`. `lane_mask` (`bus_matrix_ahb_tgt.sv`) and
+  `be_size` (`bus_matrix_ahb_ini.sv`) now assign the function name instead.
+- **VHDL divide in `lane_mask`:** `b / (2 ** sz)`, with `sz` taken from
+  `HSIZE`, built a full 32-bit integer divider, so the VHDL AHB top was 22,980
+  Yosys cells against 1,839 for SV. `lane_mask` and `be_size` now shift an
+  `OFF_W`-bit `unsigned` offset, the same structure as the SV. An exhaustive
+  GHDL comparison of the old and new functions (`DATA_W` 8, 16, 32 and 64)
+  found no difference.
+- **VHDL `maximum()`:** Quartus 23.1std does not provide that VHDL-2008
+  function, so `bus_matrix_ahb_ini.vhd` uses a local `at_least_1()`.
+
+These edits postdate the csun.edu runs: re-run VCS/Xcelium, VC Formal,
+SpyGlass and Design Compiler there to confirm them.
 
 **Quartus Prime Standard needs explicit generate regions.** It rejects
 `for (genvar i = ...)` and generate `if`/`for` without
@@ -558,12 +605,14 @@ On csun.edu the regression runs:
 - UVM on VCS;
 - VC Formal.
 
-On standard hosts it runs Icarus, GHDL, ModelSim and xsim, UVM on xsim, and
-SymbiYosys. In both cases it collects the lint result. Output:
-`verification/work/regression_results.log`.
+On standard hosts it runs Icarus, GHDL, ModelSim and xsim, all 5 UVM tests on
+xsim, and SymbiYosys. In both cases it re-runs lint (`lint_bus_matrix.py`) and
+collects the result. Output: `verification/work/regression_results.log`.
+Synthesis is not part of the regression; run it with the commands under
+Synthesis Results.
 
-Standard host, 2026-10-11: **147/147 PASS**. That is 144 directed-test rows
-(4 simulators, 24 runs), UVM `base_test` on xsim, SymbiYosys and lint.
+Standard host, 2026-11-13: **151/151 PASS**. That is 144 directed-test rows
+(4 simulators, 24 runs), 5 UVM tests on xsim, SymbiYosys and lint.
 
 ## Known Limitations
 

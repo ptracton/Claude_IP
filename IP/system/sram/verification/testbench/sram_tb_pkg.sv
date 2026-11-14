@@ -92,4 +92,10 @@ package sram_tb_pkg;
     return 8'hxx;
   endfunction
 
+  // A byte is known when the shadow holds it. Test this rather than an X
+  // value: two-state simulators (Verilator) have no X.
+  function automatic bit sh_known(int sb, int pos);
+    return shadow[sb].exists(pos);
+  endfunction
+
 endpackage : sram_tb_pkg

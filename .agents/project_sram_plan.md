@@ -842,3 +842,18 @@ Paused and resumed via `.agents/handoff.md`, which holds the full state.
   re-run. AXI4-Lite bench master gained a pipelined mode; `test_pipeline` shows R/W overlap
   (66 vs 128 cycles for 16w+16r at RL1). Details: `.agents/handoff.md`. Step 4 closed; next
   Step 5.
+- 2026-11-13: **Verilator on the standard host (salvage)**, SV tops, GENERIC: 4/4 PASS
+  (`sim_sram.py --sim verilator --proto all`), comparison counts equal to VCS/Xcelium
+  (117,663 / 117,492 / 118,360 / 117,492). Bench: `TB_DRV` 1 ns drive skew
+  (`sram_tb_drv.svh`), `sram_model` known-bit mask (two-state), `TB_NO_BACKDOOR` hook,
+  `sram_tb.vlt` (public leaf arrays). Backdoor C: C linkage, `TOP.` retry, trailing `[N]`
+  via `vpi_handle_by_index`. **RTL (SV only):** `sram_ecc_enc`/`sram_ecc_dec` take
+  elaboration-time position tables (O(K) constant functions; generate + reduction XOR)
+  instead of calling `ecc_data_pos()` per bit in `always_comb` - Verilator evaluated it at
+  run time (ECC ~3000x slower) and `--unroll-count 2048` ran it out of memory (> 10 GB,
+  OOM-killed). Checked: positions equal `ecc_data_pos` for j = 0..1012; SECDED (clean /
+  every single corrected / every double flagged / zero codeword) 0 errors for K = 1..120
+  (Icarus). Runner: 8 GB `systemd-run` MemoryMax scope (`SRAM_VERILATOR_MEM`), 4 g++ jobs,
+  Verilator runs serial. Peak: Verilator 0.9-1.9 GB alloced; AXI4-Lite build ~29 min.
+  To do on csun: VCS/Xcelium regression + coverage, SpyGlass, DC for the ECC RTL edit and
+  the backdoor change.

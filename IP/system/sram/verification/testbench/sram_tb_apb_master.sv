@@ -45,6 +45,7 @@ module sram_tb_apb_master #(
     last_cycles = 0;
     last_wait   = 0;
     @(posedge PCLK);
+    `TB_DRV;
     for (int unsigned i = 0; i < n; i++) begin
       if (bt_busy[i] > 0) begin
         PSEL    <= 1'b0;
@@ -53,6 +54,7 @@ module sram_tb_apb_master #(
           @(posedge PCLK);
           last_cycles++;
         end
+        `TB_DRV;
       end
       // SETUP
       PSEL    <= 1'b1;
@@ -63,6 +65,7 @@ module sram_tb_apb_master #(
       PSTRB   <= bt_we[i] ? (bt_strb[i] & lane_mask(bt_size[i], bt_addr[i])) : '0;
       @(posedge PCLK);
       last_cycles++;
+      `TB_DRV;
       // ACCESS until PREADY
       PENABLE <= 1'b1;
       w = 0;
@@ -79,6 +82,7 @@ module sram_tb_apb_master #(
       end while (PREADY !== 1'b1);
       bt_rdata[i] = PRDATA;
       bt_err[i]   = (PSLVERR === 1'b1);
+      `TB_DRV;
     end
     PSEL    <= 1'b0;
     PENABLE <= 1'b0;

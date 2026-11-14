@@ -7,6 +7,7 @@ add wave -noupdate -divider {Master ports}
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HSEL
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HADDR
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HTRANS
+add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HSIZE
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HWRITE
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HWDATA
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/M_HWSTRB
@@ -17,6 +18,7 @@ add wave -noupdate -divider {Slave ports}
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HSEL
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HADDR
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HTRANS
+add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HSIZE
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HWRITE
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HWDATA
 add wave -noupdate -radix hexadecimal /tb_bus_matrix_ahb/S_HWSTRB

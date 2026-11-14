@@ -44,6 +44,21 @@ when asked.
   only `claude_axi4l_mem_if` moved (SV 96.64, VHDL 97.53). Throughput rows identical in all
   20 AXI runs. README results/coverage tables updated.
 
+## SRAM on Verilator (2026-11-13, salvage, uncommitted)
+`sim_sram.py --sim verilator --proto all`: 4/4 PASS (GENERIC, SV tops), counts equal to VCS.
+SV ECC enc/dec rewritten with elaboration-time position tables (was OOM in Verilator; checked
+equal to `ecc_data_pos` + SECDED sweep). Backdoor C handles Verilator (`TOP.` root, `[N]`).
+Builds capped at 8 GB (systemd scope). Details: plan §13.7 last entry, README "Results
+(Verilator)". **Re-run on csun:** sram VCS/Xcelium + coverage, SpyGlass, DC (ECC RTL edit,
+backdoor change). Next standard-host flows not yet done: Icarus/xsim/ModelSim/GHDL for the
+sram bench (`TB_NO_BACKDOOR` hook exists), XILINX/ALTERA leaves, Yosys/Vivado/Quartus.
+
+## bus_matrix standard-host refresh (2026-11-13, uncommitted)
+All bus_matrix flows pass on salvage (regression 151/151, Yosys/Vivado/Quartus SV+VHDL 8/8 each,
+ModelSim/Vivado GUI scripts SV+VHDL). Small AHB RTL edits (SV + VHDL) for Yosys/Quartus; new
+VHDL synth/GUI scripts. Details: `.agents/project_bus_matrix_upgrade.md` (last entry). The csun
+flows (VCS/Xcelium, VCF, SpyGlass, DC/PT) need a re-run for those RTL edits.
+
 ## Changes in b6b2e17 (2026-10-18/19, committed)
 - **bus_matrix:** VHDL AHB HSIZE mirror (`bus_matrix_ahb{,_tgt,_ini}.vhd`, VHDL tb master
   drives HSIZE); README documents HSIZE. bus_matrix AHB sims SV+VHDL on VCS+Xcelium PASS.

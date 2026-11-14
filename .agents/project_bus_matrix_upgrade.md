@@ -172,3 +172,19 @@ Was checking timer RTL style (timer uses per-register always_ff, no loop accumul
   asserts, e2e lanes); fixed `bus_matrix_ahb_ini` unaligned HADDR for sparse sub-word
   strobes (SV + VHDL). VCF AHB SV/VHDL PASS, sims 4/4, DC/PT/postsyn/power re-run PASS on
   csun. SAED14 ahb_vhdl: 280 min_capacitance (unloaded output ports), open. Uncommitted.
+- 2026-11-13 standard host (salvage) refresh after the AHB HSIZE/HADDR work, uncommitted.
+  Tools: OSS CAD Suite 2025-12-13 (Icarus 13.0, Verilator 5.043, GHDL 6.0.0-dev, Yosys/SBY
+  0.60), ModelSim 2021.1, Vivado 2023.2, Quartus Lite 23.1std. RTL fixes: SV `return` ->
+  assign-to-function-name in `lane_mask`/`be_size` (Yosys 0.60 parse error); VHDL
+  `lane_mask`/`be_size` take an OFF_W-bit unsigned and shift (old `b / 2**sz` was a 32-bit
+  divider, 22,980 Yosys cells); VHDL `maximum()` -> local `at_least_1()` (Quartus Std).
+  Old vs new VHDL functions exhaustively equal in GHDL for DATA_W 8/16/32/64. New: Vivado +
+  Quartus VHDL synth scripts (`synth_<top>_vhdl.tcl`, runner LANGS loop, Lang column in
+  reports); ModelSim `tb_bus_matrix_<p>_vhdl{,_wave}.do`; Vivado `create_project_<p>_vhdl.tcl`
+  + `wave_<p>_vhdl.tcl`. GUI fixes: ModelSim .do no longer `vmap` (wrote the read-only install
+  modelsim.ini / stale lib) - `cd ${WORK}; vlib work`; Vivado wave_*.tcl end with `run -all`
+  (custom_tcl replaces the default run, the projects never ran the TB); AHB waves show HSIZE.
+  Runners: regression runs all 5 xsim UVM tests (per-test results_<test>.log) and re-runs lint;
+  sim --sim all help text. Results: regression 151/151; Yosys 8/8; Vivado 8/8 MET; Quartus 8/8;
+  ModelSim .do 8/8 and Vivado projects 8/8 at 82 checks. Still to do on csun: VCS/Xcelium,
+  VCF, SpyGlass, DC/PT for the 2026-11-13 RTL edits.

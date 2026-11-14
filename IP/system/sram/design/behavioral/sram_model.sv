@@ -116,6 +116,10 @@ module sram_model #(
   localparam int unsigned DEPTH_B = WIDTH * DEPTH / WB;
 
   logic [U-1:0]     mem   [NU];
+  // Known bits of mem (1 = the value is predictable). Unknown contents are
+  // also X in mem, but two-state simulators (Verilator) have no X, so the
+  // compare masks with kn instead of relying on X alone.
+  logic [U-1:0]     kn    [NU];
   logic [1:0]       fault [NU];      // 0 none, 1 single (corrected), 2 double
   logic [1:0]       inj_armed;
   logic [NPD-1:0]   clr_mask;        // domains of a pending software clear
@@ -124,11 +128,13 @@ module sram_model #(
   // Expected responses of granted requests, in order.
   typedef struct {
     logic [WIDTH-1:0] rdata;
+    logic [WIDTH-1:0] kn;     // known bits of rdata
     logic             err;
     int unsigned      t;      // cycle of the grant
   } exp_a_t;
   typedef struct {
     logic [WB-1:0] rdata;
+    logic [WB-1:0] kn;
     logic          err;
     int unsigned   t;
   } exp_b_t;
@@ -141,9 +147,11 @@ module sram_model #(
     return pwr_mode_req[2*d +: 2];
   endfunction
 
-  task automatic fill_domain(int unsigned d, logic [U-1:0] value);
+  // fill_domain — domain d becomes all zero (known = 1) or unknown (0).
+  task automatic fill_domain(int unsigned d, bit known);
     for (int unsigned u = d * DomU; u < (d + 1) * DomU; u++) begin
-      mem[u]   = value;
+      mem[u]   = known ? '0 : 'x;
+      kn[u]    = known ? '1 : '0;
       fault[u] = 2'd0;
     end
   endtask
@@ -158,7 +166,8 @@ module sram_model #(
                         input logic [ADDR_W-1:0] addr, input logic we,
                         input logic [127:0] be, input logic [1023:0] wdata,
                         input bit byte_en, input bit pwe, input bit ro, input bit inj_port,
-                        output logic [1023:0] rdata, output logic err);
+                        output logic [1023:0] rdata, output logic [1023:0] rkn,
+                        output logic err);
     int unsigned sb, offw, idxw, idx, r, u0, d;
     logic oor, full, rmw, touch, part, bad;
     sb   = W / 8;
@@ -172,6 +181,7 @@ module sram_model #(
     u0   = idx * r;
     d    = u0 / DomU;
     rdata = '0;
+    rkn   = '0;
     err   = 1'b0;
     if (oor || (PWR_GATE && (dom_req(d) == 2'd2 || dom_req(d) == 2'd3)) ||
         (ro && we) || (!byte_en && pwe && we && !full)) begin
@@ -181,6 +191,7 @@ module sram_model #(
     if (!we) begin
       for (int unsigned k = 0; k < r; k++) begin
         rdata[k * U +: U] = mem[u0 + k];
+        rkn[k * U +: U]   = kn[u0 + k];
         if (ECC_EN && fault[u0 + k] == 2'd2) err = 1'b1;
       end
       if (err) rdata = '0;
@@ -214,6 +225,7 @@ module sram_model #(
       for (int unsigned b = 0; b < UB; b++) begin
         if (!byte_en || be[k * UB + b]) begin
           mem[u0 + k][8*b +: 8] = wdata[(k * UB + b) * 8 +: 8];
+          kn[u0 + k][8*b +: 8]  = '1;
           touch = 1'b1;
         end
       end
@@ -235,6 +247,7 @@ module sram_model #(
   initial begin : p_init
     for (int unsigned u = 0; u < NU; u++) begin
       mem[u]   = ECC_EN ? '0 : 'x;
+      kn[u]    = ECC_EN ? '1 : '0;
       fault[u] = 2'd0;
     end
     inj_armed  = 2'd0;
@@ -249,7 +262,7 @@ module sram_model #(
   // Port A and side-band
   // ---------------------------------------------------------------------------
   always @(posedge clk) begin : p_model
-    logic [1023:0] rd;
+    logic [1023:0] rd, rk;
     logic          er;
     exp_a_t        e;
 
@@ -263,6 +276,7 @@ module sram_model #(
       if (ECC_EN) begin
         for (int unsigned u = 0; u < NU; u++) begin
           mem[u]   = '0;
+          kn[u]    = '1;
           fault[u] = 2'd0;
         end
       end
@@ -275,9 +289,9 @@ module sram_model #(
           mismatch_o = 1'b1;
         end else begin
           e = exp_a.pop_front();
-          // The data term ignores bits whose expected value is X.
+          // The data term ignores unknown bits (kn = 0, or an X expected value).
           if (mem_err !== e.err ||
-              (!e.err && ((mem_rdata ^ e.rdata) !== (e.rdata ^ e.rdata)))) begin
+              (!e.err && (((mem_rdata ^ e.rdata) & e.kn) !== ((e.rdata ^ e.rdata) & e.kn)))) begin
             $display("ERROR [sram_model] %m port A mismatch (%0t): err %b/%b data 0x%h/0x%h",
                      $time, mem_err, e.err, mem_rdata, e.rdata);
             mismatch_o = 1'b1;
@@ -300,24 +314,25 @@ module sram_model #(
       end
       if (clr_done) begin
         for (int unsigned dd = 0; dd < NPD; dd++) begin
-          if (clr_mask[dd]) fill_domain(dd, '0);
+          if (clr_mask[dd]) fill_domain(dd, 1'b1);
         end
         clr_mask = '0;
       end
       if (bist_done) begin
-        for (int unsigned dd = 0; dd < NPD; dd++) fill_domain(dd, '0);
+        for (int unsigned dd = 0; dd < NPD; dd++) fill_domain(dd, 1'b1);
       end
       for (int unsigned dd = 0; dd < NPD; dd++) begin
-        if (pwr_mode_ack[2*dd +: 2] == 2'd3 && ack_q[2*dd +: 2] != 2'd3) fill_domain(dd, 'x);
-        if (pwr_mode_ack[2*dd +: 2] == 2'd0 && ack_q[2*dd +: 2] == 2'd3) fill_domain(dd, '0);
+        if (pwr_mode_ack[2*dd +: 2] == 2'd3 && ack_q[2*dd +: 2] != 2'd3) fill_domain(dd, 1'b0);
+        if (pwr_mode_ack[2*dd +: 2] == 2'd0 && ack_q[2*dd +: 2] == 2'd3) fill_domain(dd, 1'b1);
       end
       ack_q = pwr_mode_ack;
 
       // ---- predict the granted request -----------------------------------
       if (mem_req && mem_gnt) begin
         access(WIDTH, DEPTH, mem_addr, mem_we, 128'(mem_be), 1024'(mem_wdata),
-               BYTE_EN, PARTIAL_WR_ERR, 1'b0, 1'b1, rd, er);
+               BYTE_EN, PARTIAL_WR_ERR, 1'b0, 1'b1, rd, rk, er);
         e.rdata = rd[WIDTH-1:0];
+        e.kn    = rk[WIDTH-1:0];
         e.err   = er;
         e.t     = cyc_a;
         exp_a.push_back(e);
@@ -330,7 +345,7 @@ module sram_model #(
   // ---------------------------------------------------------------------------
   if (DUAL_PORT) begin : g_b
     always @(posedge clk_b) begin : p_model_b
-      logic [1023:0] rd;
+      logic [1023:0] rd, rk;
       logic          er;
       exp_b_t        e;
 
@@ -347,7 +362,7 @@ module sram_model #(
           end else begin
             e = exp_b.pop_front();
             if (mem_b_err !== e.err ||
-                (!e.err && ((mem_b_rdata ^ e.rdata) !== (e.rdata ^ e.rdata)))) begin
+                (!e.err && (((mem_b_rdata ^ e.rdata) & e.kn) !== ((e.rdata ^ e.rdata) & e.kn)))) begin
               $display("ERROR [sram_model] %m port B mismatch (%0t): err %b/%b data 0x%h/0x%h",
                        $time, mem_b_err, e.err, mem_b_rdata, e.rdata);
               mismatch_b_o = 1'b1;
@@ -362,8 +377,9 @@ module sram_model #(
         end
         if (mem_b_req && mem_b_gnt) begin
           access(WB, DEPTH_B, mem_b_addr, mem_b_we, 128'(mem_b_be), 1024'(mem_b_wdata),
-                 BYTE_EN_B, PARTIAL_WR_ERR_B, READ_ONLY_B, 1'b0, rd, er);
+                 BYTE_EN_B, PARTIAL_WR_ERR_B, READ_ONLY_B, 1'b0, rd, rk, er);
           e.rdata = rd[WB-1:0];
+          e.kn    = rk[WB-1:0];
           e.err   = er;
           e.t     = cyc_b;
           exp_b.push_back(e);

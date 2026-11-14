@@ -8,6 +8,8 @@ the timer's sim_timer.py conventions.
 Implemented (Step 4):
     proto                lang       simulators
     ahb, apb, axi4l, wb  sv, vhdl   vcs, xcelium (csun.edu)
+    ahb, apb, axi4l, wb  sv         verilator (standard hosts; GENERIC unless
+                                    the PDK models are installed)
 --lang vhdl runs the same SV bench (BFMs, tests, reference models) around the
 VHDL top-levels and the VHDL bus_matrix (+define+VHDL_DUT, mixed language).
 Every other protocol / language / simulator combination is reported as FAIL
@@ -44,6 +46,7 @@ import argparse
 import concurrent.futures
 import datetime
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -65,7 +68,7 @@ def _hostname_fqdn() -> str:
 
 
 ON_CSUN = _hostname_fqdn().endswith(".csun.edu")
-_CSUN_BLOCKED = {"icarus", "ghdl", "modelsim", "xsim"}
+_CSUN_BLOCKED = {"verilator", "icarus", "ghdl", "modelsim", "xsim"}
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +101,8 @@ SUPPORTED_TESTS = ["all", "reset", "params", "access", "burst", "pipeline", "con
 TECH_NUM = {"generic": 0, "saed90": 3, "saed32": 4, "saed14": 5, "sky130": 6}
 
 # (proto, lang) pairs that have a testbench, and the simulators that run them
-IMPLEMENTED = {(p, lang): {"vcs", "xcelium"} for p in ("ahb", "apb", "axi4l", "wb")
-               for lang in ("sv", "vhdl")}
+IMPLEMENTED = {(p, lang): {"vcs", "xcelium"} | ({"verilator"} if lang == "sv" else set())
+               for p in ("ahb", "apb", "axi4l", "wb") for lang in ("sv", "vhdl")}
 
 # Compile order of the sram RTL (dependencies first)
 SRAM_RTL = [
@@ -369,6 +372,75 @@ def run_xcelium(proto: str, lang: str, tech: str, test: str, waves: bool,
     sim_out = open(log).read() if os.path.exists(log) else out
     ok = _passed(sim_out, tb_top) and "*E," not in sim_out
     summ = _summary_line(sim_out, tb_top) or f"no PASS line (rc {rc}, see {log})"
+    print(f"  {tag} {summ}")
+    _write_result(results, "PASS" if ok else "FAIL", sim_out)
+    return ok, summ
+
+
+# Verilator memory budget. The whole build (verilator_bin plus the parallel
+# g++ jobs) and the simulation run inside one systemd user scope with
+# MemoryMax, so an oversize build fails on its own instead of the kernel
+# OOM killer taking down other processes. Peak with these settings: see
+# README "Simulation Results". Override with SRAM_VERILATOR_MEM (e.g. 12G).
+VERILATOR_MEM_MAX = os.environ.get("SRAM_VERILATOR_MEM", "8G")
+VERILATOR_BUILD_JOBS = 4      # g++ jobs per build (each ~0.5-1 GB on this bench)
+
+
+def _mem_capped(cmd: list) -> list:
+    """Prefix cmd with a systemd-run scope limited to VERILATOR_MEM_MAX (no swap).
+    Falls back to the bare command where systemd user scopes are unavailable."""
+    if not shutil.which("systemd-run"):
+        return cmd
+    probe = subprocess.run(["systemd-run", "--user", "--scope", "-q", "true"],
+                           capture_output=True)
+    if probe.returncode != 0:
+        return cmd
+    return (["systemd-run", "--user", "--scope", "-q",
+             "-p", f"MemoryMax={VERILATOR_MEM_MAX}", "-p", "MemorySwapMax=0"] + cmd)
+
+
+def run_verilator(proto: str, lang: str, tech: str, test: str, waves: bool,
+                  sram_path: str, work_dir: str, coverage: bool = False) -> tuple:
+    """Build (verilator --binary --timing) and run the SV bench. Returns (passed, summary).
+
+    SV only: Verilator has no VHDL. --vpi plus the public leaf arrays of
+    verification/testbench/sram_tb.vlt give the backdoor its VPI access. The
+    bench skews its procedural drives by 1 ns on Verilator (sram_tb_drv.svh).
+    One build per protocol / technology; --test only changes the run."""
+    os.makedirs(work_dir, exist_ok=True)
+    results = os.path.join(work_dir, "results.log")
+    tb_top = f"tb_sram_{proto}"
+    tests = os.path.join(sram_path, "verification", "tests")
+    tbdir = os.path.join(sram_path, "verification", "testbench")
+    obj = os.path.join(work_dir, "obj")
+    defs = [f"+define+{d}" for d in tech_defines(tech, lang)]
+    jobs = str(VERILATOR_BUILD_JOBS)
+    cmd = (["verilator", "--binary", "--timing", "-j", jobs, "--top-module", tb_top,
+            "--timescale", "1ns/1ps", "--vpi", "-Mdir", obj,
+            # lint is lint_sram.py's job (Step 8); keep the build to errors
+            "-Wno-fatal", "-Wno-lint", "-Wno-style",
+            f"+incdir+{tests}", f"+incdir+{tbdir}"]
+           + (["--trace-fst"] if waves else []) + defs
+           + [os.path.join(tbdir, "sram_tb.vlt")]
+           + macro_models(tech, sram_path, work_dir)
+           + sv_files(proto, sram_path) + dpi_files(sram_path))
+    tag = f"[verilator/{proto}_{lang}/{tech}]"
+    print(f"  {tag} Building ...")
+    out, rc = _run(_mem_capped(cmd), work_dir, 3600)
+    with open(os.path.join(work_dir, "compile.log"), "w") as fh:
+        fh.write(" ".join(cmd) + "\n\n" + out)
+    if rc != 0:
+        print(f"  {tag} Build FAILED (see {work_dir}/compile.log"
+              + (f"; memory cap {VERILATOR_MEM_MAX}" if rc in (-9, 137) else "") + ")")
+        _write_result(results, "FAIL", out)
+        return False, "build failed"
+    print(f"  {tag} Simulating (+test={test}) ...")
+    plus = [f"+test={test}"] + (["+waves"] if waves else [])
+    sim_out, rc = _run(_mem_capped([os.path.join(obj, f"V{tb_top}")] + plus), work_dir, 3600)
+    with open(os.path.join(work_dir, "sim.log"), "w") as fh:
+        fh.write(sim_out)
+    ok = _passed(sim_out, tb_top) and rc == 0
+    summ = _summary_line(sim_out, tb_top) or f"no PASS line (rc {rc})"
     print(f"  {tag} {summ}")
     _write_result(results, "PASS" if ok else "FAIL", sim_out)
     return ok, summ
@@ -771,10 +843,10 @@ def main() -> int:
     sram_path = get_sram_path()
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sim", choices=["icarus", "ghdl", "modelsim", "xsim", "vcs",
-                                          "xcelium", "all"], default=None,
-                        help="simulator (default: vcs on csun.edu); 'all' = vcs + xcelium "
-                             "on csun.edu")
+    parser.add_argument("--sim", choices=["verilator", "icarus", "ghdl", "modelsim", "xsim",
+                                          "vcs", "xcelium", "all"], default=None,
+                        help="simulator (default: vcs on csun.edu, verilator elsewhere); "
+                             "'all' = vcs + xcelium on csun.edu, verilator elsewhere")
     parser.add_argument("--proto", choices=SUPPORTED_PROTOS + ["all"], default="ahb")
     parser.add_argument("--lang", choices=SUPPORTED_LANGS + ["all"], default="sv")
     parser.add_argument("--tech", choices=SUPPORTED_TECHS + ["all"], default="generic")
@@ -795,12 +867,11 @@ def main() -> int:
         print("FAIL: --postsyn / --power are not implemented yet (synthesis is Step 10).")
         return 1
 
-    sim = args.sim or ("vcs" if ON_CSUN else "icarus")
+    sim = args.sim or ("vcs" if ON_CSUN else "verilator")
     if ON_CSUN and sim in _CSUN_BLOCKED:
         print(f"ERROR: --sim {sim} is not available on *.csun.edu; use vcs or xcelium.")
         return 1
-    sims = (["vcs", "xcelium"] if ON_CSUN else ["icarus", "ghdl", "modelsim", "xsim"]) \
-        if sim == "all" else [sim]
+    sims = (["vcs", "xcelium"] if ON_CSUN else ["verilator"]) if sim == "all" else [sim]
     protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
     langs = SUPPORTED_LANGS if args.lang == "all" else [args.lang]
     techs = SUPPORTED_TECHS if args.tech == "all" else [args.tech]
@@ -812,7 +883,7 @@ def main() -> int:
     for s in sims:
         for p in protos:
             for lang in langs:
-                if s == "icarus" and lang != "sv" or s == "ghdl" and lang != "vhdl":
+                if s in ("icarus", "verilator") and lang != "sv" or s == "ghdl" and lang != "vhdl":
                     continue
                 for t in techs:
                     label = f"{s}/{p}_{lang}/{t}"
@@ -821,7 +892,8 @@ def main() -> int:
                         runs.append((label, None, None))
                         continue
                     work_dir = os.path.join(work_base, s, f"{p}_{lang}_{t}")
-                    runner = run_vcs if s == "vcs" else run_xcelium
+                    runner = {"vcs": run_vcs, "xcelium": run_xcelium,
+                              "verilator": run_verilator}[s]
                     runs.append((label, runner,
                                  (p, lang, t, args.test, args.waves, sram_path, work_dir,
                                   args.coverage and s == "vcs")))
@@ -837,7 +909,15 @@ def main() -> int:
                               os.path.join(work_base, "vcs", f"{p}_sv_{t}"), True)))
                 print(f"  [coverage] adding vcs/{p}_sv/{t}: SV twin of the VHDL run "
                       "(toggle constant analysis)")
-    with concurrent.futures.ThreadPoolExecutor(max(1, args.jobs)) as ex:
+    workers = max(1, args.jobs)
+    if any(r is run_verilator for _, r, _ in runs) and workers > 1:
+        # Each Verilator run has its own VERILATOR_MEM_MAX scope; running
+        # them in parallel would multiply the budget, so they go one at a time.
+        print(f"  [verilator] --jobs {workers} -> 1 (memory budget {VERILATOR_MEM_MAX} "
+              "per run; each build already uses "
+              f"{VERILATOR_BUILD_JOBS} compile jobs)")
+        workers = 1
+    with concurrent.futures.ThreadPoolExecutor(workers) as ex:
         futs = {ex.submit(r, *a): label for label, r, a in runs if r is not None}
         for f in concurrent.futures.as_completed(futs):
             ok, summ = f.result()

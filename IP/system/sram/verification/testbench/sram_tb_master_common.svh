@@ -9,6 +9,8 @@
 // with lane_mask), write data and strobes, BUSY cycles before the beat (idle
 // cycles on buses without BUSY). HTRANS / HBURST are used by AHB only.
 
+`include "sram_tb_drv.svh"
+
   localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
 
   // HBURST encodings
