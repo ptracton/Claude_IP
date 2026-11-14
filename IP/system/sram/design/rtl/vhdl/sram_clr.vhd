@@ -5,7 +5,8 @@
 -- reset with CLEAR_ON_RESET) collect in a pending mask; a pass starts when
 -- the bus port is idle and writes one word per cycle in every selected
 -- domain, skipping the others a domain at a time and waking light-sleeping
--- ones. done_o / dom_done_o pulse at the end of a pass.
+-- ones (kept awake until the pass leaves them). done_o / dom_done_o pulse
+-- at the end of a pass.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -84,6 +85,9 @@ begin
       elsif ok_i(dom) = '1' then
         cs_o <= '1';
         step <= '1';
+        -- Keep a wakeable domain awake for the rest of its words, so a
+        -- light-sleep domain is not put back to sleep between two words.
+        wake_o(dom) <= wakeable_i(dom);
       elsif wakeable_i(dom) = '1' then
         wake_o(dom) <= '1';
       else

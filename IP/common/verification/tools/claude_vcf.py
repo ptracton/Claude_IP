@@ -68,6 +68,16 @@ class VcfJob:
     clock: Optional[str] = None
     reset: Optional[str] = None
     reset_sense: Optional[str] = None
+    # Extra VCS elaborate options, e.g. "-gv WIDTH=16" (VHDL generics) or
+    # "-pvalue+top.WIDTH=16" (SV parameters) to prove a non-default
+    # configuration of the top-level.
+    elab_opts: str = ""
+    # More clocks: (port, period, random). random=True makes a clock with only
+    # a minimum period (create_random_clock), i.e. no fixed ratio to the main
+    # clock, for clock-domain crossings.
+    extra_clocks: List[Tuple[str, int, bool]] = field(default_factory=list)
+    # More resets: (port, "low" | "high").
+    extra_resets: List[Tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -268,6 +278,10 @@ def run_job(job: VcfJob, run_dir: str, waivers: List[Tuple[str, str]],
         "FV_MAX_TIME": job.max_time,
         "FV_REPORT": report,
         "FV_TRACE_DIR": os.path.join(run_dir, "traces") if traces else "",
+        "FV_ELAB_OPTS": job.elab_opts,
+        "FV_EXTRA_CLOCKS": " ".join(f"{c}:{p}:{'random' if r else 'fixed'}"
+                                    for c, p, r in job.extra_clocks),
+        "FV_EXTRA_RESETS": " ".join(f"{r}:{sense}" for r, sense in job.extra_resets),
     })
     tcl = os.path.join(common_formal_dir(), "vcf", "claude_vcf_fpv.tcl")
 

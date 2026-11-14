@@ -7,8 +7,10 @@
 // work, and the bus port has nothing in flight (port_idle_i), it starts a
 // pass over the array: one word per cycle in every selected domain, the
 // other domains skipped a whole domain at a time. A selected domain that is
-// asleep is woken (wake_o) if it can be (wakeable_i, i.e. RUN/LS requested),
-// otherwise skipped. pending_o tells the core to stop granting bus requests
+// asleep is woken (wake_o) if it can be (wakeable_i, i.e. RUN/LS requested)
+// and kept awake while the pass writes its words (wake_o stays high, so a
+// light-sleep domain does not re-enter sleep between two words); otherwise
+// it is skipped. pending_o tells the core to stop granting bus requests
 // (they stall until the pass ends).
 //
 // Zero data is a valid SECDED codeword (all-zero), so the engine writes the
@@ -76,6 +78,9 @@ module sram_clr #(
       end else if (ok_i[dom]) begin
         cs_o = 1'b1;
         step = 1'b1;
+        // Keep a wakeable domain awake for the rest of its words, so a
+        // light-sleep domain is not put back to sleep between two words.
+        wake_o[dom] = wakeable_i[dom];
       end else if (wakeable_i[dom]) begin
         wake_o[dom] = 1'b1;
       end else begin

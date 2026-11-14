@@ -11,6 +11,9 @@
 //                memory that grants and answers within MAX_WAIT cycles).
 //   0            the design is the target (a memory): target rules are
 //                asserted, initiator rules are assumed.
+// BOTH_DUT = 1 (overrides INITIATOR_IS_DUT): initiator and target are both
+// design RTL (e.g. an adapter wired to a memory inside one top-level), so
+// every rule is asserted and none is assumed.
 //
 // Initiator rules:
 //   i_req_hold        request and payload held until granted (mem_wdata only
@@ -20,12 +23,18 @@
 //   t_rvalid_needs_req   a response only for an outstanding request
 //   t_gnt_bounded        a request is granted within MAX_WAIT cycles
 //   t_rvalid_bounded     an outstanding request is answered within MAX_WAIT cycles
+//                        (both bounds only with CHECK_BOUNDS = 1: a target on a
+//                        clock with no fixed ratio to its environment, e.g. a
+//                        port behind a clock-domain crossing proven with a
+//                        random clock, has no cycle bound)
 
 module claude_mem_fv #(
   parameter int unsigned DATA_W           = 32,
   parameter int unsigned ADDR_W           = 32,
   parameter bit          INITIATOR_IS_DUT = 1,
-  parameter int unsigned MAX_WAIT         = 4
+  parameter int unsigned MAX_WAIT         = 4,
+  parameter bit          CHECK_BOUNDS     = 1,
+  parameter bit          BOTH_DUT         = 0
 ) (
   input  logic                  clk,
   input  logic                  rst,           // active-high
@@ -64,14 +73,14 @@ module claude_mem_fv #(
 
   // Rule of the initiator: asserted when it is the design under test.
   `define _MEM_INIT(NAME, PROP)                                           \
-    if (INITIATOR_IS_DUT) begin : g_``NAME                                \
+    if (INITIATOR_IS_DUT || BOTH_DUT) begin : g_``NAME                    \
       NAME : assert property (PROP);                                      \
     end else begin : g_``NAME                                             \
       NAME : assume property (PROP);                                      \
     end
   // Rule of the target: assumed when the initiator is the design.
   `define _MEM_TGT(NAME, PROP)                                            \
-    if (INITIATOR_IS_DUT) begin : g_``NAME                                \
+    if (INITIATOR_IS_DUT && !BOTH_DUT) begin : g_``NAME                   \
       NAME : assume property (PROP);                                      \
     end else begin : g_``NAME                                             \
       NAME : assert property (PROP);                                      \
@@ -89,8 +98,10 @@ module claude_mem_fv #(
   // Target rules
   // -------------------------------------------------------------------------
   `_MEM_TGT(t_rvalid_needs_req, mem_rvalid |-> outst_q)
-  `_MEM_TGT(t_gnt_bounded,      mem_req |-> ##[0:MAX_WAIT] mem_gnt)
-  `_MEM_TGT(t_rvalid_bounded,   outst_q |-> ##[0:MAX_WAIT] mem_rvalid)
+  if (CHECK_BOUNDS) begin : g_bounds
+    `_MEM_TGT(t_gnt_bounded,      mem_req |-> ##[0:MAX_WAIT] mem_gnt)
+    `_MEM_TGT(t_rvalid_bounded,   outst_q |-> ##[0:MAX_WAIT] mem_rvalid)
+  end
 
   `undef _MEM_INIT
   `undef _MEM_TGT

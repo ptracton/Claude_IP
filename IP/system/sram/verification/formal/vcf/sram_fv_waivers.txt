@@ -1,0 +1,7 @@
+# sram_fv_waivers.txt — VC Formal result waivers for the sram IP.
+#
+# Format:  <property-name glob>  <waived result>  # justification (required)
+# Waived results: falsified, inconclusive, vacuous, uncoverable.
+# Globs are case-insensitive. Every entry is also listed in
+# verification/formal/vcf/README.md.
+*.u_mem_?.c_rvalid_wait   uncoverable   # READ_LATENCY 1 port: the response always comes in the cycle after the grant, so an outstanding request never waits for its response

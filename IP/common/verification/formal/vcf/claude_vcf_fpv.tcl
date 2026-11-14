@@ -19,6 +19,11 @@
 #   FV_REPORT         file that receives "report_fv -list"
 #   FV_TRACE_DIR      optional: write one FSDB counterexample per falsified
 #                     assertion into this directory
+#   FV_ELAB_OPTS      optional: extra VCS elaborate options (e.g. -gv / -pvalue+
+#                     to prove a non-default configuration)
+#   FV_EXTRA_CLOCKS   optional: more clocks, "port:period:fixed|random ..."
+#                     (random = create_random_clock: only a minimum period)
+#   FV_EXTRA_RESETS   optional: more resets, "port:low|high ..."
 #
 # The reset is applied with the tool's reset simulation (sim_run -stable /
 # sim_save_reset), so every proof starts from the design's reset state and
@@ -63,13 +68,26 @@ if {$lang eq "vhdl"} {
   analyze -format sverilog -vcs "-sverilog $inc_opts [join $rtl_files { }]"
 }
 analyze -format sverilog -vcs "-sverilog $inc_opts [join $sva_files { }]"
-elaborate $top -sva -vcs "-lca -sva_bind_enable $bind_mod"
+set elab_opts  [fv_env FV_ELAB_OPTS " "]
+elaborate $top -sva -vcs "-lca -sva_bind_enable $bind_mod $elab_opts"
 
 # ---------------------------------------------------------------------------
 # Clock / reset
 # ---------------------------------------------------------------------------
 create_clock $clk -period 100
 create_reset $rst -sense $rst_sense
+foreach c [fv_env FV_EXTRA_CLOCKS " "] {
+  lassign [split $c :] cname cper ckind
+  if {$ckind eq "random"} {
+    create_random_clock -clock $cname -period $cper
+  } else {
+    create_clock $cname -period $cper
+  }
+}
+foreach r [fv_env FV_EXTRA_RESETS " "] {
+  lassign [split $r :] rname rsense
+  create_reset $rname -sense $rsense
+}
 sim_run -stable
 sim_save_reset
 
