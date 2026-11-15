@@ -113,14 +113,15 @@ and VHDL builds get identical checks.
 - arbiter waits and back-to-back grants;
 - the bus scenarios of the shared checkers, except the ones waived below.
 
-## Results (2026-10-10; AHB re-run 2026-11-07)
+## Results (2026-10-10; AHB re-run 2026-11-07; all re-run 2026-11-15)
 
 All ten jobs pass, SV and VHDL: every assertion is proven, and every cover is
 covered or waived. See the top-level README for the per-job table.
 
 The AXI4-Lite master-port response bounds (`g_mst[*].u_bus.g_s_b_bounded.s_b_bounded`
 and `g_s_r_bounded.s_r_bounded`, B / R within `M_WAIT` = 64 cycles) are the
-slowest properties. The SV job took 6136 s. With the old 30-minute budget they
+slowest properties. The SV job took 6136 s on 2026-10-10; on 2026-11-15 the
+SV job took 2436 s (41 min) and the VHDL job 1628 s (27 min). With the old 30-minute budget they
 came back inconclusive, so `formal_bus_matrix.py` now defaults the AXI4-Lite
 jobs to 3 hours (`AXI4L_MAX_TIME`). Every other job proves well within 30
 minutes.

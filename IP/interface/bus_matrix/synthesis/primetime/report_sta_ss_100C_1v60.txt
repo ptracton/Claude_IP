@@ -2,7 +2,7 @@
 PrimeTime STA Report — bus_matrix IP
 Target        : SKY130 (130nm, SkyWater open-source PDK) — ss_100C_1v60 (worst-case)
 Tool version  : PrimeTime (pt_shell)
-Run date      : 2026-11-07
+Run date      : 2026-11-14
 ========================================================================
 
 STATUS: PASS — STA completed successfully for all 8 variants (4 SV + 4 VHDL).
@@ -17,7 +17,7 @@ Timing Summary (across all variants, 100 MHz / 10 ns target)
 
   Variant                   Setup WNS   Hold WNS  DRV viol.
   bus_matrix_ahb                1.950      0.860          0
-  bus_matrix_ahb_vhdl           3.750      0.860          0
+  bus_matrix_ahb_vhdl           1.950      0.860          0
   bus_matrix_apb                2.860      0.860          0
   bus_matrix_apb_vhdl           2.830      0.860          0
   bus_matrix_axi4l              3.190      0.850          0

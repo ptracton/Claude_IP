@@ -93,15 +93,17 @@ module bus_matrix_ahb_ini #(
   assign HTRANS = aphase ? HTRANS_NONSEQ : HTRANS_IDLE;
   assign size   = be_size(core_be, core_addr[OffW-1:0]);
 
-  // HADDR aligned to 2**size bytes
-  always_comb begin : p_haddr
-    HADDR = core_addr;
-    for (int unsigned b = 0; b < OffW; b++) begin
-      if (b < 32'(size)) begin
-        HADDR[b] = 1'b0;
-      end
+  // HADDR aligned to 2**size bytes: clear the address bits below HSIZE.
+  // One continuous assign per bit (not a default + per-bit loop override in
+  // one always block) keeps SpyGlass W415a quiet; the per-bit compare also
+  // synthesizes shallower than a (2**size)-1 mask.
+  genvar gb;
+  generate
+    for (gb = 0; gb < OffW; gb++) begin : gen_haddr_lo
+      assign HADDR[gb] = core_addr[gb] & (32'(size) <= gb);
     end
-  end
+  endgenerate
+  assign HADDR[ADDR_W-1:OffW] = core_addr[ADDR_W-1:OffW];
 
   assign HWRITE = core_we;
   assign HSIZE  = size;

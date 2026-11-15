@@ -1,8 +1,11 @@
 # bus_matrix Regression Report
 
-Generated 2026-10-10 on a `*.csun.edu` host by `run_regression.py`, from the
-results of the 2026-10-10 runs (VCS/Xcelium directed simulation, UVM on VCS,
-VC Formal, SpyGlass lint).
+Generated 2026-11-15 on `dcd159.csun.edu` by `run_regression.py --skip-formal`
+on the current RTL (after the 2026-11-13 edits and the `bus_matrix_ahb_ini`
+HADDR lint fix). The run re-ran VCS/Xcelium directed simulation, UVM on VCS and
+SpyGlass lint, and collected the VC Formal results of the full
+`formal_bus_matrix.py --tool vcf` run made the same day (10:31-11:59).
+First csun regression: 2026-10-10.
 
 **Overall: PASS**: 108/108 collected results pass.
 
@@ -44,10 +47,10 @@ VC Formal, SpyGlass lint).
 | bus_matrix_arb_fv_top_vhdl | 17/17 | 14/14 | 0  | PASS |
 | bus_matrix_apb_sv          | 88/88 | 56/60 | 4  | PASS |
 | bus_matrix_apb_vhdl        | 88/88 | 56/60 | 4  | PASS |
-| bus_matrix_ahb_sv          | 72/76 | 58/66 | 12 | PASS |
-| bus_matrix_ahb_vhdl        | 72/76 | 58/66 | 12 | PASS |
-| bus_matrix_axi4l_sv        | 96/96 | 60/72 | 12 | PASS (3 h budget; took ~100 min) |
-| bus_matrix_axi4l_vhdl      | 96/96 | 60/72 | 12 | PASS (3 h budget) |
+| bus_matrix_ahb_sv          | 88/96 | 70/78 | 16 | PASS |
+| bus_matrix_ahb_vhdl        | 88/96 | 70/78 | 16 | PASS |
+| bus_matrix_axi4l_sv        | 96/96 | 60/72 | 12 | PASS (3 h budget; took 41 min) |
+| bus_matrix_axi4l_vhdl      | 96/96 | 60/72 | 12 | PASS (3 h budget; took 27 min) |
 | bus_matrix_wb_sv           | 72/72 | 56/60 | 4  | PASS |
 | bus_matrix_wb_vhdl         | 72/72 | 56/60 | 4  | PASS |
 
@@ -67,13 +70,14 @@ The waivers are justified in `verification/formal/vcf/README.md`.
 
 | Language | Tool | Result |
 |---|---|---|
-| SV (4 top-levels) | SpyGlass Y-2026.03-SP1 | PASS — 0 findings, 0 waivers |
+| SV (4 top-levels) | SpyGlass Y-2026.03-SP1 | PASS — 0 real findings (5 benign filtered per top) |
 | VHDL | — | SKIPPED (no VHDL-2008 lint on csun.edu) |
 
 ## Not covered by this run
 
 - Standard-host tools: Icarus, GHDL, ModelSim, xsim, Verilator, SymbiYosys.
-  They are not installed on csun.edu. Their scripts are ported but untested.
+  They are not installed on csun.edu; they were run on a standard host on
+  2026-11-13 (regression 151/151 there).
 - Synthesis, STA, gate-level simulation and power are separate flows. Their
-  2026-10-10 results are in the top-level README: DC and PrimeTime on 4 PDKs
-  (SAED90 -0.56 ns accepted), gate-level 16/16 PASS, power 16/16.
+  latest results (2026-11-14) are in the top-level README: DC and PrimeTime on
+  4 PDKs (SAED90 -0.56 ns accepted), gate-level 16/16 PASS, power 16/16.

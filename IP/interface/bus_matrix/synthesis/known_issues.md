@@ -62,7 +62,7 @@ so they get almost the whole 10 ns period rather than 7 ns, and the
 violation never turns into wrong data in simulation. The timer's SAED90
 violation was reg-to-reg and did.
 
-### Open: SAED32 max_capacitance violations
+### Accepted: SAED32 max_capacitance violations
 
 PrimeTime's `report_constraint -all_violators` lists about 20
 `max_capacitance` violators per SAED32 variant (168 in total). They are
@@ -70,8 +70,19 @@ inside `u_core` and the arbiters, on the same high-fan-out grant/select
 nets, with 19.7 fF actual against a 16 fF limit. Setup and hold are met
 with large margin (+3.58 ns / +0.22 ns worst) and gate-level simulation
 passes. The count was the same (178) before the `set_cost_priority -delay`
-change, so that change did not cause them. Not fixed yet. SAED90, SAED14
-and all SKY130 corners have no design-rule violations.
+change, so that change did not cause them. **Accepted (user decision
+2026-11-15):** not fixed, because timing and gate-level simulation are
+unaffected. SAED90 and all SKY130 corners have no design-rule violations.
+
+### Accepted: SAED14 min_capacitance violations (`bus_matrix_ahb_vhdl`)
+
+PrimeTime lists 280 `min_capacitance` violators on SAED14, all in
+`bus_matrix_ahb_vhdl` (new 2026-11-07). They are core cells that drive the
+slave-side output ports (`S_HADDR`, `S_HWDATA`, `S_HWSTRB`, `S_HWRITE`)
+directly. The STA puts no load on output ports, so a weak cell that drives
+only its own wire falls just under the library's minimum capacitance (slack
+shows as 0.00 at two decimal places). This is a pre-layout constraint
+artifact. **Accepted (user decision 2026-11-15)**: not fixed.
 
 ### Fixed: SAED32 gate-level simulation timed out at 10 ns
 

@@ -188,3 +188,33 @@ Was checking timer RTL style (timer uses per-register always_ff, no loop accumul
   sim --sim all help text. Results: regression 151/151; Yosys 8/8; Vivado 8/8 MET; Quartus 8/8;
   ModelSim .do 8/8 and Vivado projects 8/8 at 82 checks. Still to do on csun: VCS/Xcelium,
   VCF, SpyGlass, DC/PT for the 2026-11-13 RTL edits.
+- 2026-11-14 csun re-verification of the 2026-11-13 RTL edits (dcd159.csun.edu), uncommitted.
+  On commit 4467ddf RTL: VCS+Xcelium sims 16/16 PASS; DC 4 PDKs PASS; PT 6 targets PASS
+  (hold positive everywhere); postsyn 16/16 + PTPX 16/16 PASS (SV netlists). SAED90 worst
+  WNS still -0.56 (APB SV, accepted). AHB VHDL grew after the 11-13 VHDL lane_mask/be_size
+  rewrite (now ~= AHB SV size): SAED90 1130 -> 1364 cells, +0.02 -> -0.20 ns (inside accepted
+  envelope); SAED32 957 -> 1066, SAED14 1136 -> 1218, SKY130 1023 -> 1132 cells, all MET.
+  SpyGlass FAIL: W415a on `bus_matrix_ahb_ini` p_haddr (default + per-bit loop override,
+  added 11-07, never SpyGlass'd). FIX (user approved): per-bit generate
+  `HADDR[b] = core_addr[b] & (size <= b)`, upper bits passed through. A first attempt
+  (`core_addr & ~((1<<size)-1)` mask) was lint-clean but SAED90 AHB SV went -0.59 ns (worse
+  than accepted) - rejected. After fix: SpyGlass 4/4 PASS (0 real findings); AHB SV sims
+  VCS+Xcelium PASS; DC 4 PDKs PASS (AHB SV SAED90 +0.00 -> -0.36 ns, 145 DRV in PT;
+  SAED32/14/SKY130 MET, unchanged); PT 6/6 PASS; AHB postsyn 4/4 + PTPX 4/4 PASS.
+  VC Formal (pre-fix RTL), stopped by user at 15:50 during axi4l_vhdl (~67 min in):
+  arb SV/VHDL 17/17; apb SV/VHDL 88/88; ahb SV/VHDL 88/96 (8 waived), 0 failing;
+  axi4l_sv 96/96. NOT run: axi4l_vhdl, wb_sv, wb_vhdl, and ahb_sv on the fixed RTL.
+  verification/formal/vcf/results.log was NOT rewritten (runner writes it at the end).
+  Remaining: formal --proto axi4l --lang vhdl, --proto wb, --proto ahb --lang sv; commit.
+- 2026-11-15 (dcd159): full VC Formal re-run started on current RTL (`formal_bus_matrix.py
+  --tool vcf --proto all --lang all`, serial, rewrites vcf/results.log coherently). Next:
+  `run_regression.py --skip-formal` (re-runs sims/UVM/SpyGlass, collects formal, rewrites
+  regression/report.md), update README/vcf README result dates, then commit (ask user).
+- 2026-11-15 user decisions: NO v1.0.0 tag yet; SAED32 max_capacitance / SAED14
+  min_capacitance DRVs accepted (not worried) - do not fix.
+- 2026-11-15 VC Formal full re-run on current RTL: 10/10 PASS, 10:31-11:59 (axi4l_sv 2436 s,
+  axi4l_vhdl 1628 s, wb ~1 min each); counts unchanged. results.log rewritten; README +
+  vcf/README updated. Regression --skip-formal started ~12:00.
+- 2026-11-15 regression --skip-formal on dcd159: 108/108 PASS (VCS+Xcelium 16 runs fresh, UVM
+  VCS 5/5, SpyGlass 4/4 0 real findings, formal 10/10 collected). regression/report.md rewritten
+  for this run (was stale: AHB 72/76). ALL csun re-verification DONE. Only remaining: commit (user said "not yet" 2026-11-15, reviewing first).

@@ -248,7 +248,8 @@ end); writing them exposed the unaligned-HADDR bug fixed on 2026-11-07 (see Inte
 
 **AXI4-Lite needs a longer budget.** Its master-port response bounds
 (`s_b_bounded` / `s_r_bounded`: B and R within `M_WAIT` = 64 cycles) take
-about 100 minutes to prove; at 30 minutes they are inconclusive.
+27 to 100 minutes to prove, depending on the run; at 30 minutes they were
+inconclusive in the 2026-10-10 run.
 `formal_bus_matrix.py` therefore gives the AXI4-Lite jobs a 3-hour budget and
 every other job 30 minutes. `--max-time` overrides both.
 
@@ -256,7 +257,10 @@ All waived results follow from two design choices: one single transfer per
 grant, and one idle cycle between grants. Examples: back-to-back and pipelined
 slave-side covers, and AXI back-pressure covers.
 
-Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-10-10 (AHB jobs re-run 2026-11-07 with HSIZE).
+Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-10-10; AHB jobs re-run
+2026-11-07 with HSIZE; all ten jobs re-run 2026-11-15 on the current RTL
+(after the 2026-11-13 edits and the `bus_matrix_ahb_ini` HADDR lint fix),
+same counts, about 90 minutes in total.
 
 ### SymbiYosys (standard hosts) — SV
 
@@ -444,8 +448,9 @@ found by re-running Yosys, Vivado and Quartus on a standard host:
 - **VHDL `maximum()`:** Quartus 23.1std does not provide that VHDL-2008
   function, so `bus_matrix_ahb_ini.vhd` uses a local `at_least_1()`.
 
-These edits postdate the csun.edu runs: re-run VCS/Xcelium, VC Formal,
-SpyGlass and Design Compiler there to confirm them.
+These edits were re-verified on csun.edu on 2026-11-14 (VCS/Xcelium,
+SpyGlass, Design Compiler, PrimeTime, gate-level, power) and 2026-11-15
+(VC Formal, all ten jobs).
 
 **Quartus Prime Standard needs explicit generate regions.** It rejects
 `for (genvar i = ...)` and generate `if`/`for` without
@@ -467,15 +472,18 @@ All 4 SV + 4 VHDL variants are synthesized per PDK.
 
 | PDK | APB cells | AHB cells | AXI4-Lite cells | WB cells | Flip-flops (APB/AHB/AXI/WB) | Worst WNS | Result |
 |-----|-----------|-----------|-----------------|----------|-----------------------------|-----------|--------|
-| SAED90 (90nm)  | 1024 | 1361 | 1962 | 965 | 18 / 96 / 316 / 14 | -0.56 ns | VIOLATED (accepted) |
+| SAED90 (90nm)  | 1024 | 1371 | 1962 | 965 | 18 / 96 / 316 / 14 | -0.56 ns | VIOLATED (accepted) |
 | SAED32 (32nm)  | 704  | 985  | 1781 | 674 | 18 / 96 / 316 / 14 | +3.39 ns | MET |
 | SAED14 (14nm)  | 937  | 1208 | 1724 | 898 | 18 / 96 / 316 / 14 | +0.95 ns | MET |
-| SKY130 (130nm) | 849  | 1132 | 1668 | 819 | 18 / 96 / 316 / 14 | +1.95 ns | MET |
+| SKY130 (130nm) | 849  | 1120 | 1668 | 819 | 18 / 96 / 316 / 14 | +1.95 ns | MET |
 
 The cell counts are for the SV variants; the VHDL twins are within about 17 %.
 Results generated 2026-10-10; the AHB variants were re-synthesized on 2026-11-07
-after the HSIZE change (8 more flops for the registered HSIZE / lane mask; AHB
-now meets timing on SAED90, the other variants are unchanged). Tool: Design Compiler Y-2026.03-SP1. Per-variant
+after the HSIZE change (8 more flops for the registered HSIZE / lane mask), and
+all variants re-synthesized on 2026-11-14 after the 2026-11-13 RTL edits and the
+`bus_matrix_ahb_ini` HADDR lint fix. On SAED90 AHB SV is now -0.36 ns and AHB
+VHDL -0.20 ns (both inside the accepted -0.56 ns); AHB VHDL grew to about the
+SV size after the VHDL `lane_mask`/`be_size` rewrite. Other variants are unchanged. Tool: Design Compiler Y-2026.03-SP1. Per-variant
 area and timing are in `synthesis/designcompiler/report_<pdk>.txt`.
 
 **SAED90 misses 100 MHz by up to 0.56 ns, and this is accepted.** The
@@ -498,24 +506,24 @@ variants per target.
 
 | Target | Corner | Worst setup WNS | Worst hold WNS | Setup TNS | DRV violators | Result |
 |--------|--------|-----------------|----------------|-----------|---------------|--------|
-| SAED90 (90nm) | `saed90nm_max` | -0.560 ns | +0.920 ns | -192.75 ns | 0 | VIOLATED (accepted) |
-| SAED32 (32nm) | SS 0.95 V 125 °C | +3.390 ns | +0.220 ns | 0 | 174 max_capacitance | MET (DRV open) |
-| SAED14 (14nm) | SS 0.72 V 125 °C | +0.950 ns | +0.130 ns | 0 | 280 min_capacitance | MET (DRV open) |
+| SAED90 (90nm) | `saed90nm_max` | -0.560 ns | +0.910 ns | -218.02 ns | 0 | VIOLATED (accepted) |
+| SAED32 (32nm) | SS 0.95 V 125 °C | +3.390 ns | +0.220 ns | 0 | 174 max_capacitance | MET (DRV accepted) |
+| SAED14 (14nm) | SS 0.72 V 125 °C | +0.950 ns | +0.130 ns | 0 | 280 min_capacitance | MET (DRV accepted) |
 | SKY130 `ss_100C_1v60` | 1.60 V, 100 °C | +1.950 ns | +0.850 ns | 0 | 0 | MET |
-| SKY130 `tt_025C_1v80` | 1.80 V, 25 °C  | +2.940 ns | +0.440 ns | 0 | 0 | MET |
-| SKY130 `ff_n40C_1v95` | 1.95 V, -40 °C | +3.340 ns | +0.290 ns | 0 | 0 | MET |
+| SKY130 `tt_025C_1v80` | 1.80 V, 25 °C  | +2.930 ns | +0.440 ns | 0 | 0 | MET |
+| SKY130 `ff_n40C_1v95` | 1.95 V, -40 °C | +3.330 ns | +0.290 ns | 0 | 0 | MET |
 
 Results generated 2026-10-10; all targets re-run 2026-11-07 after the AHB
-HSIZE change (only the AHB rows moved). Tool: PrimeTime Y-2026.03-SP1.
+HSIZE change and again 2026-11-14 (AHB SV/VHDL and SAED90 TNS moved). Tool: PrimeTime Y-2026.03-SP1.
 - SAED14's 280 min_capacitance violators (new 2026-11-07, `bus_matrix_ahb_vhdl`
   only) are core cells that drive the slave-side output ports directly
   (`S_HADDR`, `S_HWDATA`, `S_HWSTRB`, `S_HWRITE`): the STA puts no load on
   output ports, so a weak cell driving only its wire sits just under the
   library's minimum (slack 0.00 at two decimals). A pre-layout constraint
-  artifact, an open item with the SAED32 one below.
+  artifact, accepted (2026-11-15) like the SAED32 one below.
 - SAED32's max-capacitance violators (19.7 fF against a 16 fF limit, on the
-  grant/select nets) are an open item. Timing and gate-level simulation are
-  unaffected.
+  grant/select nets) are accepted (2026-11-15). Timing and gate-level
+  simulation are unaffected; see `synthesis/known_issues.md`.
 - The per-target reports (`synthesis/primetime/report_sta_<target>.txt`) list
   setup WNS, hold WNS and violator counts for each variant.
 
