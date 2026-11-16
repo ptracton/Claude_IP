@@ -6,6 +6,10 @@
 //   sram_core      sram_core_fv   (ports + internal signals, see that file)
 //   sram_array     sram_array_fv  (every port-A / port-B access)
 //   sram_pwr_ctrl  sram_pwr_fv    (each power domain)
+//   sram_macro_generic sram_leaf_fv (ECC lemma: written lanes hold valid codewords;
+//                  single-port configurations only: SRAM_FV_LEAF_BIND. A dual-port
+//                  core has no sram_macro_generic, and a bind with no target is an
+//                  elaboration error when the design is VHDL.)
 
 bind sram_core sram_core_fv #(
   .ADDR_W      (`SRAM_FV_ADDR_W),
@@ -58,6 +62,7 @@ bind sram_core sram_core_fv #(
   .bist_done_o   (bist_done_o),
   .clr_busy      (clr_busy),
   .bist_busy     (bist_busy),
+  .bist_active   (bist_active),
   .b_cs          (b_cs),
   .a_stall       (a_stall),
   .b_stall       (b_stall),
@@ -106,3 +111,21 @@ bind sram_pwr_ctrl sram_pwr_fv #(
   .busy_o     (busy_o),
   .ack_o      (ack_o)
 );
+
+`ifdef SRAM_FV_LEAF_BIND
+bind sram_macro_generic sram_leaf_fv #(
+  .W     (`SRAM_FV_LEAF_W),
+  .D     (`SRAM_FV_LEAF_D),
+  .NLANES(`SRAM_FV_LEAF_NLANES),
+  .ECC   (`SRAM_FV_LEAF_ECC)
+) u_leaf_fv (
+  .clk      (clk),
+  .rst_n    (sram_core.rst_n),   // upward reference: the leaf has no reset
+  .cs_i     (cs_i),
+  .we_i     (we_i),
+  .addr_i   (addr_i),
+  .wdata_i  (wdata_i),
+  .lane_we_i(lane_we_i),
+  .mem      (mem)
+);
+`endif

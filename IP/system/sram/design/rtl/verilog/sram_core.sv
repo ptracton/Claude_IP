@@ -28,7 +28,8 @@
 //                   either writes, port B waits a cycle, and a port waits
 //                   while the other port's read-modify-write of that word is
 //                   pending: conflicting accesses complete in the order A
-//                   then B; none is dropped.
+//                   then B; none is dropped. Under a continuing conflict the
+//                   ports alternate (A yields to a B that was held off).
 //   COMMON_CLK = 0  port B on clk_b (not TECH_SAED14: its two-port macro has
 //                   a write clock and a read clock, not one clock per port). Same-word accesses in overlapping
 //                   cycles are undefined (as on any true dual-port RAM).
@@ -260,8 +261,29 @@ module sram_core #(
   // Bus port B (DUAL_PORT) and same-word conflict holds
   // -------------------------------------------------------------------------
   // A waits while B's read-modify-write of the same word is pending
-  // (COMMON_CLK only).
-  assign a_stall = clr_pending || bist_pending ||
+  // (COMMON_CLK only). Fairness: when B was held off last cycle by a
+  // same-word conflict with A and still asks for that word, A yields it for
+  // one turn (a_yield), so a stream of A writes / read-modify-writes to one
+  // word cannot starve B (found by VC Formal, port B t_gnt_bounded). The
+  // first conflict still goes to A, then the ports alternate.
+  logic b_same, b_conf, b_conf_q, a_yield;
+
+  assign b_same  = ((a_req_idx >> ShA) == IdxW'(b_req_idx >> ShB));
+  assign b_conf  = DUAL_PORT && !Async && mem_b_req_i &&
+                   ((a_acc && b_same && (a_req_we || b_req_we)) ||
+                    (a_rmw_pend && ((a_rmw_idx >> ShA) == IdxW'(b_req_idx >> ShB))));
+  assign a_yield = DUAL_PORT && !Async && b_conf_q && mem_b_req_i && mem_req_i &&
+                   b_same && (a_req_we || b_req_we);
+
+  always_ff @(posedge clk) begin : p_b_conf
+    if (!rst_n) begin
+      b_conf_q <= 1'b0;
+    end else begin
+      b_conf_q <= b_conf;
+    end
+  end
+
+  assign a_stall = clr_pending || bist_pending || a_yield ||
                    (DUAL_PORT && !Async && b_rmw_pend &&
                     ((a_req_idx >> ShA) == IdxW'(b_rmw_idx >> ShB)));
 

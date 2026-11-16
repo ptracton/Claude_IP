@@ -10,7 +10,8 @@
 -- storage) and options; ECC codewords are as wide as the narrower port.
 -- Port B always runs on clk_b / rst_b_n (no clock is selected or derived
 -- inside the core). COMMON_CLK = 1: clk_b is the same clock as clk (connect
--- both); same-word conflicts complete in the order A then B. COMMON_CLK = 0: port B on clk_b (not TECH_SAED14),
+-- both); same-word conflicts complete in the order A then B (alternating under a
+-- continuing conflict). COMMON_CLK = 0: port B on clk_b (not TECH_SAED14),
 -- same-word collisions are undefined, and port B reaches the power, clear
 -- and BIST control (on clk) through sram_cdc; clk_b must keep running while
 -- the core changes power modes or runs an engine. Port B is read-only with
@@ -170,6 +171,10 @@ architecture rtl of sram_core is
   signal a_acc        : std_ulogic;
   signal b_acc        : std_ulogic;
   signal a_rmw_pend   : std_ulogic;
+  signal b_same       : boolean;    -- A's and B's requests address the same wide word
+  signal b_conf       : std_ulogic; -- B held off by a same-word conflict with A
+  signal b_conf_q     : std_ulogic;
+  signal a_yield      : std_ulogic; -- A yields the word to a held-off B
   signal b_rmw_pend   : std_ulogic;
   signal b_cs         : std_ulogic;
   signal b_we         : std_ulogic;
@@ -258,8 +263,30 @@ begin
   port_stall <= clr_pending or bist_pending;
 
   -- A waits while B's read-modify-write of the same word is pending
-  -- (COMMON_CLK only).
-  a_stall <= '1' when port_stall = '1' or
+  -- (COMMON_CLK only). Fairness: when B was held off last cycle by a
+  -- same-word conflict with A and still asks for that word, A yields it for
+  -- one turn (see sram_core.sv).
+  b_same  <= wide_idx(a_req_idx, SH_A_C) = wide_idx(b_req_idx, SH_B_C);
+  b_conf  <= '1' when DUAL_PORT /= 0 and not ASYNC_C and mem_b_req_i = '1' and
+                      ((a_acc = '1' and b_same and (a_req_we = '1' or b_req_we = '1')) or
+                       (a_rmw_pend = '1' and
+                        wide_idx(a_rmw_idx, SH_A_C) = wide_idx(b_req_idx, SH_B_C))) else '0';
+  a_yield <= '1' when DUAL_PORT /= 0 and not ASYNC_C and b_conf_q = '1' and
+                      mem_b_req_i = '1' and mem_req_i = '1' and b_same and
+                      (a_req_we = '1' or b_req_we = '1') else '0';
+
+  p_b_conf : process (clk) is
+  begin
+    if rising_edge(clk) then
+      if rst_n = '0' then
+        b_conf_q <= '0';
+      else
+        b_conf_q <= b_conf;
+      end if;
+    end if;
+  end process p_b_conf;
+
+  a_stall <= '1' when port_stall = '1' or a_yield = '1' or
                       (DUAL_PORT /= 0 and not ASYNC_C and b_rmw_pend = '1' and
                        wide_idx(a_req_idx, SH_A_C) = wide_idx(b_rmw_idx, SH_B_C)) else '0';
 

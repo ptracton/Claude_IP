@@ -1,4 +1,4 @@
-# Handoff — SRAM Step 4 (directed tests), updated 2026-11-07
+# Handoff — SRAM, updated 2026-11-15 (Step 5 formal done, uncommitted; next Step 6)
 
 The plan and full log are in `.agents/project_sram_plan.md` §13 (request, bench architecture,
 tests, §13.7 logs). The IP README "Simulation Results" holds the current results and coverage.
@@ -19,6 +19,29 @@ Step 4 is **done** for both languages:
 HEAD `b6b2e17` ("SRAM VHDL testing and verification framework") has the SV bench, the VHDL
 flow and the coverage work. The 2026-11-07 follow-ups below are **uncommitted**. Commit only
 when asked.
+
+## Step 5 — formal (VC Formal), DONE 2026-11-15 (uncommitted on top of 289e342)
+Runner: `formal_sram.py [--job <j>|all] [--lang sv|vhdl|all] [--jobs N<=3] [--trace] [--max-time T]`
+(13 jobs x SV/VHDL; needs `source IP/system/sram/setup.sh`). Final full run 23:41: **26/26 PASS**,
+`verification/formal/vcf/results.log` (waived inconclusives now listed with depth). Everything is
+documented in `verification/formal/vcf/README.md` (jobs, properties, waivers, findings 1-10) and
+the top-level README "Formal Verification Results". Traces: `fsdbreport` in
+`/opt/synopsys/vc_formal/Y-2026.03-SP1/verdi/bin`. Never `pkill -f` a pattern that also appears in
+your own shell command (kills the shell, exit 144).
+
+Changes in this step (all uncommitted):
+- **RTL (SV + VHDL):** `sram_clr` init_q (user approved); `sram_core` a_yield (port A yields a
+  same-word conflict for one turn after B was held off); VHDL `sram_ecc_enc/dec` position tables.
+- **Checkers:** `sram_core_fv` (a_eng_exclusive uses bist_active, self-holding sym bytes),
+  new `sram_leaf_fv` (ECC lane lemma, bound only for single port via `SRAM_FV_LEAF_BIND`).
+- **Runner / shared:** `-gfile` VHDL generics; jobs core_ecc and dp_sync_wide_b A16/B32;
+  `claude_vcf.py` job-scoped waivers, `assume_proven` (`FV_ASSUME_PROVEN` ->
+  `fml_enable_assume_proof`), report row regex fix (`inconclusive(depth=N)`), puts-line skip.
+- **Waivers:** bounded inconclusive data/err (user decision "accept bounded"), dp_sync RMW
+  covers uncoverable, c_rvalid_wait.
+Open: csun re-runs after the RTL edits (VCS/Xcelium regression + coverage, SpyGlass, DC);
+timer/bus_matrix formal could be re-run once to confirm the shared-driver regex change (it only
+affects inconclusive rows). Commit when the user asks.
 
 ## Step 4 follow-ups (2026-11-07, uncommitted)
 - **bus_matrix AHB HSIZE formal (old open item 1):** `bus_matrix_ahb_fv.sv` + bind take
@@ -103,4 +126,4 @@ coverage `verification/work/coverage/`. `cleanup.sh` removes all of it.
    2026-11-07). Re-run Yosys/Vivado/Quartus for bus_matrix AHB there too.
 3. Optional: deeper AW/W/AR slots in `claude_axi4l_mem_if` would let same-type AXI streams
    pipeline (not requested).
-4. Next plan step: Step 5 (formal), see plan §5.
+4. Next plan step: Step 6 (UVM), see plan §5.

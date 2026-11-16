@@ -76,3 +76,30 @@ in `IP/system/timer/verification/formal/vcf/README.md`):
 
 After the fixes, VCS and Xcelium directed tests (8/8 each) and SpyGlass SV
 lint all still pass.
+
+**Pitfalls found on the sram (2026-11-15):**
+- **VHDL generics: use `-gfile`, not `-gv`.** `elaborate -vcs "-gv WIDTH=16"` sets WIDTH in
+  *every* VHDL instance with that generic (vcf.log: `assign 16 /TOP/SUB/U_X/WIDTH`). Write a file
+  of `assign <v> /<TOP>/<NAME>` lines and pass `-gfile <file>` (sram `formal_sram.py elab_opts`).
+- **Undriven "symbolic" nets are X-injected.** A free variable held by `$stable(x)` on one clock
+  can change between that clock's edges when another clock is random (`create_random_clock`):
+  properties on the second clock then see other values (false CEX, and the trace dump does not
+  show it — the `.fsdb.xml` lists it under "X-Injected-Signals"). Use a self-holding register
+  without reset: `always_ff @(posedge clk) sym <= sym;` (free initial value, constant after).
+- **`initial` blocks are not a start state.** After `sim_run`/`sim_save_reset`, registers without
+  a reset are free. A checker register needs a real reset; a bind can reach an ancestor's reset by
+  upward reference (`.rst_n(sram_core.rst_n)`), which also works for VHDL-instantiated leaves (verified 2026-11-15: lemma proven 8/8 in core_ecc_vhdl and core_opts_vhdl).
+  VCS rejects `initial` + `always_ff` on one variable (ICPD) and a declaration initializer on an
+  `always_ff` variable (ICPD_INIT).
+- **Helper lemmas need `set_fml_var fml_enable_assume_proof true`** to be used by the other
+  properties (`claude_vcf.VcfJob(assume_proven=True)`, env `FV_ASSUME_PROVEN`). Docs warn it can
+  also slow a run.
+- **Do not edit `claude_vcf_fpv.tcl` while a vcf run is in progress:** vcf reads the script as it
+  executes and resumed at a shifted offset after a 3 h proof ("missing close-brace"; the report
+  was already written).
+- **Waivers can be job-scoped:** `<job glob>:<property glob> <result> # why` (matched with and
+  without the `_sv`/`_vhdl` suffix).
+- **Reading traces without Verdi:** `$VC_FORMAL/verdi/bin/fsdbreport t.fsdb -of h -s /top/sig ...
+  -o out.txt` (values shown at an edge are the post-edge values).
+- **A bind with no target:** SV elaboration ignores it; with a VHDL design it is `Error-[SVABIND] Bind target not found`. Guard binds to optional modules with a generated `define.
+- **`report_fv -list` row format:** `inconclusive(depth=22)` has no space before the depth. claude_vcf.py `_ROW_RE` now accepts it (fixed 2026-11-15); before, inconclusive waivers never matched and depths were lost.

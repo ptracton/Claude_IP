@@ -615,9 +615,63 @@ than about three port-A cycles (`claude_pulse_sync`).
 
 ## Formal Verification Results
 
-> Populated by Step 5 (formal)
+### Synopsys VC Formal (csun.edu) — SV and VHDL
 
-[TBD]
+Formal property verification of the core (single port, ECC, BIST, bank power
+gating, dual port on one or two clocks), all four bus top-levels and the
+SECDED code, in **both SystemVerilog and VHDL-2008**. The same SVA checkers
+are bound into both languages. For the jobs, the properties, waivers and the
+bugs found, see
+[verification/formal/vcf/README.md](verification/formal/vcf/README.md).
+
+```
+python3 verification/tools/formal_sram.py --jobs 3
+```
+
+| Job | Language | Assertions proven | Covers covered | Waived | Bounded (depth reached) | Result |
+|-----|----------|-------------------|----------------|--------|-------------------------|--------|
+| `core_base` | SV | 26/26 | 18/19 | 1 | — | PASS |
+| `core_base` | VHDL | 26/26 | 18/19 | 1 | — | PASS |
+| `core_be0_err` | SV | 9/9 | 13/13 | 0 | — | PASS |
+| `core_be0_err` | VHDL | 9/9 | 13/13 | 0 | — | PASS |
+| `core_be0_full` | SV | 26/26 | 19/20 | 1 | — | PASS |
+| `core_be0_full` | VHDL | 26/26 | 19/20 | 1 | — | PASS |
+| `core_ecc` | SV | 33/34 | 20/21 | 2 | `a_data` 26 | PASS |
+| `core_ecc` | VHDL | 33/34 | 20/21 | 2 | `a_data` 20 | PASS |
+| `core_opts` | SV | 49/52 | 30/30 | 3 | `t_gnt_bounded` 180, `a_data` 22, `a_err_rule` 22 | PASS |
+| `core_opts` | VHDL | 49/52 | 30/30 | 3 | `t_gnt_bounded` 172, `a_data` 21, `a_err_rule` 21 | PASS |
+| `dp_sync` | SV | 49/51 | 36/40 | 6 | `a_data` 17, `b_data` 17 | PASS |
+| `dp_sync` | VHDL | 49/51 | 36/40 | 6 | `a_data` 17, `b_data` 17 | PASS |
+| `dp_sync_wide_b` | SV | 29/33 | 31/33 | 6 | `a_data` 15, `a_err_rule` 15, `b_data` 15, `b_err_rule` 14 | PASS |
+| `dp_sync_wide_b` | VHDL | 29/33 | 31/33 | 6 | `a_data` 15, `a_err_rule` 14, `b_data` 14, `b_err_rule` 14 | PASS |
+| `dp_async` | SV | 45/47 | 34/36 | 4 | `a_data` 35, `b_data` 35 | PASS |
+| `dp_async` | VHDL | 45/47 | 34/36 | 4 | `a_data` 37, `b_data` 37 | PASS |
+| `top_apb` | SV | 29/29 | 22/23 | 1 | — | PASS |
+| `top_apb` | VHDL | 29/29 | 22/23 | 1 | — | PASS |
+| `top_ahb` | SV | 31/31 | 23/24 | 1 | — | PASS |
+| `top_ahb` | VHDL | 31/31 | 23/24 | 1 | — | PASS |
+| `top_axi4l` | SV | 37/37 | 24/25 | 1 | — | PASS |
+| `top_axi4l` | VHDL | 37/37 | 24/25 | 1 | — | PASS |
+| `top_wb` | SV | 31/31 | 22/23 | 1 | — | PASS |
+| `top_wb` | VHDL | 31/31 | 22/23 | 1 | — | PASS |
+| `ecc` | SV | 15/15 | 10/10 | 0 | — | PASS |
+| `ecc` | VHDL | 15/15 | 10/10 | 0 | — | PASS |
+
+All assertions are full proofs except the "Bounded" ones: end-to-end data
+integrity (and, in two jobs, error prediction) in the ECC and dual-port
+configurations did not converge in 30 minutes. They have no counterexample
+to the depth shown and are waived as inconclusive only. They are fully
+proven without ECC (`core_base`, `core_be0_*`), the SECDED code is proven
+exhaustively (`ecc`), every written ECC lane is proven to hold a valid
+codeword, and the simulation regression checks every read against the
+reference model. The waived covers are unreachable by construction (read
+latency 1; 8-bit codewords in `dp_sync` never need a read-modify-write).
+
+Formal found and fixed two RTL bugs (SV + VHDL): a clear-on-reset pass that
+could leave a power domain uninitialised, and port-B starvation by port-A
+read-modify-writes on a shared word.
+
+Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-11-15.
 
 ## UVM Verification Results
 

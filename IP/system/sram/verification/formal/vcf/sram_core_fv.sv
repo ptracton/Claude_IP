@@ -2,7 +2,7 @@
 //
 // Bound into sram_core by sram_fv_block_binds.svh. Every port is an input;
 // besides the core's ports it reads a few internal signals that the SV and
-// VHDL cores both declare (clr_busy, bist_busy, b_cs, a_stall, b_stall,
+// VHDL cores both declare (clr_busy, bist_busy, bist_active, b_cs, a_stall, b_stall,
 // a_rmw_pend, b_rmw_pend, b_dom_err). Parameters arrive as literals from the
 // generated sram_fv_cfg.svh (an SV bind cannot see VHDL generics).
 //
@@ -39,7 +39,8 @@
 // never accesses (assumed), and port B's zero allowance becomes sticky.
 //
 // Engines and array:
-//   a_eng_exclusive   clear and BIST never run together
+//   a_eng_exclusive   a clear pass never overlaps the BIST march (a clear
+//                     may run while BIST still waits for the port or power)
 //   a_eng_no_grant_a  no port-A grant while an engine runs
 //   a_eng_no_b_access port B never accesses the array while an engine runs
 //                     (checked on clk_b: the sram_cdc permission handshake)
@@ -99,6 +100,7 @@ module sram_core_fv #(
   // Internal signals of sram_core
   input  logic                   clr_busy,
   input  logic                   bist_busy,
+  input  logic                   bist_active,
   input  logic                   b_cs,
   input  logic                   a_stall,
   input  logic                   b_stall,
@@ -214,10 +216,17 @@ module sram_core_fv #(
   // ---------------------------------------------------------------------------
   // Symbolic bytes (free, constant)
   // ---------------------------------------------------------------------------
+  // Self-holding registers without reset: the value is free at the start of
+  // a proof and constant at every step after that. (Undriven nets with a
+  // $stable assumption on clk were X-injected: with a random clk_b the solver
+  // could change them between two clk edges, so port B's no-touch assumption
+  // used a different byte than port A's model.)
   logic [TBW-1:0] sym_a;   // port A's byte (both ports' with one clock)
   logic [TBW-1:0] sym_b;   // port B's byte (separate clocks only)
-  am_sym_a_stable: assume property ($stable(sym_a));
-  am_sym_b_stable: assume property ($stable(sym_b));
+  always_ff @(posedge clk) begin : p_sym_hold
+    sym_a <= sym_a;
+    sym_b <= sym_b;
+  end
 
   logic sym_a_zero_ev;     // the byte may become zero (clear, BIST, shutdown)
   assign sym_a_zero_ev = clr_req_i || (BIST_EN && bist_start_i) ||
@@ -423,7 +432,7 @@ module sram_core_fv #(
   // ---------------------------------------------------------------------------
   // Engines and the array
   // ---------------------------------------------------------------------------
-  a_eng_exclusive:  assert property (!(clr_busy && bist_busy));
+  a_eng_exclusive:  assert property (!(clr_busy && bist_active));
   a_eng_no_grant_a: assert property ((clr_busy || bist_busy) |-> !mem_gnt_o);
   if (DUAL_PORT) begin : g_eng_b
     a_eng_no_b_access: assert property (@(posedge clk_b) disable iff (!rst_b_n)

@@ -78,6 +78,9 @@ class VcfJob:
     extra_clocks: List[Tuple[str, int, bool]] = field(default_factory=list)
     # More resets: (port, "low" | "high").
     extra_resets: List[Tuple[str, str]] = field(default_factory=list)
+    # Use proven assertions as assumptions (fml_enable_assume_proof): lets
+    # helper lemmas speed up hard properties; can also slow a run down.
+    assume_proven: bool = False
 
 
 @dataclass
@@ -156,7 +159,9 @@ def load_waivers(path: Optional[str]) -> List[Tuple[str, str]]:
 
     <status> is the result being waived (e.g. uncoverable, vacuous).
     Globs match property names case-insensitively, so one entry covers the
-    SV and VHDL runs of the same top-level.
+    SV and VHDL runs of the same top-level. An optional "<job glob>:" prefix
+    limits the waiver to matching jobs; it is compared with the job name
+    with and without its "_sv" / "_vhdl" suffix (e.g. "dp_sync:*.c_a_rmw").
     Returns [(pattern_with_status, justification)].
     """
     waivers: List[Tuple[str, str]] = []
@@ -177,10 +182,20 @@ def load_waivers(path: Optional[str]) -> List[Tuple[str, str]]:
     return waivers
 
 
+def _job_matches(job_name: str, scope: str) -> bool:
+    """True when a waiver's job scope matches the job (with or without _sv/_vhdl)."""
+    base = re.sub(r"_(sv|vhdl)$", "", job_name)
+    return any(fnmatch.fnmatchcase(n.lower(), scope.lower()) for n in (job_name, base))
+
+
 def _waiver_for(prop: PropResult, outcome: str,
-                waivers: List[Tuple[str, str]]) -> Optional[str]:
+                waivers: List[Tuple[str, str]], job_name: str = "") -> Optional[str]:
     for pat, why in waivers:
         glob, status = pat.split(" ", 1)
+        if ":" in glob:
+            scope, glob = glob.split(":", 1)
+            if not _job_matches(job_name, scope):
+                continue
         # Case-insensitive: VC Formal upper-cases VHDL instance names, and
         # VHDL identifiers are case-insensitive anyway.
         if status == outcome and fnmatch.fnmatchcase(prop.name.lower(), glob.lower()):
@@ -194,8 +209,8 @@ def _waiver_for(prop: PropResult, outcome: str,
 
 _SECTION_RE = re.compile(r"^\s*>\s*(Assertion|Cover|Constraint)\s*$")
 _ROW_RE = re.compile(
-    r"^\s*\[\s*\d+\]\s+(?P<status>\S+)"
-    r"(?:\s+\(depth=(?P<depth>\d+)\))?"
+    r"^\s*\[\s*\d+\]\s+(?P<status>[a-z_]+)"
+    r"(?:\s*\(depth=(?P<depth>\d+)\))?"     # "inconclusive(depth=22)": no space
     r"(?:\s+\((?P<vac>[a-z_]+)\))?"
     r"\s+-\s+(?P<name>\S+)"
 )
@@ -242,7 +257,7 @@ def judge(result: JobResult, waivers: List[Tuple[str, str]]) -> None:
                 outcome = p.status          # uncoverable / inconclusive
         if outcome is None:
             continue
-        why = _waiver_for(p, outcome, waivers)
+        why = _waiver_for(p, outcome, waivers, result.job.name)
         if why:
             result.waived.append((p, f"{outcome}: {why}"))
         else:
@@ -279,6 +294,7 @@ def run_job(job: VcfJob, run_dir: str, waivers: List[Tuple[str, str]],
         "FV_REPORT": report,
         "FV_TRACE_DIR": os.path.join(run_dir, "traces") if traces else "",
         "FV_ELAB_OPTS": job.elab_opts,
+        "FV_ASSUME_PROVEN": "1" if job.assume_proven else "0",
         "FV_EXTRA_CLOCKS": " ".join(f"{c}:{p}:{'random' if r else 'fixed'}"
                                     for c, p, r in job.extra_clocks),
         "FV_EXTRA_RESETS": " ".join(f"{r}:{sense}" for r, sense in job.extra_resets),
@@ -294,7 +310,8 @@ def run_job(job: VcfJob, run_dir: str, waivers: List[Tuple[str, str]],
         log_text = fh.read()
     if "CLAUDE_VCF_DONE" not in log_text or not os.path.isfile(report):
         errs = [l for l in log_text.splitlines()
-                if re.search(r"\bError-|\bERROR\b|CLAUDE_VCF_ERROR", l)]
+                if re.search(r"\bError-|\bERROR\b|CLAUDE_VCF_ERROR", l)
+                and not re.match(r"\s*puts\b", l)]   # echoed Tcl source
         result.message = (f"vcf did not complete (rc={rc})" +
                           (": " + errs[0].strip() if errs else ""))
         return result

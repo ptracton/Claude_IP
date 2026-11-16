@@ -24,6 +24,9 @@
 #   FV_EXTRA_CLOCKS   optional: more clocks, "port:period:fixed|random ..."
 #                     (random = create_random_clock: only a minimum period)
 #   FV_EXTRA_RESETS   optional: more resets, "port:low|high ..."
+#   FV_ASSUME_PROVEN  optional: 1 = proven assertions become assumptions for
+#                     the rest of the run (fml_enable_assume_proof), so
+#                     helper lemmas speed up the hard properties
 #
 # The reset is applied with the tool's reset simulation (sim_run -stable /
 # sim_save_reset), so every proof starts from the design's reset state and
@@ -58,6 +61,9 @@ foreach d $incdirs { append inc_opts " +incdir+$d" }
 set_fml_appmode FPV
 set_fml_var fml_max_time $max_time
 set_fml_var fml_witness_on true
+if {[fv_env FV_ASSUME_PROVEN 0] eq "1"} {
+  set_fml_var fml_enable_assume_proof true
+}
 
 # ---------------------------------------------------------------------------
 # Compile

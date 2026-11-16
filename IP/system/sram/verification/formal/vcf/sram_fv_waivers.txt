@@ -5,3 +5,29 @@
 # Globs are case-insensitive. Every entry is also listed in
 # verification/formal/vcf/README.md.
 *.u_mem_?.c_rvalid_wait   uncoverable   # READ_LATENCY 1 port: the response always comes in the cycle after the grant, so an outstanding request never waits for its response
+# dp_sync (A16/B8, ECC): the codeword is the narrow port's 8 bits, so every byte-enable
+# write covers whole codewords and no write ever needs a read-modify-write. The RMW
+# ordering covers are reached by dp_sync_wide_b (A16/B32, 16-bit codewords).
+dp_sync:*.g_c_ecc.c_a_rmw                       uncoverable   # 8-bit codewords: a byte-enable write never needs a read-modify-write
+dp_sync:*.g_c_dp.g_c_sync.g_c_rmw.c_a_waits_b_rmw uncoverable # 8-bit codewords: port B never does a read-modify-write for A to wait on
+dp_sync:*.g_c_dp.g_c_sync.g_c_rmw.c_b_waits_a_rmw uncoverable # 8-bit codewords: port A never does a read-modify-write for B to wait on
+#
+# Bounded results (user decision 2026-11-15): end-to-end data integrity in the ECC and
+# dual-port jobs does not converge (no counterexample; depth reached per job in the
+# formal README / results.log; a 3-hour core_opts run only went from depth 20 to 21).
+# Covered elsewhere: a_data / a_err_rule are fully proven in core_base / core_be0_* (no
+# ECC), the SECDED code is proven exhaustively (ecc job), sram_leaf_fv proves every
+# written ECC lane holds a valid codeword, and the simulation regression checks every
+# read against sram_model. Only "inconclusive" is waived: a counterexample still fails.
+core_ecc:*.u_core_fv.a_data              inconclusive  # ECC read-modify-write data path: bounded proof only, no counterexample
+core_opts:*.u_core_fv.a_data             inconclusive  # ECC + BIST + bank power gating: bounded proof only, no counterexample
+core_opts:*.u_core_fv.a_err_rule         inconclusive  # ECC error prediction with BIST/power: bounded proof only, no counterexample
+core_opts:*.u_mem_a.g_bounds.g_t_gnt_bounded.t_gnt_bounded inconclusive # grant within MAX_WAIT with BIST/clear/power engines: bounded (> 3 x MAX_WAIT cycles), no counterexample
+dp_sync:*.u_core_fv.a_data               inconclusive  # dual port, one clock, ECC: bounded proof only, no counterexample
+dp_sync:*.g_b_model.b_data               inconclusive  # dual port, one clock, ECC, port B: bounded proof only, no counterexample
+dp_sync_wide_b:*.u_core_fv.a_data        inconclusive  # dual port with read-modify-writes on both ports: bounded proof only, no counterexample
+dp_sync_wide_b:*.u_core_fv.a_err_rule    inconclusive  # same, error prediction: bounded proof only, no counterexample
+dp_sync_wide_b:*.g_b_model.b_data        inconclusive  # same, port B data: bounded proof only, no counterexample
+dp_sync_wide_b:*.g_b_model.b_err_rule    inconclusive  # same, port B error prediction: bounded proof only, no counterexample
+dp_async:*.u_core_fv.a_data              inconclusive  # separate clocks (random clk_b): bounded proof only, no counterexample
+dp_async:*.g_b_model.b_data              inconclusive  # separate clocks, port B: bounded proof only, no counterexample

@@ -27,38 +27,72 @@ architecture rtl of sram_ecc_dec is
 
   constant R_C : natural := ecc_hamming_bits(K);
 
-begin
+  type pos_t   is array (0 to K - 1) of std_ulogic_vector(R_C - 1 downto 0);
+  type cover_t is array (0 to R_C - 1) of std_ulogic_vector(K - 1 downto 0);
 
-  -- Syndrome, overall parity and single-bit correction.
-  p_decode : process (all) is
-    variable data     : std_ulogic_vector(K - 1 downto 0);
-    variable syndrome : std_ulogic_vector(R_C - 1 downto 0);
-    variable parity   : std_ulogic;
-    variable fixed    : std_ulogic_vector(K - 1 downto 0);
+  -- True when n is a power of two (n >= 1).
+  function is_pow2(n : positive) return boolean is
+    variable v : natural := n;
   begin
-    data     := code_i(K - 1 downto 0);
-    syndrome := code_i(K + R_C - 1 downto K);
+    while v mod 2 = 0 loop
+      v := v / 2;
+    end loop;
+    return v = 1;
+  end function is_pow2;
+
+  -- POS(j) = Hamming position of data bit j (as ecc_data_pos(j)), computed at
+  -- elaboration in O(K); COVER(i) = data bits whose position has bit i set.
+  -- Constants, so no tool runs a position search per bit (see sram_ecc_enc).
+  function data_positions return pos_t is
+    variable p   : pos_t;
+    variable pos : natural := 2;
+  begin
+    for j in 0 to K - 1 loop
+      pos := pos + 1;                       -- next position ...
+      if is_pow2(pos) then                  -- ... that is not a power of two
+        pos := pos + 1;
+      end if;
+      p(j) := std_ulogic_vector(to_unsigned(pos, R_C));
+    end loop;
+    return p;
+  end function data_positions;
+
+  constant POS : pos_t := data_positions;
+
+  function cover_masks return cover_t is
+    variable m : cover_t := (others => (others => '0'));
+  begin
     for j in 0 to K - 1 loop
       for i in 0 to R_C - 1 loop
-        if ((ecc_data_pos(j) / (2 ** i)) mod 2) = 1 then
-          syndrome(i) := syndrome(i) xor data(j);
-        end if;
+        m(i)(j) := POS(j)(i);
       end loop;
     end loop;
-    parity := xor code_i;
-    fixed  := data;
-    for j in 0 to K - 1 loop
-      if parity = '1' and unsigned(syndrome) = to_unsigned(ecc_data_pos(j), R_C) then
-        fixed(j) := not data(j);
-      end if;
-    end loop;
-    data_o   <= fixed;
-    single_o <= parity;
-    if parity = '0' and unsigned(syndrome) /= 0 then
-      double_o <= '1';
-    else
-      double_o <= '0';
-    end if;
-  end process p_decode;
+    return m;
+  end function cover_masks;
+
+  constant COVER : cover_t := cover_masks;
+
+  signal data     : std_ulogic_vector(K - 1 downto 0);
+  signal syndrome : std_ulogic_vector(R_C - 1 downto 0);
+  signal parity   : std_ulogic;
+
+begin
+
+  data <= code_i(K - 1 downto 0);
+
+  -- Syndrome and overall parity.
+  g_syn : for i in 0 to R_C - 1 generate
+    syndrome(i) <= code_i(K + i) xor (xor (data and COVER(i)));
+  end generate g_syn;
+  parity <= xor code_i;
+
+  -- Single-bit correction: flip the data bit whose position equals the
+  -- syndrome (a flipped check or parity bit leaves the data intact).
+  g_fix : for j in 0 to K - 1 generate
+    data_o(j) <= data(j) xor (parity and (syndrome ?= POS(j)));
+  end generate g_fix;
+
+  single_o <= parity;
+  double_o <= (not parity) and (or syndrome);
 
 end architecture rtl;

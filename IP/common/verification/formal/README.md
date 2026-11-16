@@ -103,7 +103,10 @@ Use `IP/system/timer/verification/formal/vcf/` as the worked example.
    the runner passes that module name to `-sva_bind_enable`.
 5. **Waivers**: `<ip>_fv_waivers.txt`, one line per waiver:
    `<property glob> <result> # justification`. Globs are case-insensitive,
-   because VC Formal upper-cases VHDL instance names. Typical entries are
+   because VC Formal upper-cases VHDL instance names. An optional
+   `<job glob>:` prefix limits an entry to some jobs of the IP (matched
+   with and without the `_sv` / `_vhdl` suffix), for a result that only one
+   configuration explains. Typical entries are
    covers of responses a bridge ties off (for example `c_slverr uncoverable`).
 6. **Runner**: in `verification/tools/formal_<ip>.py`, import
    `claude_vcf`, build one `VcfJob` per (protocol, language), and call

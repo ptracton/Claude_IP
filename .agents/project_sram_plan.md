@@ -177,7 +177,7 @@ simulations sweep a config matrix on GENERIC and on each PDK's macro models.
 | 3b | Macro tiling rework: each `sram_macro[_dp]_<tech>` builds any W x D from primitives with generate (§11) | done |
 | 3c | Dual port with different widths and clocks (§12) | done |
 | 4 | Directed tests, SV + VHDL x 4 protos x single/dual: rw, byte enables, back2back, March sweep, AHB bursts, errors, power retention/loss/wake, clear, ECC (corr/uncorr/RMW), BIST (incl. fault injection), dual-port conflicts, config sweep incl. small DEPTHs (exercises SAED14 32x8); reference model as checker; backdoor preload/peek tasks. Also, from 3b/3c: tiler sweep (`macro/tb_macro.sv`), different widths and separate clocks on **every** protocol (AHB/AXI pipelining catches the surviving narrow-slice mutant), dual-clock `sram_model`, port-B-during-engine monitor | done |
-| 5 | Formal (VC Formal): protocol checkers, `claude_mem_fv` with `INITIATOR_IS_DUT=0` on the core, symbolic-address data integrity with byte merge, power FSM legality, dual-port conflict ordering (incl. A waiting for B's RMW — not hit in smoke). From 3c: `sram_cdc` handshake ("port B never uses the array while an engine runs or pins are on"; the four-phase mutant survived simulation), codeword-lane write-back | |
+| 5 | Formal (VC Formal): protocol checkers, `claude_mem_fv` with `INITIATOR_IS_DUT=0` on the core, symbolic-address data integrity with byte merge, power FSM legality, dual-port conflict ordering (incl. A waiting for B's RMW — not hit in smoke). From 3c: `sram_cdc` handshake ("port B never uses the array while an engine runs or pins are on"; the four-phase mutant survived simulation), codeword-lane write-back | done 2026-11-15: 13 jobs x SV/VHDL 26/26 PASS; data/err in ECC + dual-port jobs bounded (user decision), see `verification/formal/vcf/README.md` |
 | 6 | UVM (VCS): random R/W + power-mode sequences, `sram_model` scoreboard | |
 | 7 | Regression runner/report | |
 | 8 | Lint: SpyGlass (csun) / Verilator + VHDL lint on a standard host (needs black-box stubs for the macros). From 3c: SpyGlass CDC on the separate-clock dual port (waive the `claude_sync` first stage); documented deviations: plain `always` (SV) / shared variable (VHDL) in the generic dual-clock RAM | |
@@ -857,3 +857,12 @@ Paused and resumed via `.agents/handoff.md`, which holds the full state.
   Verilator runs serial. Peak: Verilator 0.9-1.9 GB alloced; AXI4-Lite build ~29 min.
   To do on csun: VCS/Xcelium regression + coverage, SpyGlass, DC for the ECC RTL edit and
   the backdoor change.
+- 2026-11-15: **Step 5 formal done** (VC Formal, `formal_sram.py`): 13 jobs x SV/VHDL, 26/26
+  PASS. Full proofs except a_data/b_data (+ a_err_rule/b_err_rule in core_opts and
+  dp_sync_wide_b, port-A t_gnt_bounded in core_opts) in the ECC and dual-port jobs: no CEX,
+  depth 14-37 (t_gnt 172-180), waived as inconclusive per user decision. RTL fixes (SV + VHDL):
+  sram_clr `init_q` (clear-on-reset could leave a domain uninitialised), sram_core `a_yield`
+  (port-B starvation by port-A RMW); VHDL sram_ecc_enc/dec position tables. Shared driver:
+  report row regex (depths / inconclusive waivers), job-scoped waivers, `assume_proven`.
+  Findings 1-10 in the formal README. To do on csun after the RTL edits: VCS/Xcelium
+  regression + coverage, SpyGlass, DC (sram_clr, sram_core, VHDL ECC, SV ECC of 11-13).

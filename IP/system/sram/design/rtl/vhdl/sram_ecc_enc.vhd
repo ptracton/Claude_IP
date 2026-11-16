@@ -22,23 +22,51 @@ architecture rtl of sram_ecc_enc is
 
   constant R_C : natural := ecc_hamming_bits(K);
 
-begin
+  type cover_t is array (0 to R_C - 1) of std_ulogic_vector(K - 1 downto 0);
 
-  -- Hamming check bits and overall parity.
-  p_encode : process (all) is
-    variable check   : std_ulogic_vector(R_C - 1 downto 0);
-    variable overall : std_ulogic;
+  -- True when n is a power of two (n >= 1).
+  function is_pow2(n : positive) return boolean is
+    variable v : natural := n;
   begin
-    check := (others => '0');
+    while v mod 2 = 0 loop
+      v := v / 2;
+    end loop;
+    return v = 1;
+  end function is_pow2;
+
+  -- COVER(i) = the data bits whose Hamming position has bit i set. Computed at
+  -- elaboration in O(K) (ecc_data_pos(j) for every j, without its 1024-step
+  -- search), so no tool evaluates or unrolls a position search per bit (VC
+  -- Formal timed out on the VHDL ecc job with the per-bit search).
+  function cover_masks return cover_t is
+    variable m   : cover_t := (others => (others => '0'));
+    variable pos : natural := 2;
+  begin
     for j in 0 to K - 1 loop
+      pos := pos + 1;                       -- next position ...
+      if is_pow2(pos) then                  -- ... that is not a power of two
+        pos := pos + 1;
+      end if;
       for i in 0 to R_C - 1 loop
-        if ((ecc_data_pos(j) / (2 ** i)) mod 2) = 1 then
-          check(i) := check(i) xor data_i(j);
+        if ((pos / (2 ** i)) mod 2) = 1 then
+          m(i)(j) := '1';
         end if;
       end loop;
     end loop;
-    overall := (xor data_i) xor (xor check);
-    code_o  <= overall & check & data_i;
-  end process p_encode;
+    return m;
+  end function cover_masks;
+
+  constant COVER : cover_t := cover_masks;
+
+  signal check : std_ulogic_vector(R_C - 1 downto 0);
+
+begin
+
+  -- Hamming check bits and overall parity.
+  g_check : for i in 0 to R_C - 1 generate
+    check(i) <= xor (data_i and COVER(i));
+  end generate g_check;
+
+  code_o <= ((xor data_i) xor (xor check)) & check & data_i;
 
 end architecture rtl;

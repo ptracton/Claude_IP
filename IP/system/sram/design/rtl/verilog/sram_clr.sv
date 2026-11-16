@@ -21,7 +21,11 @@
 //
 // CLEAR_ON_RESET: every domain is pending when reset is released, so the
 // array is zeroed before the first bus access (used with ECC, where an
-// uninitialised word would read as an ECC error).
+// uninitialised word would read as an ECC error). A domain stays marked
+// uninitialised (init_q) until a pass writes its last word: if the reset pass
+// skips it (deep sleep / shutdown requested), it is pending again, and stalls
+// the bus, as soon as it may be woken (RUN / LS requested), so it is never
+// read before it was cleared (found by VC Formal, a_err_rule).
 
 module sram_clr #(
   parameter int unsigned DEPTH = 1024,  // words
@@ -59,6 +63,8 @@ module sram_clr #(
   logic            step;         // advance one word
   logic            skip;         // advance to the next domain
   logic            start_pass;
+  logic [NPD-1:0]  init_q, init_d; // domains not yet cleared since reset
+  logic            dom_end;        // idx_q is the last word of its domain
 
   if (NPD > 1) begin : g_dom
     assign dom = DomW'(idx_q[IdxW-1:0] >> DomSh);
@@ -98,13 +104,27 @@ module sram_clr #(
     end
   end
 
+  if (DomSh > 0) begin : g_dom_end
+    assign dom_end = &idx_q[DomSh-1:0];
+  end else begin : g_dom_end1
+    assign dom_end = 1'b1;
+  end
+
+  // A domain is initialised once a pass writes its last word.
+  always_comb begin : p_init
+    init_d = init_q;
+    if (step && dom_end) begin
+      init_d[dom] = 1'b0;
+    end
+  end
+
   assign last       = active_q && idx_d[IdxW];
   assign start_pass = !active_q && (pend_q != '0) && port_idle_i;
 
   // New requests join the pending mask, except domains this pass already
   // covers (auto_i stays high until the domain sees dom_done_o).
   always_comb begin : p_pending
-    pend_d = pend_q | (start_i ? mask_i : '0) | auto_i;
+    pend_d = pend_q | (start_i ? mask_i : '0) | auto_i | (init_q & wakeable_i);
     if (active_q) begin
       pend_d = pend_d & ~cur_q;
     end
@@ -118,10 +138,12 @@ module sram_clr #(
     if (!rst_n) begin
       active_q <= 1'b0;
       pend_q   <= CLEAR_ON_RESET ? {NPD{1'b1}} : '0;
+      init_q   <= CLEAR_ON_RESET ? {NPD{1'b1}} : '0;
       cur_q    <= '0;
       idx_q    <= '0;
     end else begin
       pend_q <= pend_d;
+      init_q <= init_d;
       if (start_pass) begin
         active_q <= 1'b1;
         cur_q    <= pend_q;
@@ -138,7 +160,9 @@ module sram_clr #(
 
   assign idx_o      = idx_q[IdxW-1:0];
   assign busy_o     = active_q;
-  assign pending_o  = active_q || (pend_q != '0);
+  // init_q & wakeable_i also stalls combinationally: no grant in the cycle a
+  // skipped, uninitialised domain becomes wakeable.
+  assign pending_o  = active_q || (pend_q != '0) || ((init_q & wakeable_i) != '0);
   assign done_o     = last;
   assign dom_done_o = last ? cur_q : '0;
 

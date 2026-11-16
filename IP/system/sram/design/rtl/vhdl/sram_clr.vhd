@@ -6,7 +6,10 @@
 -- the bus port is idle and writes one word per cycle in every selected
 -- domain, skipping the others a domain at a time and waking light-sleeping
 -- ones (kept awake until the pass leaves them). done_o / dom_done_o pulse
--- at the end of a pass.
+-- at the end of a pass. With CLEAR_ON_RESET a domain stays marked
+-- uninitialised (init_q) until a pass writes its last word; a domain the
+-- reset pass skipped is pending again, and stalls the bus, as soon as it may
+-- be woken.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -63,6 +66,9 @@ architecture rtl of sram_clr is
   signal skip       : std_ulogic;                 -- advance to the next domain
   signal last       : std_ulogic;                 -- this cycle finishes the pass
   signal start_pass : std_ulogic;
+  signal init_q     : std_ulogic_vector(NPD - 1 downto 0); -- not yet cleared since reset
+  signal init_d     : std_ulogic_vector(NPD - 1 downto 0);
+  signal dom_end    : std_ulogic;                 -- idx_q is the last word of its domain
 
 begin
 
@@ -106,6 +112,21 @@ begin
     end if;
   end process p_next_idx;
 
+  gen_dom_end : if DOM_SH_C > 0 generate
+    dom_end <= and idx_q(DOM_SH_C - 1 downto 0);
+  else generate
+    dom_end <= '1';
+  end generate gen_dom_end;
+
+  -- A domain is initialised once a pass writes its last word.
+  p_init : process (all) is
+  begin
+    init_d <= init_q;
+    if step = '1' and dom_end = '1' then
+      init_d(dom) <= '0';
+    end if;
+  end process p_init;
+
   last       <= active_q and idx_d(IDX_W_C);
   start_pass <= '1' when active_q = '0' and unsigned(pend_q) /= 0 and port_idle_i = '1' else '0';
 
@@ -113,7 +134,7 @@ begin
   p_pending : process (all) is
     variable p : std_ulogic_vector(NPD - 1 downto 0);
   begin
-    p := pend_q or auto_i;
+    p := pend_q or auto_i or (init_q and wakeable_i);
     if start_i = '1' then
       p := p or mask_i;
     end if;
@@ -133,10 +154,12 @@ begin
       if rst_n = '0' then
         active_q <= '0';
         pend_q   <= reset_mask;
+        init_q   <= reset_mask;
         cur_q    <= (others => '0');
         idx_q    <= (others => '0');
       else
         pend_q <= pend_d;
+        init_q <= init_d;
         if start_pass = '1' then
           active_q <= '1';
           cur_q    <= pend_q;
@@ -154,7 +177,10 @@ begin
 
   idx_o      <= std_ulogic_vector(idx_q(IDX_W_C - 1 downto 0));
   busy_o     <= active_q;
-  pending_o  <= '1' when active_q = '1' or unsigned(pend_q) /= 0 else '0';
+  -- init_q and wakeable_i also stalls combinationally: no grant in the cycle a
+  -- skipped, uninitialised domain becomes wakeable.
+  pending_o  <= '1' when active_q = '1' or unsigned(pend_q) /= 0 or
+                         unsigned(init_q and wakeable_i) /= 0 else '0';
   done_o     <= last;
   dom_done_o <= cur_q when last = '1' else (others => '0');
 
