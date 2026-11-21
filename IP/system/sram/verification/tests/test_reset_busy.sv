@@ -95,6 +95,15 @@ task automatic test_reset_busy();
   // The DS requests are still there after the reset: the domains go back to
   // DS, then wake when the requests drop.
   for (int sbi = 0; sbi < NSB; sbi++) set_mode_all(sbi, RUN);
+  // With ECC the reset clear pass skipped the deep-sleeping domain 0; it is
+  // cleared as soon as it may wake (sram_clr init_q, Step 5), so wait for that
+  // pass and check the domain reads zero without an ECC error.
+  for (int sbi = 0; sbi < NSB; sbi++) wait_idle(sbi);
+  for (int sbi = 0; sbi < NSB; sbi++) begin
+    if (slv[a_slave[sbi]].bist && slv[a_slave[sbi]].ecc) begin
+      rd_chk(a_slave[sbi], dom_word(a_slave[sbi], 0), 0, "woken after reset: cleared");
+    end
+  end
   all_alive("reset while BIST waits for power");
   row("R3 reset while BIST waits for a deep-sleeping domain to wake: recovers");
   // ---- R4 / R5: power state machine entering, and asleep

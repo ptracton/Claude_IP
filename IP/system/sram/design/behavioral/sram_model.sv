@@ -31,11 +31,21 @@
 //     model is exact with COMMON_CLK = 1 and for separate clocks when the
 //     testbench keeps the two ports off the same word at the same time.
 //     Side-band effects on port B (power errors) are taken at B's grant;
-//     with separate clocks keep port B off a domain while its mode changes.
+//     with separate clocks keep port B off a domain while its mode changes,
+//     or set B_MODE_GUARD: a port-B access whose requested modes changed in
+//     the B_MODE_GUARD clk_b cycles before its grant, or before its
+//     response, may answer either way (the request reaches port B through
+//     the core's clock-domain crossing); the model then follows the
+//     response (a write that went through is applied, a write that errored
+//     makes its word unknown, read data of such an access is not compared).
 //   - response timing: every response of port A (B) comes READ_LATENCY
 //     (READ_LATENCY_B) cycles of its clock after its grant
 // Word strides are powers of two (a 24-bit word takes 4 bytes of address).
-// Backdoor bit flips are reported with set_fault(unit, kind).
+// Backdoor bit flips are reported with set_fault(unit, kind). A read-path
+// stuck bit (the testbench forces one stored data bit of one unit on every
+// read) is reported with set_stuck(on, unit, bit, value): with ECC_EN it is an
+// extra error whenever the stored bit differs, added to an injected single
+// error (codeword bit 0) except on bit 0 itself, which it overrides.
 // Unknown expected data (X bits) is not compared.
 //
 // Outputs: mismatch_o pulses on a wrong port-A response, mismatch_b_o on a
@@ -63,6 +73,7 @@ module sram_model #(
   parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR,
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,
   parameter bit          READ_ONLY_B      = 0,
+  parameter int unsigned B_MODE_GUARD     = 0,    // clk_b cycles (see above)
   localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1
 ) (
   input  logic                   clk,             // port A / side-band clock
@@ -122,6 +133,10 @@ module sram_model #(
   logic [U-1:0]     kn    [NU];
   logic [1:0]       fault [NU];      // 0 none, 1 single (corrected), 2 double
   logic [1:0]       inj_armed;
+  bit               stuck_on;
+  int unsigned      stuck_u;
+  int unsigned      stuck_bit;
+  logic             stuck_val;
   logic [NPD-1:0]   clr_mask;        // domains of a pending software clear
   logic [2*NPD-1:0] ack_q;
 
@@ -137,6 +152,12 @@ module sram_model #(
     logic [WB-1:0] kn;
     logic          err;
     int unsigned   t;
+    bit            amb;      // mode request changed near the grant (B_MODE_GUARD)
+    logic [2*NPD-1:0] req;   // requested modes at the grant
+    logic          we;
+    logic [ADDR_W-1:0] addr;
+    logic [WB/8-1:0]   be;
+    logic [WB-1:0]     wdata;
   } exp_b_t;
   exp_a_t exp_a [$];
   exp_b_t exp_b [$];
@@ -167,7 +188,7 @@ module sram_model #(
                         input logic [127:0] be, input logic [1023:0] wdata,
                         input bit byte_en, input bit pwe, input bit ro, input bit inj_port,
                         output logic [1023:0] rdata, output logic [1023:0] rkn,
-                        output logic err);
+                        output logic err, input bit ign_pwr = 1'b0);
     int unsigned sb, offw, idxw, idx, r, u0, d;
     logic oor, full, rmw, touch, part, bad;
     sb   = W / 8;
@@ -183,7 +204,7 @@ module sram_model #(
     rdata = '0;
     rkn   = '0;
     err   = 1'b0;
-    if (oor || (PWR_GATE && (dom_req(d) == 2'd2 || dom_req(d) == 2'd3)) ||
+    if (oor || (PWR_GATE && !ign_pwr && (dom_req(d) == 2'd2 || dom_req(d) == 2'd3)) ||
         (ro && we) || (!byte_en && pwe && we && !full)) begin
       err = 1'b1;
       return;
@@ -192,7 +213,7 @@ module sram_model #(
       for (int unsigned k = 0; k < r; k++) begin
         rdata[k * U +: U] = mem[u0 + k];
         rkn[k * U +: U]   = kn[u0 + k];
-        if (ECC_EN && fault[u0 + k] == 2'd2) err = 1'b1;
+        if (ECC_EN && eff_fault(u0 + k) == 2'd2) err = 1'b1;
       end
       if (err) rdata = '0;
       return;
@@ -213,7 +234,7 @@ module sram_model #(
       for (int unsigned k = 0; k < r; k++) begin
         touch = 1'b0;
         for (int unsigned b = 0; b < UB; b++) if (be[k * UB + b]) touch = 1'b1;
-        if (touch && fault[u0 + k] == 2'd2) bad = 1'b1;
+        if (touch && eff_fault(u0 + k) == 2'd2) bad = 1'b1;
       end
     end
     if (bad) begin
@@ -238,6 +259,24 @@ module sram_model #(
     if (inj_port) inj_armed = 2'd0;
   endtask
 
+  function automatic void set_stuck(input bit on, input int unsigned u, input int unsigned b,
+                                    input logic v);
+    stuck_on  = on;
+    stuck_u   = u;
+    stuck_bit = b;
+    stuck_val = v;
+  endfunction
+
+  // Fault level of unit u as a read sees it (stuck bit included).
+  function automatic logic [1:0] eff_fault(input int unsigned u);
+    bit flip;
+    if (!stuck_on || u != stuck_u) return fault[u];
+    flip = kn[u][stuck_bit] && (mem[u][stuck_bit] !== stuck_val);
+    if (fault[u] == 2'd0) return flip ? 2'd1 : 2'd0;
+    if (fault[u] == 2'd1) return (stuck_bit == 0) ? (flip ? 2'd1 : 2'd0) : (flip ? 2'd2 : 2'd1);
+    return 2'd2;
+  endfunction
+
   // set_fault — the testbench changed stored bits behind the bus (backdoor):
   // unit u now holds a 0 none / 1 single / 2 double error.
   function automatic void set_fault(input int unsigned u, input logic [1:0] f);
@@ -251,6 +290,7 @@ module sram_model #(
       fault[u] = 2'd0;
     end
     inj_armed  = 2'd0;
+    stuck_on   = 1'b0;
     clr_mask   = '0;
     cyc_a      = 0;
     cyc_b      = 0;
@@ -344,10 +384,26 @@ module sram_model #(
   // Port B
   // ---------------------------------------------------------------------------
   if (DUAL_PORT) begin : g_b
+    // Requested modes at the last B_MODE_GUARD clk_b edges (newest first).
+    logic [2*NPD-1:0] req_hist [B_MODE_GUARD + 1];
+
+    // forget_b — the port-B word at addr becomes unknown.
+    task automatic forget_b(input logic [ADDR_W-1:0] addr);
+      int unsigned offw, idx, r;
+      offw = (WB > 8) ? $clog2(WB / 8) : 0;
+      idx  = (addr >> offw) & (DEPTH_B - 1);
+      r    = WB / U;
+      for (int unsigned k = 0; k < r; k++) begin
+        mem[idx * r + k] = 'x;
+        kn[idx * r + k]  = '0;
+      end
+    endtask
+
     always @(posedge clk_b) begin : p_model_b
       logic [1023:0] rd, rk;
       logic          er;
       exp_b_t        e;
+      bit            amb;
 
       mismatch_b_o = 1'b0;
       cyc_b++;
@@ -361,7 +417,16 @@ module sram_model #(
             mismatch_b_o = 1'b1;
           end else begin
             e = exp_b.pop_front();
-            if (mem_b_err !== e.err ||
+            amb = e.amb || (B_MODE_GUARD > 0 && pwr_mode_req !== e.req);
+            if (amb && mem_b_err !== e.err) begin
+              // Either outcome is legal: follow the response.
+              if (e.we && !mem_b_err) begin
+                access(WB, DEPTH_B, e.addr, 1'b1, 128'(e.be), 1024'(e.wdata), BYTE_EN_B,
+                       PARTIAL_WR_ERR_B, READ_ONLY_B, 1'b0, rd, rk, er, 1'b1);
+              end else if (e.we) begin
+                forget_b(e.addr);
+              end
+            end else if (mem_b_err !== e.err ||
                 (!e.err && (((mem_b_rdata ^ e.rdata) & e.kn) !== ((e.rdata ^ e.rdata) & e.kn)))) begin
               $display("ERROR [sram_model] %m port B mismatch (%0t): err %b/%b data 0x%h/0x%h",
                        $time, mem_b_err, e.err, mem_b_rdata, e.rdata);
@@ -382,9 +447,20 @@ module sram_model #(
           e.kn    = rk[WB-1:0];
           e.err   = er;
           e.t     = cyc_b;
+          e.amb   = 1'b0;
+          for (int unsigned i = 0; i < B_MODE_GUARD; i++) begin
+            if (req_hist[i] !== pwr_mode_req) e.amb = 1'b1;
+          end
+          e.req   = pwr_mode_req;
+          e.we    = mem_b_we;
+          e.addr  = mem_b_addr;
+          e.be    = mem_b_be;
+          e.wdata = mem_b_wdata;
           exp_b.push_back(e);
         end
       end
+      for (int unsigned i = B_MODE_GUARD; i > 0; i--) req_hist[i] = req_hist[i - 1];
+      req_hist[0] = pwr_mode_req;
     end
   end else begin : g_no_b
     assign mismatch_b_o = 1'b0;

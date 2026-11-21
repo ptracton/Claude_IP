@@ -15,6 +15,7 @@ task automatic clear_and_read(input int s, input string what);
   int unsigned d0, b0;
   logic [63:0] rd;
   logic        er;
+  int unsigned words;                         // words the pass writes
   sb = slv[s].sb;
   d0 = n_clr_done[sb];
   b0 = n_busy[sb];
@@ -22,16 +23,21 @@ task automatic clear_and_read(input int s, input string what);
   `TB_DRV; clr_req[sb] <= 1'b1;
   sb_cyc(sb, 1);
   `TB_DRV; clr_req[sb] <= 1'b0;
-  // Domains requested RUN / LS are cleared (all of them here).
+  // Domains requested RUN / LS are cleared; DS / SD domains are skipped a
+  // whole domain at a time, so busy_o covers at least the cleared words.
+  words = 0;
   for (int d = 0; d < slv[s].npd; d++) begin
-    if (!slv[s].pg || pwr_req[sb][2*d +: 2] inside {RUN, LS}) sh_fill_dom(sb, d, 8'h00);
+    if (!slv[s].pg || pwr_req[sb][2*d +: 2] inside {RUN, LS}) begin
+      sh_fill_dom(sb, d, 8'h00);
+      words += slv[s].depth / slv[s].npd;
+    end
   end
   rd_raw(s, 3, rd, er);                       // stalls until the pass ends
   chk(n_clr_done[sb] > d0, $sformatf("%s: read waited for clr_done_o", what));
   chk(er === 1'b0, $sformatf("%s: read after clear OKAY", what));
   cmp_lanes(s, 3, rd, all_lanes(s), what);
-  chk(n_busy[sb] - b0 >= slv[s].depth, $sformatf("%s: busy_o during the pass (%0d cycles)",
-                                                  what, n_busy[sb] - b0));
+  chk(n_busy[sb] - b0 >= words, $sformatf("%s: busy_o during the pass (%0d cycles, %0d words)",
+                                           what, n_busy[sb] - b0, words));
 endtask
 
 task automatic test_clear();

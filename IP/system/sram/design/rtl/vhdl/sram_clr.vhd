@@ -113,7 +113,8 @@ begin
   end process p_next_idx;
 
   gen_dom_end : if DOM_SH_C > 0 generate
-    dom_end <= and idx_q(DOM_SH_C - 1 downto 0);
+    -- unary and on std_ulogic_vector: Xcelium numeric_std has no reduction on unsigned
+    dom_end <= and std_ulogic_vector(idx_q(DOM_SH_C - 1 downto 0));
   else generate
     dom_end <= '1';
   end generate gen_dom_end;

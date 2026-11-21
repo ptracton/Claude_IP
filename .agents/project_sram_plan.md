@@ -866,3 +866,81 @@ Paused and resumed via `.agents/handoff.md`, which holds the full state.
   report row regex (depths / inconclusive waivers), job-scoped waivers, `assume_proven`.
   Findings 1-10 in the formal README. To do on csun after the RTL edits: VCS/Xcelium
   regression + coverage, SpyGlass, DC (sram_clr, sram_core, VHDL ECC, SV ECC of 11-13).
+
+## 14. Step 6 — UVM (planned 2026-11-21)
+
+### 14.1 Decisions (user, 2026-11-21: all as recommended)
+- **D-U1 DUT configs:** three presets, one DUT per run, `--cfg`:
+  `base` = 32x1024 defaults (single port); `full` = 32x1024 ECC + BANK_PG (2 banks) + BIST,
+  READ_LATENCY 2; `dp` = dual port A 32 / B 8 (equal capacity), COMMON_CLK 0 (A 10 ns, B 13.7 ns;
+  SAED14: COMMON_CLK 1, one clock), SKY130 port B read-only. These are the configs DC/PT/power use.
+- **D-U2 scoreboard:** UVM class predictor at the protocol bus (data, errors, power/clear/BIST/ECC
+  effects) **and** the existing `sram_model` on the memory bus as a second, independent checker
+  (its `n_mismatch` reported through UVM at the end).
+- **D-U3 matrix:** VCS + Xcelium, SV + VHDL tops (mixed language), 5 techs, 4 protocols, 3 cfgs.
+  `uvm_sram.py` runs any combination; the default regression runs all of them, `--jobs <= 3`.
+- **D-U4 coverage:** functional covergroups at 100% (bins excluded per cfg, not per run), plus the
+  existing 90%-per-module VCS code-coverage target, both in the README.
+
+### 14.2 Bench (`verification/tasks/uvm/`, bus_matrix layout)
+- `tb_sram_uvm.sv`: clocks, resets, one DUT chosen by defines (`SRAM_PROTO_*`, `SRAM_CFG_*`,
+  `TECH`, `VHDL_DUT`), one SV interface per bus port (`sram_<proto>_if`, data fixed 64 bits,
+  low bits used), `sram_sb_if` for the side band, `sram_model` bound to the memory bus,
+  BIST fault force (as in Step 4).
+- `agents/bus/`: one protocol-neutral `sram_bus_item` (port, we, addr, size, strb, data, AHB
+  burst kind/beats/BUSY, idle cycles, response) and four drivers/monitors (APB, AHB incl. INCR/WRAP
+  bursts and BUSY, AXI4-Lite pipelined with random BREADY/RREADY and the same-word hazard rule,
+  WB classic). The agent picks the pair from `sram_uvm_cfg.proto`. Monitors emit one item per beat
+  with start/end time.
+- `agents/sb/`: side-band driver (power mode per domain, clr_req, ecc_inj, bist_start, fault
+  knob) and monitor (acks, done/irq/ecc pulses, busy).
+- `env/`: `sram_scoreboard` (byte shadow per port-normalised storage byte; power error from the
+  requested mode; SD -> unknown, wake from SD -> zero; clear / BIST -> zero; ECC fault state per
+  codeword; err_irq / ecc pulse checks on single-clock cfgs; overlap of a transfer with a
+  contents-changing side-band event = ambiguous, counted, not compared), `sram_coverage`,
+  virtual sequencer.
+- `sequences/`: random R/W (sizes, strobes, OOR, back-to-back, bursts), power walks (random
+  mode per domain with traffic), clear, ECC inject (port A locked), BIST (+ fault), dual-port
+  epochs (address space split between ports per epoch, so separate clocks never touch the same
+  word at once; ownership swaps at a barrier), stress (all at once).
+- `tests/`: `sram_smoke_test`, `sram_random_test`, `sram_power_test`, `sram_clear_test`,
+  `sram_ecc_test`, `sram_bist_test`, `sram_dp_test`, `sram_stress_test` (cfg-gated: a test whose
+  feature is absent reports SKIP).
+- Mutation check per the template: scratch DUT copies (drop an error response, leak an address
+  bit, skip SD content loss) must make the tests fail.
+
+### 14.3 Runner `verification/tools/uvm_sram.py`
+`--sim vcs|xcelium|all --proto .. --lang sv|vhdl|all --tech .. --cfg base|full|dp|all
+--test <name>|all --seed N --seeds K --coverage --waves --jobs N` (safe_jobs cap). One compile per
+(sim, proto, lang, tech, cfg), every test/seed from it. File lists, defines, macro models and
+coverage hier from `sim_sram.py` (imported, not copied). Results:
+`verification/work/uvm/<sim>/<proto>_<lang>_<tech>_<cfg>/<test>_s<seed>.log`, summary
+`verification/work/uvm/results.log` (first line PASS/FAIL), functional coverage from urg
+(VCS) per run and merged.
+
+### 14.4 Log
+- 2026-11-21 **repo hit by /tmp aging**: systemd-tmpfiles (`q /tmp 10d`) had deleted 186
+  tracked, unmodified files (sram tb/tests, most of the timer, LICENSE, README); restored from
+  HEAD (`git ls-files -d | xargs git checkout HEAD --`). Untracked/ignored outputs older than 10
+  days may be gone. Recommend moving the repo out of /tmp.
+- 2026-11-21 **csun re-run of Step 4 after the Step 5 RTL edits** (first full run since 11-07):
+  80/80 FAIL at first. (1) Xcelium could not parse the VHDL: `COVER` (Step 5 position tables in
+  `sram_ecc_enc/dec.vhd`) is a PSL keyword in VHDL-2008 -> `COVER_C`; `and idx_q(..)` on
+  `unsigned` in `sram_clr.vhd` (Xcelium numeric_std has no unsigned reduction) -> on
+  `std_ulogic_vector(..)`. No functional change. (2) `test_clear` "s24b busy_o during the pass":
+  the Step 5 LS-thrash fix keeps the LS domain awake, so a pass that skips DS/SD domains is
+  shorter than DEPTH; the check is now ">= words of the cleared domains". (3) `test_reset_busy`
+  R3: with ECC the reset clear skips a DS domain and (Step 5 `init_q`) clears it once it may
+  wake, so busy_o is high right after the RUN ack; the test now waits for idle and reads the
+  domain (zero, no ECC error). After (1)-(3): **80/80 PASS** (VCS + Xcelium, SV + VHDL, 5 techs).
+  Coverage regression found: `sram_ecc_dec` (SV) scores 75.7 in the PDK runs (cond 53 %), 91.4 on
+  GENERIC: the Verilator-salvage rewrite (11-13) has one condition `parity && syndrome == POS[j]`
+  per data bit, and only GENERIC (backdoor flips) makes single errors beyond bits 0/1. Open
+  (needs a user decision; see handoff).
+- 2026-11-21 **Step 6 UVM built** (`verification/tasks/uvm/`, `uvm_sram.py`, `uvm_mutants.py`):
+  bench per §14.2; one interface type for all four protocols; scoreboard sorts monitor input by
+  time (side band first); `sram_model` gained `B_MODE_GUARD` (port B power error either way near
+  a mode change, separate clocks; default 0 = old behaviour) and `set_stuck()` (read-path stuck
+  bit for the ECC sweep; inert unless called). Read-path fault knob generalised (any data bit,
+  either value) for single- and double-error sweeps over every data position. Mutation check:
+  9/9 mutants killed (`work/uvm/mutants/results.log`).

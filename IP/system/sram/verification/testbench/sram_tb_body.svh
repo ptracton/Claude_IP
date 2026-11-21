@@ -293,50 +293,80 @@
   end
 
   // -------------------------------------------------------------------------
-  // BIST fault injection (test_bist): stuck-at-0 on stored bit 3 of word
-  // bf_addr[I] while bf_on[I]. A read of that word is seen at the clock edge
-  // that issues it; the array output is forced from the following falling
-  // edge for one cycle, so the compare at the next rising edge sees it.
+  // Read-path stuck bit (test_bist: stuck-at-0 on stored bit 3; test_ecc:
+  // every stored bit at 0 and at 1): while bf_on[I], stored bit bf_bit[I] of
+  // array word bf_addr[I] reads as bf_val[I]. A read of that word is seen at
+  // the clock edge that issues it; the array output is forced from the
+  // following falling edge for one cycle, so the compare / ECC decode at the
+  // next rising edge sees it. MW = stored word width of the instance.
   // VHDL DUT on VCS: a native SV force cannot write a bit of a VHDL signal
-  // (nor a VHDL signal that the bench also reads), so $hdl_xmr_force does.
+  // (nor a VHDL signal that the bench also reads), so $hdl_xmr_force does
+  // (its value must be a string literal). Elsewhere one native force per bit,
+  // with constant values (Xcelium forces a VHDL bit-select with a constant only).
   // -------------------------------------------------------------------------
   int unsigned bf_addr [NSB];
   bit          bf_on   [NSB];
+  int unsigned bf_bit  [NSB];
+  bit          bf_val  [NSB];
+
+  initial begin
+    for (int i = 0; i < NSB; i++) begin
+      bf_bit[i] = 3;
+      bf_val[i] = 1'b0;
+    end
+  end
 
 `ifdef VHDL_DUT
 `ifdef VCS
-`define BF_FORCE(U) $hdl_xmr_force({`TB_STR, ".", `"U`", ".u_core.arr_rdata[3]"}, "0", "0 ns", \
-                                   "freeze", "", 0)
-`define BF_RELEASE(U) $hdl_xmr_release({`TB_STR, ".", `"U`", ".u_core.arr_rdata[3]"}, 0)
+`define BF_BODY(U, I, MW) \
+    string bf_path; \
+    always @(negedge clk_a) begin \
+      if (hit_q) begin \
+        if (forced) $hdl_xmr_release(bf_path, 0); \
+        bf_path = $sformatf("%s.%s.u_core.arr_rdata[%0d]", `TB_STR, `"U`", bf_bit[I]); \
+        if (bf_val[I]) $hdl_xmr_force(bf_path, "1", "0 ns", "freeze", "", 0); \
+        else $hdl_xmr_force(bf_path, "0", "0 ns", "freeze", "", 0); \
+        forced = 1'b1; \
+      end else if (forced) begin \
+        $hdl_xmr_release(bf_path, 0); \
+        forced = 1'b0; \
+      end \
+    end
 `endif
 `endif
-`ifndef BF_FORCE
-`define BF_FORCE(U) force U.u_core.arr_rdata[3] = 1'b0
-`define BF_RELEASE(U) release U.u_core.arr_rdata[3]
+`ifndef BF_BODY
+`define BF_BODY(U, I, MW) \
+    for (genvar gb = 0; gb < MW; gb++) begin : g_bit \
+      bit f; \
+      initial f = 1'b0; \
+      always @(negedge clk_a) begin \
+        if (hit_q && bf_bit[I] == gb) begin \
+          if (bf_val[I]) force U.u_core.arr_rdata[gb] = 1'b1; \
+          else force U.u_core.arr_rdata[gb] = 1'b0; \
+          f = 1'b1; \
+        end else if (f) begin \
+          release U.u_core.arr_rdata[gb]; \
+          f = 1'b0; \
+        end \
+      end \
+    end
 `endif
 
-`define BIST_FAULT(U, I) \
+`define RD_FAULT(U, I, MW) \
   if (1) begin : g_bf_``U \
     logic hit_q; \
     logic forced; \
     initial forced = 1'b0; \
     always @(posedge clk_a) hit_q <= bf_on[I] && U.u_core.arr_cs && !U.u_core.arr_we && \
                                      (int'(U.u_core.arr_idx) == int'(bf_addr[I])); \
-    always @(negedge clk_a) begin \
-      if (hit_q) begin \
-        `BF_FORCE(U); \
-        forced = 1'b1; \
-      end else if (forced) begin \
-        `BF_RELEASE(U); \
-        forced = 1'b0; \
-      end \
-    end \
+    `BF_BODY(U, I, MW) \
   end
 
-  `BIST_FAULT(u_s32e, SB_S32E)
-  `BIST_FAULT(u_s64, SB_S64)
-  `BIST_FAULT(u_dp1, SB_DP1)
-  `BIST_FAULT(u_dp0, SB_DP0)
+  `RD_FAULT(u_s32e, SB_S32E, 39)        // 32 data + 7 SECDED
+  `RD_FAULT(u_s64, SB_S64, 72)          // 64 + 8
+  `RD_FAULT(u_s24, SB_S24, 30)          // 24 + 6
+  `RD_FAULT(u_dp1, SB_DP1, 16)          // no ECC
+  `RD_FAULT(u_dp0, SB_DP0, 52)          // 4 codewords of 8 + 5
 
   // -------------------------------------------------------------------------
   // Tests

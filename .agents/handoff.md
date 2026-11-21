@@ -1,4 +1,31 @@
-# Handoff — SRAM, updated 2026-11-15 (Step 5 formal done, uncommitted; next Step 6)
+# Handoff — SRAM, updated 2026-11-21 (Step 6 UVM in progress, uncommitted)
+
+## 2026-11-21 session (read first)
+- **/tmp aging:** the repo is in /tmp; systemd-tmpfiles deletes files idle > 10 days. 186 tracked
+  files were gone at session start and were restored from HEAD. Check `git status` for ` D` first.
+- **Step 4 re-run on csun (after the Step 5 RTL edits): 80/80 PASS** after three fixes (plan §13.7
+  last entries): VHDL `COVER` -> `COVER_C` and an `unsigned` reduction in `sram_clr.vhd` (Xcelium
+  parse; no functional change), `test_clear` busy bound, `test_reset_busy` R3 waits for the
+  wake-up clear. **Open:** `sram_ecc_dec` SV scores 75.7 in the PDK runs (target 90): the
+  Verilator-salvage ECC rewrite has one condition per data bit; only GENERIC (backdoor) makes
+  single errors beyond bits 0/1. Options: (a) Step 4 bench gets the UVM read-path stuck-bit knob
+  (sweep every data bit on s32e/s64), (b) exclude those conditions (justified by the exhaustive
+  SECDED sweep). **User chose (a), 2026-11-21:** done — `RD_FAULT(U, I, MW)` in
+  `sram_tb_body.svh` (any stored bit, either value; s32e/s64/s24/dp1/dp0), `test_ecc` sweeps
+  every stored bit (single errors) and, after an injected bit-0 error, every data bit (double
+  errors; model told via `sram_model.set_stuck`). Spot checks PASS (VCS SV SAED32, VCS VHDL
+  SKY130, Xcelium VHDL SAED14). Full regression re-run pending. Verilator not re-run (standard
+  host; uses the native per-bit force).
+- **Final Step 4 regression 2026-11-21: 80/80 PASS**, weakest module SV 92.95 / VHDL 92.99,
+  `sram_ecc_dec` SV >= 94.32 in every run; README tables regenerated.
+- **UVM open:** `claude_wb_mem_if` code coverage 89.89 / 89.93 in the WB SV dp / base UVM builds
+  (target 90). Full 240-build UVM matrix running (`--jobs 1`), README UVM section has GENERIC
+  results only; update when it finishes.
+- **Commits:** the user commits (said 2026-11-21 "I will commit today when ready").
+- **Step 6 (UVM):** bench `verification/tasks/uvm/` (plan §14), runner `uvm_sram.py`, mutation
+  runner `uvm_mutants.py` (9/9 killed). `sram_model` changed (B_MODE_GUARD, set_stuck; both
+  inert by default) -> Step 4 regression must be re-run once more before committing.
+
 
 The plan and full log are in `.agents/project_sram_plan.md` §13 (request, bench architecture,
 tests, §13.7 logs). The IP README "Simulation Results" holds the current results and coverage.

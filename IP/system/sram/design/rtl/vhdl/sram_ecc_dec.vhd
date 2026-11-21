@@ -41,7 +41,7 @@ architecture rtl of sram_ecc_dec is
   end function is_pow2;
 
   -- POS(j) = Hamming position of data bit j (as ecc_data_pos(j)), computed at
-  -- elaboration in O(K); COVER(i) = data bits whose position has bit i set.
+  -- elaboration in O(K); COVER_C(i) = data bits whose position has bit i set.
   -- Constants, so no tool runs a position search per bit (see sram_ecc_enc).
   function data_positions return pos_t is
     variable p   : pos_t;
@@ -70,7 +70,7 @@ architecture rtl of sram_ecc_dec is
     return m;
   end function cover_masks;
 
-  constant COVER : cover_t := cover_masks;
+  constant COVER_C : cover_t := cover_masks;
 
   signal data     : std_ulogic_vector(K - 1 downto 0);
   signal syndrome : std_ulogic_vector(R_C - 1 downto 0);
@@ -82,7 +82,7 @@ begin
 
   -- Syndrome and overall parity.
   g_syn : for i in 0 to R_C - 1 generate
-    syndrome(i) <= code_i(K + i) xor (xor (data and COVER(i)));
+    syndrome(i) <= code_i(K + i) xor (xor (data and COVER_C(i)));
   end generate g_syn;
   parity <= xor code_i;
 

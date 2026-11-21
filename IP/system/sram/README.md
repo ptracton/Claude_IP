@@ -256,7 +256,8 @@ domain is held in RUN. UPF files for SAED90, SAED14 and SKY130 belong in
 
 ## Simulation Results
 
-Directed simulation (Step 4), results generated 2026-10-18 on a `*.csun.edu`
+Directed simulation (Step 4), results generated 2026-10-18 and re-run 2026-11-21
+(after the Step 5 RTL fixes) on a `*.csun.edu`
 host with Synopsys VCS Y-2026.03-SP1 and Cadence Xcelium 25.03. One
 SystemVerilog testbench verifies both the SystemVerilog and the VHDL
 top-levels: with `--lang vhdl` the SRAM tops and the bus matrices are the
@@ -321,7 +322,7 @@ VHDL storage).
 | test_burst | INCR4/8/16, WRAP4/8/16, undefined-length INCR, BUSY, byte bursts (AHB); same address sequences back to back on the other buses | 68 |
 | test_pipeline | READ_LATENCY 1 vs 2, pipelined write→read of one word, an error beat followed at once by a good one; AXI4-Lite: the master's pipelined mode (16 writes / 16 reads / 16 writes interleaved with 16 reads, faster than one at a time; same-word write→read keeps its order) | 6 (AHB), more on AXI4-Lite |
 | test_contention | two masters on one SRAM and on two SRAMs at once | 3 |
-| test_ecc | injected 1-bit (corrected, `ecc_corr_o`) and 2-bit (ERROR, `ecc_uncorr_o`) errors, RMW on clean / 1-bit / 2-bit words, backdoor flip of every stored bit and of bit pairs, dual-port codewords | 26 |
+| test_ecc | injected 1-bit (corrected, `ecc_corr_o`) and 2-bit (ERROR, `ecc_uncorr_o`) errors, RMW on clean / 1-bit / 2-bit words, backdoor flip of every stored bit and of bit pairs, read-path stuck bit on every stored bit (single errors) and, with an injected error, on every data bit (double errors) on every technology, dual-port codewords | 30 |
 | test_power | LS auto-wake, DS (ERROR, kept), SD (ERROR, cleared), sleep-to-sleep moves, per-bank modes, PWR_GATE 0 | 28 |
 | test_clear | clear on every instance, reads stall until `clr_done_o`, domains in DS skipped | 16 |
 | test_bist | March C- pass, reads stall, stuck-at fault found with its address, sleeping domains woken | 10 |
@@ -334,14 +335,14 @@ The same for both languages (identical comparison counts for SV and VHDL):
 
 | Bus | Language | GENERIC | SAED90 | SAED32 | SAED14 | SKY130 |
 |---|---|---|---|---|---|---|
-| AHB-Lite | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| AHB-Lite | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| APB4 | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| APB4 | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| AXI4-Lite | SV | PASS / PASS (118k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (91k) |
-| AXI4-Lite | VHDL | PASS / PASS (118k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (117k) | PASS / PASS (91k) |
-| Wishbone | SV | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
-| Wishbone | VHDL | PASS / PASS (117k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (115k) | PASS / PASS (90k) |
+| AHB-Lite | SV | PASS / PASS (121k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (94k) |
+| AHB-Lite | VHDL | PASS / PASS (121k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (94k) |
+| APB4 | SV | PASS / PASS (121k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (94k) |
+| APB4 | VHDL | PASS / PASS (121k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (94k) |
+| AXI4-Lite | SV | PASS / PASS (122k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (95k) |
+| AXI4-Lite | VHDL | PASS / PASS (122k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (120k) | PASS / PASS (95k) |
+| Wishbone | SV | PASS / PASS (121k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (94k) |
+| Wishbone | VHDL | PASS / PASS (121k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (119k) | PASS / PASS (94k) |
 
 80/80 runs pass. SKY130 runs make fewer comparisons because port B of its
 dual-port macro is read-only (B writes are checked to get ERROR); only GENERIC
@@ -414,67 +415,68 @@ as unreachable. Runs are merged by module definition with
 
 **Target: at least 90% score for every component in every bus x language x
 technology run.** Met: the weakest module of any SV run scores 92.95, of any
-VHDL run 92.98.
+VHDL run 92.99 (re-run 2026-11-21; `sram_ecc_dec` in the PDK runs is at least
+94.32 thanks to the read-path stuck-bit sweep in `test_ecc`).
 
 Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
 
 | Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
 |---|---|---|---|---|---|---|---|
-| AHB / GENERIC | 95.49 | 97.60 | 94.84 | 99.07 | 92.59 | 93.36 | sram_cdc (92.95) |
-| AHB / SAED14 | 95.39 | 97.50 | 94.89 | 99.04 | 92.59 | 92.92 | sram_pwr_ctrl (94.18) |
-| AHB / SAED32 | 95.59 | 97.56 | 95.47 | 99.02 | 92.59 | 93.29 | sram_cdc (92.95) |
-| AHB / SAED90 | 95.60 | 97.56 | 95.52 | 99.02 | 92.59 | 93.29 | sram_cdc (92.95) |
-| AHB / SKY130 | 95.16 | 97.56 | 93.87 | 98.51 | 92.59 | 93.29 | sram_cdc (92.95) |
-| APB / GENERIC | 94.71 | 97.40 | 94.26 | 99.23 | 89.47 | 93.19 | sram_cdc (92.95) |
-| APB / SAED14 | 94.61 | 97.28 | 94.36 | 99.19 | 89.47 | 92.73 | claude_apb_mem_if (93.67) |
-| APB / SAED32 | 94.82 | 97.36 | 94.99 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
-| APB / SAED90 | 94.84 | 97.36 | 95.05 | 99.17 | 89.47 | 93.12 | sram_cdc (92.95) |
-| APB / SKY130 | 94.30 | 97.36 | 93.06 | 98.47 | 89.47 | 93.12 | sram_cdc (92.95) |
-| AXI4-Lite / GENERIC | 95.12 | 97.54 | 93.59 | 99.17 | 91.67 | 93.61 | sram_cdc (92.95) |
-| AXI4-Lite / SAED14 | 95.03 | 97.44 | 93.71 | 99.13 | 91.67 | 93.20 | sram_pwr_ctrl (94.18) |
-| AXI4-Lite / SAED32 | 95.23 | 97.50 | 94.33 | 99.12 | 91.67 | 93.55 | sram_cdc (92.95) |
-| AXI4-Lite / SAED90 | 95.25 | 97.50 | 94.40 | 99.12 | 91.67 | 93.55 | sram_cdc (92.95) |
-| AXI4-Lite / SKY130 | 94.71 | 97.50 | 92.38 | 98.43 | 91.67 | 93.55 | sram_cdc (92.95) |
-| WB / GENERIC | 94.94 | 97.40 | 95.44 | 99.23 | 89.47 | 93.16 | claude_wb_mem_if (93.33) |
-| WB / SAED14 | 94.81 | 97.28 | 95.42 | 99.19 | 89.47 | 92.70 | claude_wb_mem_if (93.33) |
-| WB / SAED32 | 95.02 | 97.36 | 96.02 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
-| WB / SAED90 | 95.03 | 97.36 | 96.07 | 99.18 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
-| WB / SKY130 | 94.54 | 97.36 | 94.13 | 98.67 | 89.47 | 93.09 | claude_wb_mem_if (93.33) |
+| AHB / GENERIC | 95.69 | 97.77 | 95.50 | 99.12 | 92.59 | 93.47 | sram_cdc (92.95) |
+| AHB / SAED14 | 95.38 | 97.68 | 94.46 | 99.11 | 92.59 | 93.04 | sram_clr (93.65) |
+| AHB / SAED32 | 95.32 | 97.74 | 93.78 | 99.11 | 92.59 | 93.40 | sram_cdc (92.95) |
+| AHB / SAED90 | 95.33 | 97.74 | 93.83 | 99.11 | 92.59 | 93.40 | sram_cdc (92.95) |
+| AHB / SKY130 | 94.99 | 97.74 | 92.57 | 98.66 | 92.59 | 93.40 | sram_cdc (92.95) |
+| APB / GENERIC | 94.96 | 97.59 | 95.11 | 99.31 | 89.47 | 93.31 | sram_cdc (92.95) |
+| APB / SAED14 | 94.66 | 97.48 | 94.18 | 99.29 | 89.47 | 92.86 | sram_clr (93.65) |
+| APB / SAED32 | 94.58 | 97.55 | 93.38 | 99.29 | 89.47 | 93.23 | sram_cdc (92.95) |
+| APB / SAED90 | 94.60 | 97.55 | 93.44 | 99.29 | 89.47 | 93.23 | sram_cdc (92.95) |
+| APB / SKY130 | 94.15 | 97.55 | 91.95 | 98.56 | 89.47 | 93.23 | sram_cdc (92.95) |
+| AXI4-Lite / GENERIC | 95.38 | 97.72 | 94.55 | 99.25 | 91.67 | 93.71 | sram_cdc (92.95) |
+| AXI4-Lite / SAED14 | 95.13 | 97.62 | 93.83 | 99.23 | 91.67 | 93.31 | sram_clr (93.65) |
+| AXI4-Lite / SAED32 | 95.06 | 97.68 | 93.08 | 99.23 | 91.67 | 93.65 | sram_cdc (92.95) |
+| AXI4-Lite / SAED90 | 95.07 | 97.68 | 93.14 | 99.23 | 91.67 | 93.65 | sram_cdc (92.95) |
+| AXI4-Lite / SKY130 | 94.63 | 97.68 | 91.65 | 98.51 | 91.67 | 93.65 | sram_cdc (92.95) |
+| WB / GENERIC | 95.12 | 97.59 | 96.00 | 99.28 | 89.47 | 93.28 | claude_wb_mem_if (93.33) |
+| WB / SAED14 | 94.81 | 97.48 | 95.03 | 99.26 | 89.47 | 92.83 | claude_wb_mem_if (93.33) |
+| WB / SAED32 | 94.74 | 97.55 | 94.21 | 99.26 | 89.47 | 93.21 | claude_wb_mem_if (93.33) |
+| WB / SAED90 | 94.75 | 97.55 | 94.26 | 99.26 | 89.47 | 93.21 | claude_wb_mem_if (93.33) |
+| WB / SKY130 | 94.36 | 97.55 | 92.74 | 98.82 | 89.47 | 93.21 | claude_wb_mem_if (93.33) |
 
 All 20 SV runs merged (`verification/work/coverage/summary.txt`), total
-**95.84** (line 97.81, cond 94.23, toggle 99.19, FSM 93.75, branch 94.21):
+**96.10** (line 97.96, cond 95.22, toggle 99.25, FSM 93.75, branch 94.30):
 
 | Module | Score | Line | Cond | Toggle | FSM | Branch |
 |---|---|---|---|---|---|---|
 | `claude_wb_mem_if` | 93.33 | 100.00 | 73.33 | 100.00 | -- | 100.00 |
+| `sram_clr` | 93.65 | 94.43 | 85.58 | 94.60 | -- | 100.00 |
 | `claude_apb_mem_if` | 93.67 | 100.00 | 74.67 | 100.00 | -- | 100.00 |
-| `sram_clr` | 94.29 | 92.79 | 89.75 | 94.62 | -- | 100.00 |
-| `sram_pwr_ctrl` | 94.65 | 97.44 | 100.00 | 92.86 | 87.50 | 95.45 |
 | `sram_port` | 95.40 | 98.51 | 93.45 | 98.66 | -- | 90.97 |
+| `sram_pwr_ctrl` | 96.08 | 97.44 | 100.00 | 100.00 | 87.50 | 95.45 |
 | `claude_axi4l_mem_if` | 96.64 | 100.00 | 84.35 | 98.83 | 100.00 | 100.00 |
 | `claude_ahb_mem_if` | 96.80 | 100.00 | 85.11 | 98.89 | 100.00 | 100.00 |
 | `sram_cdc` | 97.12 | 100.00 | 100.00 | 88.46 | -- | 100.00 |
 | `claude_sync` | 97.22 | 100.00 | -- | 91.67 | -- | 100.00 |
 | `sram_bist` | 98.18 | 100.00 | 100.00 | 100.00 | 90.91 | 100.00 |
-| `sram_core` | 98.19 | 100.00 | 93.64 | 99.12 | -- | 100.00 |
 | `sram_ahb_dp` | 98.50 | -- | -- | 98.50 | -- | -- |
+| `sram_ecc_dec` | 98.76 | -- | 97.51 | 100.00 | -- | -- |
+| `sram_core` | 98.76 | 100.00 | 95.62 | 99.42 | -- | 100.00 |
 | `sram_macro_dp_sky130` | 98.87 | 100.00 | 100.00 | 95.48 | -- | 100.00 |
 | `sram_ahb` | 98.96 | -- | -- | 98.96 | -- | -- |
-| `sram_macro_sky130` | 99.06 | 100.00 | 100.00 | 96.24 | -- | 100.00 |
-| `sram_macro` | 99.45 | -- | -- | 99.45 | -- | -- |
+| `sram_macro_sky130` | 99.17 | 100.00 | 100.00 | 96.68 | -- | 100.00 |
 | `sram_macro_dp` | 99.46 | -- | -- | 99.46 | -- | -- |
+| `sram_macro` | 99.52 | -- | -- | 99.52 | -- | -- |
 | `sram_macro_dp_saed14` | 99.59 | 100.00 | 100.00 | 98.36 | -- | 100.00 |
 | `sram_macro_dp_saed32` | 99.60 | 100.00 | 100.00 | 98.40 | -- | 100.00 |
 | `sram_macro_dp_saed90` | 99.64 | 100.00 | 100.00 | 98.57 | -- | 100.00 |
 | `sram_axi4l` | 99.74 | -- | -- | 99.74 | -- | -- |
-| `sram_macro_generic` | 99.82 | 100.00 | -- | 99.45 | -- | 100.00 |
-| `sram_macro_saed90` | 99.82 | 100.00 | 100.00 | 99.29 | -- | 100.00 |
-| `sram_macro_saed32` | 99.82 | 100.00 | 100.00 | 99.29 | -- | 100.00 |
 | `sram_macro_dp_generic` | 99.82 | 100.00 | -- | 99.47 | -- | 100.00 |
-| `sram_macro_saed14` | 99.85 | 100.00 | 100.00 | 99.41 | -- | 100.00 |
-| `sram_array` | 99.87 | 100.00 | 100.00 | 99.49 | -- | 100.00 |
-| `sram_ecc_enc` | 100.00 | 100.00 | 100.00 | 100.00 | -- | -- |
-| `sram_ecc_dec` | 100.00 | 100.00 | 100.00 | 100.00 | -- | -- |
+| `sram_macro_saed90` | 99.83 | 100.00 | 100.00 | 99.33 | -- | 100.00 |
+| `sram_macro_saed32` | 99.83 | 100.00 | 100.00 | 99.33 | -- | 100.00 |
+| `sram_macro_generic` | 99.84 | 100.00 | -- | 99.52 | -- | 100.00 |
+| `sram_macro_saed14` | 99.86 | 100.00 | 100.00 | 99.45 | -- | 100.00 |
+| `sram_array` | 99.88 | 100.00 | 100.00 | 99.54 | -- | 100.00 |
+| `sram_ecc_enc` | 100.00 | -- | 100.00 | 100.00 | -- | -- |
 | `claude_pulse_sync` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
 | `sram_apb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
 | `sram_apb` | 100.00 | -- | -- | 100.00 | -- | -- |
@@ -506,64 +508,65 @@ three differences forced by VCS's VHDL support:
   covered; their SV twins are unpacked arrays, which VCS does not toggle-cover
   by default. That is why `sram_array` has the lowest VHDL toggle (85%).
 
-**Target met:** the weakest VHDL module of any run scores 92.98.
+**Target met:** the weakest VHDL module of any run scores 92.99.
 
 | Run | Score | Line | Cond | Toggle | FSM | Branch | Weakest module |
 |---|---|---|---|---|---|---|---|
-| AHB / GENERIC | 97.90 | 98.51 | 99.19 | 97.99 | 96.30 | 97.49 | sram_array (93.64) |
-| AHB / SAED14 | 96.97 | 98.30 | 97.80 | 96.29 | 96.30 | 96.18 | sram_array (93.64) |
-| AHB / SAED32 | 97.56 | 98.43 | 99.27 | 96.31 | 96.30 | 97.49 | sram_array (93.64) |
-| AHB / SAED90 | 97.57 | 98.43 | 99.27 | 96.36 | 96.30 | 97.49 | sram_array (93.64) |
-| AHB / SKY130 | 97.14 | 98.43 | 97.72 | 95.75 | 96.30 | 97.49 | sram_array (93.00) |
-| APB / GENERIC | 97.71 | 98.66 | 99.44 | 98.05 | 94.74 | 97.67 | sram_array (93.64) |
-| APB / SAED14 | 96.77 | 98.45 | 97.98 | 96.39 | 94.74 | 96.27 | sram_array (93.64) |
-| APB / SAED32 | 97.38 | 98.58 | 99.49 | 96.40 | 94.74 | 97.67 | sram_array (93.64) |
-| APB / SAED90 | 97.39 | 98.58 | 99.49 | 96.45 | 94.74 | 97.67 | sram_array (93.64) |
-| APB / SKY130 | 96.96 | 98.58 | 98.16 | 95.67 | 94.74 | 97.67 | sram_array (93.01) |
-| AXI4-Lite / GENERIC | 97.70 | 98.61 | 98.50 | 97.94 | 95.83 | 97.64 | sram_array (93.64) |
-| AXI4-Lite / SAED14 | 96.87 | 98.43 | 97.27 | 96.41 | 95.83 | 96.43 | sram_array (93.64) |
-| AXI4-Lite / SAED32 | 97.41 | 98.54 | 98.64 | 96.42 | 95.83 | 97.64 | sram_array (93.64) |
-| AXI4-Lite / SAED90 | 97.42 | 98.54 | 98.64 | 96.47 | 95.83 | 97.64 | sram_array (93.64) |
-| AXI4-Lite / SKY130 | 96.98 | 98.54 | 97.18 | 95.69 | 95.83 | 97.64 | sram_array (92.98) |
-| WB / GENERIC | 97.65 | 98.66 | 99.16 | 98.02 | 94.74 | 97.66 | sram_array (93.64) |
-| WB / SAED14 | 96.71 | 98.45 | 97.73 | 96.39 | 94.74 | 96.23 | sram_array (93.64) |
-| WB / SAED32 | 97.32 | 98.58 | 99.24 | 96.40 | 94.74 | 97.66 | sram_array (93.64) |
-| WB / SAED90 | 97.34 | 98.58 | 99.24 | 96.46 | 94.74 | 97.66 | sram_array (93.64) |
-| WB / SKY130 | 96.95 | 98.58 | 97.90 | 95.86 | 94.74 | 97.66 | sram_array (93.00) |
+| AHB / GENERIC | 97.69 | 98.55 | 98.03 | 98.01 | 96.30 | 97.55 | sram_array (93.64) |
+| AHB / SAED14 | 96.73 | 98.35 | 96.40 | 96.32 | 96.30 | 96.28 | sram_array (93.64) |
+| AHB / SAED32 | 97.38 | 98.48 | 98.20 | 96.35 | 96.30 | 97.55 | sram_array (93.64) |
+| AHB / SAED90 | 97.39 | 98.48 | 98.20 | 96.40 | 96.30 | 97.55 | sram_array (93.64) |
+| AHB / SKY130 | 96.88 | 98.48 | 96.28 | 95.81 | 96.30 | 97.55 | sram_array (93.00) |
+| APB / GENERIC | 97.53 | 98.69 | 98.47 | 98.01 | 94.74 | 97.74 | sram_array (93.65) |
+| APB / SAED14 | 96.56 | 98.50 | 96.75 | 96.44 | 94.74 | 96.37 | sram_array (93.65) |
+| APB / SAED32 | 97.24 | 98.62 | 98.61 | 96.47 | 94.74 | 97.74 | sram_array (93.65) |
+| APB / SAED90 | 97.25 | 98.62 | 98.61 | 96.52 | 94.74 | 97.74 | sram_array (93.65) |
+| APB / SKY130 | 96.84 | 98.62 | 97.36 | 95.72 | 94.74 | 97.74 | sram_array (93.01) |
+| AXI4-Lite / GENERIC | 97.52 | 98.65 | 97.48 | 97.93 | 95.83 | 97.70 | sram_array (93.65) |
+| AXI4-Lite / SAED14 | 96.66 | 98.47 | 96.00 | 96.47 | 95.83 | 96.52 | sram_array (93.65) |
+| AXI4-Lite / SAED32 | 97.26 | 98.58 | 97.68 | 96.49 | 95.83 | 97.70 | sram_array (93.65) |
+| AXI4-Lite / SAED90 | 97.27 | 98.58 | 97.68 | 96.54 | 95.83 | 97.70 | sram_array (93.65) |
+| AXI4-Lite / SKY130 | 96.74 | 98.58 | 95.87 | 95.74 | 95.83 | 97.70 | sram_array (92.99) |
+| WB / GENERIC | 97.48 | 98.69 | 98.21 | 98.03 | 94.74 | 97.72 | sram_array (93.64) |
+| WB / SAED14 | 96.50 | 98.50 | 96.52 | 96.42 | 94.74 | 96.34 | sram_array (93.64) |
+| WB / SAED32 | 97.18 | 98.62 | 98.38 | 96.44 | 94.74 | 97.72 | sram_array (93.64) |
+| WB / SAED90 | 97.19 | 98.62 | 98.38 | 96.49 | 94.74 | 97.72 | sram_array (93.64) |
+| WB / SKY130 | 96.83 | 98.62 | 97.12 | 95.93 | 94.74 | 97.72 | sram_array (93.01) |
 
 All 20 VHDL runs merged (`verification/work/coverage/vhdl/summary.txt`), total
-**98.04** (line 98.64, cond 98.67, toggle 98.05, FSM 96.88, branch 97.98). The
+**97.94** (line 98.67, cond 98.11, toggle 98.03, FSM 96.88, branch 98.02). The
 merge cannot apply per-instance exclusions (its instances are the first run's),
 so the merged toggle of each VHDL module is its best single run: a lower
 bound of the merged value.
 
 | Module | Score | Line | Cond | Toggle | FSM | Branch |
 |---|---|---|---|---|---|---|
-| `sram_array` | 93.64 | 94.87 | 100.00 | 84.96 | -- | 94.74 |
+| `sram_array` | 93.65 | 94.87 | 100.00 | 85.00 | -- | 94.74 |
 | `sram_cdc` | 95.50 | 100.00 | -- | 86.49 | -- | 100.00 |
 | `claude_sync` | 95.56 | 100.00 | -- | 86.67 | -- | 100.00 |
-| `claude_axi4l_mem_if` | 97.53 | 98.46 | 93.22 | 98.15 | 100.00 | 97.83 |
 | `sram_bist` | 97.32 | 98.48 | 100.00 | 100.00 | 90.91 | 97.22 |
+| `claude_axi4l_mem_if` | 97.53 | 98.46 | 93.22 | 98.15 | 100.00 | 97.83 |
+| `sram_core` | 97.65 | 100.00 | 96.72 | 93.88 | -- | 100.00 |
 | `claude_ahb_mem_if` | 97.87 | 97.22 | 96.55 | 99.17 | 100.00 | 96.43 |
 | `sram_pwr_ctrl` | 98.00 | 95.12 | 100.00 | 100.00 | 100.00 | 94.87 |
 | `sram_macro_dp_sky130` | 98.16 | 100.00 | 100.00 | 92.62 | -- | 100.00 |
 | `claude_wb_mem_if` | 98.33 | 100.00 | 93.33 | 100.00 | -- | 100.00 |
-| `sram_core` | 98.41 | 100.00 | 100.00 | 93.64 | -- | 100.00 |
-| `sram_clr` | 98.61 | 100.00 | 100.00 | 94.42 | -- | 100.00 |
+| `sram_clr` | 98.46 | 100.00 | 100.00 | 93.85 | -- | 100.00 |
 | `sram_ahb_dp` | 98.84 | -- | -- | 98.84 | -- | -- |
-| `sram_port` | 98.86 | 100.00 | 98.32 | 99.05 | -- | 98.08 |
+| `sram_port` | 98.86 | 100.00 | 98.32 | 99.06 | -- | 98.08 |
 | `sram_ahb` | 99.23 | -- | -- | 99.23 | -- | -- |
-| `sram_macro_generic` | 99.49 | 100.00 | -- | 98.47 | -- | 100.00 |
+| `sram_macro_generic` | 99.49 | 100.00 | -- | 98.46 | -- | 100.00 |
 | `sram_macro_dp` | 99.52 | -- | -- | 99.52 | -- | -- |
 | `sram_macro_dp_saed14` | 99.53 | 100.00 | 100.00 | 98.10 | -- | 100.00 |
-| `sram_macro` | 99.56 | -- | -- | 99.56 | -- | -- |
 | `sram_macro_dp_saed32` | 99.57 | 100.00 | 100.00 | 98.29 | -- | 100.00 |
-| `sram_macro_sky130` | 99.59 | 100.00 | 100.00 | 98.38 | -- | 100.00 |
+| `sram_macro_sky130` | 99.61 | 100.00 | 100.00 | 98.45 | -- | 100.00 |
 | `sram_macro_dp_saed90` | 99.69 | 100.00 | 100.00 | 98.77 | -- | 100.00 |
+| `sram_macro` | 99.71 | -- | -- | 99.71 | -- | -- |
 | `sram_axi4l` | 99.72 | -- | -- | 99.72 | -- | -- |
-| `sram_macro_saed32` | 99.82 | 100.00 | 100.00 | 99.28 | -- | 100.00 |
-| `sram_macro_saed90` | 99.82 | 100.00 | 100.00 | 99.28 | -- | 100.00 |
-| `sram_macro_saed14` | 99.85 | 100.00 | 100.00 | 99.40 | -- | 100.00 |
+| `sram_ecc_dec` | 99.83 | 100.00 | 100.00 | 99.31 | -- | 100.00 |
+| `sram_macro_saed90` | 99.84 | 100.00 | 100.00 | 99.36 | -- | 100.00 |
+| `sram_macro_saed32` | 99.84 | 100.00 | 100.00 | 99.36 | -- | 100.00 |
+| `sram_macro_saed14` | 99.87 | 100.00 | 100.00 | 99.47 | -- | 100.00 |
 | `sram_macro_dp_generic` | 99.88 | 100.00 | -- | 99.65 | -- | 100.00 |
 | `sram_apb` | 100.00 | -- | -- | 100.00 | -- | -- |
 | `sram_wb` | 100.00 | -- | -- | 100.00 | -- | -- |
@@ -571,7 +574,6 @@ bound of the merged value.
 | `sram_apb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
 | `sram_wb_dp` | 100.00 | -- | -- | 100.00 | -- | -- |
 | `sram_ecc_enc` | 100.00 | 100.00 | -- | 100.00 | -- | 100.00 |
-| `sram_ecc_dec` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
 | `claude_pulse_sync` | 100.00 | 100.00 | -- | 100.00 | -- | 100.00 |
 | `claude_apb_mem_if` | 100.00 | 100.00 | 100.00 | 100.00 | -- | 100.00 |
 
@@ -581,7 +583,7 @@ coverage is 75% in SV and 100% in VHDL with the same stimulus).
 
 Below 90% inside modules that pass (SV): condition coverage of the APB / Wishbone
 adapters (73-75%; AHB 85, AXI4-Lite 84), `sram_pwr_ctrl` FSM 87.5%,
-`sram_cdc` toggle 88.5%, `sram_clr` condition 89.8%.
+`sram_cdc` toggle 88.5%, `sram_clr` condition 85.6% (the Step 5 `init_q` terms).
 
 Not covered: the XILINX and ALTERA leaves (no vendor simulation libraries on
 csun.edu). Coverage is collected with VCS only: Xcelium can write a coverage
@@ -675,9 +677,58 @@ Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-11-15.
 
 ## UVM Verification Results
 
-> Populated by Step 6 (uvm)
+Constrained-random UVM bench (Step 6), `verification/tasks/uvm/`, VCS Y-2026.03-SP1
+(`-ntb_opts uvm-1.2`) and Xcelium 25.03 (`-uvm`, CDNS-1.2) on csun.edu,
+2026-11-21. One DUT per build, chosen by bus x language (SV top, or the VHDL
+top in mixed language) x technology x configuration:
 
-[TBD]
+| Config | DUT |
+|---|---|
+| `base` | 32 x 1024, default options |
+| `full` | 32 x 1024, ECC, BANK_PG (2 banks), BIST, READ_LATENCY 2 |
+| `dp` | dual port, A 32 x 1024 / B 8 x 4096, port B on its own clock (13.7 vs 10 ns; SAED14 one clock); SKY130 port B read-only |
+
+Structure: one protocol-neutral bus agent per port (APB, AHB-Lite with
+INCR/WRAP bursts and BUSY, AXI4-Lite with several transfers in flight and
+random BREADY/RREADY, Wishbone), a side-band agent (power modes per domain,
+clear, ECC injection, BIST, read-path stuck-bit knob), a virtual sequencer,
+and two independent checkers: a UVM scoreboard at the bus (contents, every
+error cause, power / clear / BIST / ECC effects, err_irq / ecc pulse counts)
+and `sram_model` on the memory bus. Accesses whose outcome the
+specification leaves open (a mode change or an engine start while they are in
+flight) are counted as ambiguous and accept either legal answer.
+
+Tests: `smoke`, `random`, `power`, `clear`, `stress` (every config), `ecc`,
+`bist` (full), `dp` (dp).
+
+```bash
+python3 verification/tools/uvm_sram.py --sim all --proto all --lang all --tech all --cfg all --coverage --jobs 3
+python3 verification/tools/uvm_mutants.py        # every mutant must make a test fail
+```
+
+Results (`verification/work/uvm/results.log`), GENERIC, both simulators, 4 buses x
+SV/VHDL x 3 configs: **288/288 test runs PASS** (272 in the sweep; the 16 runs of
+the three builds compiled before two bench force fixes re-run PASS). The full
+matrix with the four PDKs is in progress.
+
+Functional coverage (VCS, covergroups per instance, coverpoints of a feature
+the config lacks have weight 0), merged per configuration over the 8 GENERIC
+builds: **base 100.00, full 100.00, dp 100.00** (target 100). Code coverage
+per build (`verification/work/uvm/coverage/per_build.txt`): every module at least 90
+in 22 of the 24 VCS builds; **open:** `claude_wb_mem_if` scores 89.89 (WB SV dp) and
+89.93 (WB SV base), just under the target; the next weakest is `sram_clr` 90.19.
+
+Mutation check (`verification/work/uvm/mutants/results.log`): **9/9 mutants
+killed** — no out-of-range error, a dropped address bit, byte lane 0 always
+written, no err_irq on failed writes, deep sleep accepting accesses, an
+uncorrectable ECC error answering OKAY, no ecc_corr pulse, BIST never failing,
+port B rejecting writes.
+
+Found while building it: the class scoreboard needs `sram_model`'s port-B
+power-error rule relaxed for separate clocks (the requested mode reaches port B
+through the core's CDC), now the opt-in parameter `B_MODE_GUARD`; the Step 4
+coverage hole in `sram_ecc_dec` (see Code coverage), closed with the same
+read-path stuck-bit sweep in both benches.
 
 ## Lint Results
 
@@ -725,8 +776,10 @@ sram/
 └── verification/
     ├── testbench/              SV system bench (tb_sram_<proto>.sv + shared body), BFMs
     ├── tests/                  directed tests and helpers (shared by SV and VHDL tops)
+    ├── tasks/uvm/              UVM bench (agents, env, sequences, tests, tb_sram_uvm.sv)
     ├── tools/sim_sram.py       simulation and coverage runner
-    ├── formal/ lint/ regression/ tasks/uvm/ modelsim/ vivado/   later steps
+    ├── tools/uvm_sram.py       UVM runner; uvm_mutants.py proves the UVM tests can fail
+    ├── formal/ lint/ regression/ modelsim/ vivado/   later steps
     └── work/                   run outputs (results, logs, coverage); removed by cleanup.sh
 ```
 

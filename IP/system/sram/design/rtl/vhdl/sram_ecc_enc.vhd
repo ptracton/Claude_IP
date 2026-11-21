@@ -34,7 +34,7 @@ architecture rtl of sram_ecc_enc is
     return v = 1;
   end function is_pow2;
 
-  -- COVER(i) = the data bits whose Hamming position has bit i set. Computed at
+  -- COVER_C(i) = the data bits whose Hamming position has bit i set. Computed at
   -- elaboration in O(K) (ecc_data_pos(j) for every j, without its 1024-step
   -- search), so no tool evaluates or unrolls a position search per bit (VC
   -- Formal timed out on the VHDL ecc job with the per-bit search).
@@ -56,7 +56,7 @@ architecture rtl of sram_ecc_enc is
     return m;
   end function cover_masks;
 
-  constant COVER : cover_t := cover_masks;
+  constant COVER_C : cover_t := cover_masks;
 
   signal check : std_ulogic_vector(R_C - 1 downto 0);
 
@@ -64,7 +64,7 @@ begin
 
   -- Hamming check bits and overall parity.
   g_check : for i in 0 to R_C - 1 generate
-    check(i) <= xor (data_i and COVER(i));
+    check(i) <= xor (data_i and COVER_C(i));
   end generate g_check;
 
   code_o <= ((xor data_i) xor (xor check)) & check & data_i;

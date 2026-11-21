@@ -13,6 +13,11 @@
 //   - backdoor (GENERIC): every stored bit, data and check bits, flipped on
 //     its own is corrected; every adjacent pair, and pairs far apart, are
 //     detected
+//   - read-path stuck bit (every technology, RD_FAULT in the bench): each
+//     stored bit held at 0 and then at 1 (one of the two differs from the
+//     stored bit) is corrected once; with an injected single error on bit 0,
+//     each other data bit held both ways gives one ERROR (a double error,
+//     every syndrome a data position can alias) and one correction
 // Dual port dp0 (32-bit A, 8-bit B, 8-bit codewords, B on its own clock):
 //   - an error injected through port A in codeword 0 is corrected / detected
 //     when port B reads that narrow word; the other narrow words of the wide
@@ -21,6 +26,40 @@
 //   - an A write that does not store codeword 0 uses up the injection
 //     without leaving an error; byte writes need no RMW (whole codewords)
 // Every instance without ECC ignores ecc_inj_i.
+
+// Read-path stuck bit on array word idx of instance sb (bench RD_FAULT), and
+// the model told about it (single-port ECC instances; units are words).
+task automatic stuck(input int sb, input bit on, input int idx = 0, input int k = 0,
+                     input bit v = 1'b0, input bit tell_model = 1'b0);
+  bf_addr[sb] = idx;
+  bf_bit[sb]  = k;
+  bf_val[sb]  = v;
+  bf_on[sb]   = on;
+  if (tell_model) begin
+    case (sb)
+      SB_S32E: u_mdl_s32e.set_stuck(on, idx, k, v);
+      SB_S24:  u_mdl_s24.set_stuck(on, idx, k, v);
+      SB_S64:  u_mdl_s64.set_stuck(on, idx, k, v);
+      default: ;
+    endcase
+  end
+endtask
+
+// Every stored bit of word idx held at 0, then at 1: one correction per bit.
+task automatic stuck_sweep(input int s, input int idx, input int mw, input string what);
+  int          sb;
+  int unsigned c0, u0, i0;
+  sb = slv[s].sb;
+  for (int k = 0; k < mw; k++) begin
+    c0 = n_corr[sb]; u0 = n_uncorr[sb]; i0 = n_irq[sb];
+    for (int v = 0; v < 2; v++) begin
+      stuck(sb, 1'b1, idx, k, v[0]);
+      rd_chk(s, idx, 0, $sformatf("%s stuck bit %0d at %0d", what, k, v));
+      stuck(sb, 1'b0);
+    end
+    ecc_deltas(sb, c0, u0, i0, 1, 0, 1, $sformatf("%s stuck bit %0d", what, k));
+  end
+endtask
 
 // Counter deltas after a few cycles (pulses are registered).
 task automatic ecc_deltas(input int sb, input int unsigned c0, input int unsigned u0,
@@ -149,6 +188,33 @@ task automatic test_ecc();
       row($sformatf("%-6s backdoor: %0d double-bit patterns (adjacent and far) detected",
                     slv[s].name, 2 * mw));
     end
+    // ---- read-path stuck bit (every technology)
+    mw = slv[s].w + ((slv[s].w == 64) ? 8 : (slv[s].w == 32) ? 7 : 6);
+    wr(s, idx, rnd(s));
+    stuck_sweep(s, idx, mw, slv[s].name);
+    row($sformatf("%-6s stuck bit: each of the %0d stored bits at 0 / 1 corrected once",
+                  slv[s].name, mw));
+    inject(sb, 2'b01);
+    wr(s, idx, rnd(s));                          // stored bit 0 flipped
+    for (int k = 1; k < slv[s].w; k++) begin
+      int ne;
+      ne = 0;
+      c0 = n_corr[sb]; u0 = n_uncorr[sb]; i0 = n_irq[sb];
+      for (int v = 0; v < 2; v++) begin
+        stuck(sb, 1'b1, idx, k, v[0], 1'b1);
+        rd_raw(s, idx, rd, er);
+        if (er === 1'b1) ne++;
+        else cmp_lanes(s, idx, rd, all_lanes(s), $sformatf("%s 1-bit + stuck %0d", slv[s].name, k));
+        stuck(sb, 1'b0, idx, k, v[0], 1'b1);
+      end
+      chk(ne == 1, $sformatf("%s 1-bit + stuck bit %0d: %0d of 2 reads ERROR, expected 1",
+                             slv[s].name, k, ne));
+      ecc_deltas(sb, c0, u0, i0, 1, 1, 2, $sformatf("%s 1-bit + stuck bit %0d", slv[s].name, k));
+    end
+    wr(s, idx, rnd(s));
+    rd_chk(s, idx, 0, "stuck sweep healed");
+    row($sformatf("%-6s injected 1-bit + stuck data bit: one ERROR, one correction (x%0d bits)",
+                  slv[s].name, slv[s].w - 1));
   end
   // ---- dual port dp0
   sb  = SB_DP0;
@@ -191,6 +257,9 @@ task automatic test_ecc();
   ecc_deltas(sb, c0, u0, i0, 0, 0, 0, "dp0 injection used up by a lane-3 write");
   chk(n_busy[sb] == b0, "dp0 byte writes need no RMW");
   row("dp0    injection taken by a write not storing codeword 0: no error; no RMW");
+  wr(SL_DP0A, idx, rnd(SL_DP0A));
+  stuck_sweep(SL_DP0A, idx, 52, "dp0");
+  row("dp0    stuck bit: each of the 52 stored bits (4 codewords) at 0 / 1 corrected once");
   // ---- dp2 (32/32, common clock, 2 banks) through port A
   sb = SB_DP2;
   for (int k = 1; k <= 2; k++) begin
