@@ -222,7 +222,7 @@
                .NUM_BANKS(2), .READ_LATENCY(2)) u_mdl_s32e (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s32e, SB_S32E));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .DUAL_PORT(1), .WIDTH_B(8),
-               .READ_ONLY_B(SKY130)) u_mdl_dp0 (
+               .READ_ONLY_B(SKY130), .COMMON_CLK(DP0_CC)) u_mdl_dp0 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp0, SB_DP0, clk_b, rst_b_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(8), .DEPTH(2048), .READ_LATENCY(2)) u_mdl_s8 (
     .clk(clk_b), .rst_n(rst_b_n), `MODEL_A(u_s8, SB_S8));
@@ -234,13 +234,14 @@
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s16w, SB_S16W));
   sram_model #(.ADDR_W(SAW), .WIDTH(16), .DEPTH(1024), .DUAL_PORT(1), .WIDTH_B(64),
                .BYTE_EN_B(0), .PARTIAL_WR_ERR_B(1), .READ_LATENCY_B(2),
-               .READ_ONLY_B(SKY130)) u_mdl_dp1 (
+               .READ_ONLY_B(SKY130), .COMMON_CLK(1)) u_mdl_dp1 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp1, SB_DP1, clk_a, rst_a_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(32), .DEPTH(256), .ECC_EN(1), .BANK_PG(1), .NUM_BANKS(2),
-               .READ_LATENCY(2), .DUAL_PORT(1), .WIDTH_B(32), .READ_ONLY_B(SKY130)) u_mdl_dp2 (
+               .READ_LATENCY(2), .DUAL_PORT(1), .WIDTH_B(32), .READ_ONLY_B(SKY130),
+               .COMMON_CLK(1)) u_mdl_dp2 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_DP(u_dp2, SB_DP2, clk_a, rst_a_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(8), .DEPTH(4096), .DUAL_PORT(1), .WIDTH_B(8),
-               .READ_ONLY_B(SKY130)) u_mdl_dp3 (
+               .READ_ONLY_B(SKY130), .COMMON_CLK(1)) u_mdl_dp3 (
     .clk(clk_b), .rst_n(rst_b_n), `MODEL_DP(u_dp3, SB_DP3, clk_b, rst_b_n));
   sram_model #(.ADDR_W(SAW), .WIDTH(24), .DEPTH(256), .ECC_EN(1)) u_mdl_s24 (
     .clk(clk_a), .rst_n(rst_a_n), `MODEL_A(u_s24, SB_S24));

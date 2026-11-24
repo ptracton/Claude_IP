@@ -1,4 +1,35 @@
-# Handoff — SRAM, updated 2026-11-21 (Step 6 UVM in progress, uncommitted)
+# Handoff — SRAM, updated 2026-11-23 (Step 6 UVM in progress, uncommitted)
+
+## 2026-11-23 session (read first)
+- **Full UVM matrix of 2026-11-21: 1352/1440 PASS** (copy: `verification/work/uvm_matrix_20261121/`).
+  Two bench bugs, no RTL bug:
+  1. AXI `err_irq` count (all AXI power/stress, saed14 dp): `err_irq_q` pulses one cycle after
+     the core response, but the scoreboard merged pulses by bus completion (t_end); with
+     BREADY/RREADY stalls R and B complete on one edge after two core responses (or the
+     reverse). Fix: monitor fills new item field `t_rsp` (AXI: edge BVALID/RVALID rose, a fixed
+     delay after the core response; other buses = t_end), `irq_at(it.t_rsp)`.
+  2. Xcelium SAED14 dp power (ahb/apb/wb, 6 runs): `sram_model` mismatches. With one clock,
+     `p_model` (side band: wake fill) and `p_model_b` (B grant prediction) run on the same
+     edge in simulator order; Xcelium ran B first, so the wake zero-fill erased a B write.
+     Fix: `sram_model` parameter `COMMON_CLK`; side band moved into `side_band()` (once per
+     edge), called by port B first when COMMON_CLK. Set in the UVM tb (`CC`) and the Step 4
+     bench (dp0 `DP0_CC`, dp1/dp2/dp3 1).
+  Spot re-runs: vcs axi4l sv generic base 5/5, vcs axi4l sv saed14 dp 6/6, xcelium apb sv
+  saed14 dp 6/6 PASS.
+- **`claude_wb_mem_if` 89.9 % closed:** the UVM WB driver now drives stray STB/WE/ADR with CYC
+  low on ~1/4 of the idle cycles before an item (B4: must be ignored). WB SV generic base:
+  module no longer weakest (sram_clr 90.19). Other uncovered conditions are unreachable here
+  (gnt without req, err/rvalid without pending).
+- **Running detached:** `verification/work/run_full_recheck.sh` = full UVM matrix
+  (`uvm_full_matrix.log`, `work/uvm/results.log`) then the Step 4 regression
+  (`work/step4_regression.log`); writes `work/full_recheck.done` at the end.
+  **UVM matrix done 17:1x: 1440/1440 PASS**; functional 100 % merged per cfg (base/full/dp);
+  weakest module of any build 90.19 (sram_clr), all >= 90.
+  **Step 4 regression 17:26: 80/80 PASS**, per-run coverage identical to the README tables.
+  README UVM section rewritten for the full matrix (+ the three fixes); Step 4 coverage note
+  dated. **Step 6 open:** none from the matrix. Remaining: plan §14 wrap-up / user review, commit
+  (user commits). `verification/work/uvm_matrix_20261121/` holds the failing first matrix (scratch;
+  `cleanup.sh` removes work/).
 
 ## 2026-11-21 session (read first)
 - **/tmp aging:** the repo is in /tmp; systemd-tmpfiles deletes files idle > 10 days. 186 tracked
@@ -21,6 +52,13 @@
 - **UVM open:** `claude_wb_mem_if` code coverage 89.89 / 89.93 in the WB SV dp / base UVM builds
   (target 90). Full 240-build UVM matrix running (`--jobs 1`), README UVM section has GENERIC
   results only; update when it finishes.
+- **Committed by the user: 5f39b32 "SRAM UVM work"** (includes the scoreboard irq-edge fix:
+  err_irq_o is the OR of both ports, same-edge errors are one pulse; found on SAED14 dp).
+- **Full UVM matrix running detached** (setsid, survives the session): started 2026-11-21 ~14:45,
+  `verification/work/run_uvm_matrix.sh`, log `verification/work/uvm_full_matrix.log`, results
+  `verification/work/uvm/results.log` + `work/uvm/coverage/{per_build,functional}.txt`
+  (240 builds, 1440 runs, ~1.5-2 h). Next: read those, update the README UVM section (now
+  GENERIC only), close the `claude_wb_mem_if` 89.9 % gap (WB SV base/dp).
 - **Commits:** the user commits (said 2026-11-21 "I will commit today when ready").
 - **Step 6 (UVM):** bench `verification/tasks/uvm/` (plan §14), runner `uvm_sram.py`, mutation
   runner `uvm_mutants.py` (9/9 killed). `sram_model` changed (B_MODE_GUARD, set_stuck; both

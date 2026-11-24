@@ -49,6 +49,8 @@ class sram_bus_item extends uvm_sequence_item;
   int unsigned      beat;                  // index in its burst
   realtime          t_start;
   realtime          t_end;
+  realtime          t_rsp;                 // edge the response was first offered (AXI
+                                           // VALID; t_end on the other buses)
   bit               overlap;               // AXI: another transfer was in flight
 
   // Limits filled in by the sequence before randomize()

@@ -18,7 +18,8 @@
 //          (so the scoreboard's order is the bus order). BREADY / RREADY
 //          are randomly withheld (ready_pct).
 //   WB     classic single cycles; CYC stays high across the beats of one
-//          item, STB drops for the BUSY cycles.
+//          item, STB drops for the BUSY cycles. In the idle gap before an
+//          item (CYC low) STB, WE and ADR toggle at random (must be ignored).
 //
 // Every output is idle from time 0 (AXI requires VALID low in reset).
 
@@ -365,8 +366,24 @@ class sram_bus_driver extends uvm_driver #(sram_bus_item);
       b = bq.pop_front();
       if (b.gap > 0) begin
         vif.STB <= 1'b0;
-        if (b.first) vif.CYC <= 1'b0;
-        repeat (b.gap) @(posedge vif.clk);
+        if (b.first) begin
+          // Outside a cycle: STB_O is meaningless without CYC_O (B4 3.1.3)
+          // and the slave must ignore it; drive stray STB / address / WE
+          // on about a quarter of the idle cycles.
+          vif.CYC <= 1'b0;
+          repeat (b.gap) begin
+            if ($urandom_range(3) == 0) begin
+              vif.STB <= 1'b1;
+              vif.WE  <= 1'($urandom);
+              vif.ADR <= $urandom;
+            end else begin
+              vif.STB <= 1'b0;
+            end
+            @(posedge vif.clk);
+          end
+        end else begin
+          repeat (b.gap) @(posedge vif.clk);
+        end
       end
       vif.CYC   <= 1'b1;
       vif.STB   <= 1'b1;

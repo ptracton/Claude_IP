@@ -244,7 +244,7 @@ module tb_sram_uvm;
 
     sram_model #(
       .ADDR_W(AW), .WIDTH(W), .DEPTH(D), .READ_LATENCY(RL), .DUAL_PORT(1), .WIDTH_B(WB),
-      .READ_ONLY_B(SKY130), .B_MODE_GUARD(CC ? 0 : 8)
+      .READ_ONLY_B(SKY130), .B_MODE_GUARD(CC ? 0 : 8), .COMMON_CLK(CC)
     ) u_model (
       .clk(clk_a), .rst_n(rst_a_n),
       .mem_req(u_dut.a_mem_req), .mem_gnt(u_dut.a_mem_gnt), .mem_we(u_dut.a_mem_we),

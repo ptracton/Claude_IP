@@ -232,8 +232,10 @@ class sram_scoreboard extends uvm_scoreboard;
   endfunction
 
   // err_irq_o is the OR of both ports' registered pulses (one cycle after
-  // each response): events on the same edge are one pulse cycle. Count
-  // response edges, not events (exact on one clock; with separate clocks
+  // each core response): events on the same edge are one pulse cycle. Count
+  // response edges (t_rsp: AXI responses can complete on one edge after the
+  // core answered on two, or the reverse, when BREADY/RREADY stall), not
+  // events (exact on one clock; with separate clocks
   // port B's pulses are also merged by the synchronizer, checked loosely).
   bit irq_edge [longint];
 
@@ -477,7 +479,7 @@ class sram_scoreboard extends uvm_scoreboard;
           bi.ecc   = it.we ? EccUncRmw : EccUncRead;
         end else if (s) begin
           exp_corr++;
-          irq_at(it.t_end);
+          irq_at(it.t_rsp);
           bi.ecc   = it.we ? EccCorrRmw : EccCorrRead;
         end
       end
@@ -492,7 +494,7 @@ class sram_scoreboard extends uvm_scoreboard;
     end else if (exp_err) begin
       n_err_ok++;
     end
-    if (it.err === 1'b1) irq_at(it.t_end);
+    if (it.err === 1'b1) irq_at(it.t_rsp);
     if (it.err === 1'b1) return;
 
     if (eng_amb) n_amb_eng++;

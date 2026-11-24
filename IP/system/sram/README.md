@@ -415,7 +415,8 @@ as unreachable. Runs are merged by module definition with
 
 **Target: at least 90% score for every component in every bus x language x
 technology run.** Met: the weakest module of any SV run scores 92.95, of any
-VHDL run 92.99 (re-run 2026-11-21; `sram_ecc_dec` in the PDK runs is at least
+VHDL run 92.99 (re-run 2026-11-21, again 2026-11-23 after the `sram_model`
+COMMON_CLK change: 80/80 PASS, identical coverage; `sram_ecc_dec` in the PDK runs is at least
 94.32 thanks to the read-path stuck-bit sweep in `test_ecc`).
 
 Per run, SystemVerilog top-levels (`verification/work/coverage/per_run.txt`):
@@ -679,7 +680,7 @@ Tool: VC Formal Y-2026.03-SP1. Results generated: 2026-11-15.
 
 Constrained-random UVM bench (Step 6), `verification/tasks/uvm/`, VCS Y-2026.03-SP1
 (`-ntb_opts uvm-1.2`) and Xcelium 25.03 (`-uvm`, CDNS-1.2) on csun.edu,
-2026-11-21. One DUT per build, chosen by bus x language (SV top, or the VHDL
+2026-11-21 / 2026-11-23. One DUT per build, chosen by bus x language (SV top, or the VHDL
 top in mixed language) x technology x configuration:
 
 | Config | DUT |
@@ -706,17 +707,19 @@ python3 verification/tools/uvm_sram.py --sim all --proto all --lang all --tech a
 python3 verification/tools/uvm_mutants.py        # every mutant must make a test fail
 ```
 
-Results (`verification/work/uvm/results.log`), GENERIC, both simulators, 4 buses x
-SV/VHDL x 3 configs: **288/288 test runs PASS** (272 in the sweep; the 16 runs of
-the three builds compiled before two bench force fixes re-run PASS). The full
-matrix with the four PDKs is in progress.
+Results (`verification/work/uvm/results.log`), full matrix 2026-11-23: 4 buses x
+SV/VHDL x 5 technologies x 3 configs x VCS/Xcelium = 240 builds, **1440/1440 test
+runs PASS** (seed 1).
 
 Functional coverage (VCS, covergroups per instance, coverpoints of a feature
-the config lacks have weight 0), merged per configuration over the 8 GENERIC
-builds: **base 100.00, full 100.00, dp 100.00** (target 100). Code coverage
-per build (`verification/work/uvm/coverage/per_build.txt`): every module at least 90
-in 22 of the 24 VCS builds; **open:** `claude_wb_mem_if` scores 89.89 (WB SV dp) and
-89.93 (WB SV base), just under the target; the next weakest is `sram_clr` 90.19.
+the config lacks have weight 0), merged per configuration over its 40 VCS
+builds (`verification/work/uvm/coverage/functional.txt`): **base 100.00, full
+100.00, dp 100.00** (target 100). Single builds: 96.35-97.08 for SKY130 dp (port B
+read-only), 99.31-99.71 for WB, 100 for the rest. Code coverage per build
+(`verification/work/uvm/coverage/per_build.txt`): **every module at least 90 in
+all 120 VCS builds**; the weakest is `sram_clr` 90.19 (base / dp) and
+`sram_bist` 90.96 (full). Merged code score per config: base 93.07, full
+93.54, dp 93.47.
 
 Mutation check (`verification/work/uvm/mutants/results.log`): **9/9 mutants
 killed** — no out-of-range error, a dropped address bit, byte lane 0 always
@@ -729,6 +732,21 @@ power-error rule relaxed for separate clocks (the requested mode reaches port B
 through the core's CDC), now the opt-in parameter `B_MODE_GUARD`; the Step 4
 coverage hole in `sram_ecc_dec` (see Code coverage), closed with the same
 read-path stuck-bit sweep in both benches.
+
+Fixed after the first full matrix (1352/1440, 2026-11-21; bench bugs, no RTL
+change):
+- AXI4-Lite `err_irq` count: the pulse follows the core response by one cycle,
+  but the scoreboard merged pulses by bus completion; with BREADY/RREADY
+  stalls a B and an R complete on one edge after two core responses (or the
+  reverse). The monitor now records `t_rsp`, the edge BVALID/RVALID rose (a
+  fixed delay after the core response), and the scoreboard counts by it.
+- Xcelium, SAED14 dp (one clock): `sram_model` ran port A's side band (wake-up
+  zero fill) and port B's grant prediction in two always blocks on the same
+  edge, in simulator order; Xcelium predicted a B write first and then zeroed
+  it. New `sram_model` parameter `COMMON_CLK`: the side band of an edge always
+  runs before port B's prediction (set in both benches).
+- `claude_wb_mem_if` was at 89.9: the WB driver now drives stray STB / WE /
+  ADR with CYC low in idle cycles (Wishbone B4: ignored by the slave).
 
 ## Lint Results
 

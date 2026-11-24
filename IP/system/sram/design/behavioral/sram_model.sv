@@ -28,7 +28,9 @@
 //     (little-endian, R = width ratio, N = narrow width). ECC codewords are
 //     N bits wide (WIDTH bits for a single port or equal widths).
 //     Same-word accesses from both ports are modeled in grant order, so the
-//     model is exact with COMMON_CLK = 1 and for separate clocks when the
+//     model is exact with COMMON_CLK = 1 (set the parameter: side-band
+//     effects of an edge then precede port B's grant on that edge whatever
+//     the simulator's block order) and for separate clocks when the
 //     testbench keeps the two ports off the same word at the same time.
 //     Side-band effects on port B (power errors) are taken at B's grant;
 //     with separate clocks keep port B off a domain while its mode changes,
@@ -74,6 +76,7 @@ module sram_model #(
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,
   parameter bit          READ_ONLY_B      = 0,
   parameter int unsigned B_MODE_GUARD     = 0,    // clk_b cycles (see above)
+  parameter bit          COMMON_CLK       = 0,    // clk_b is clk (same edges)
   localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1
 ) (
   input  logic                   clk,             // port A / side-band clock
@@ -298,6 +301,36 @@ module sram_model #(
     n_mismatch = 0;
   end
 
+  // side_band — clk-edge side-band effects (injection arm, clears, BIST,
+  // power acknowledges). Runs once per clk edge, before either port predicts
+  // a grant: with COMMON_CLK port B's block calls it too, so the order of the
+  // two always blocks at a shared edge does not matter.
+  realtime sb_t = -1.0;
+  task automatic side_band();
+    if (sb_t == $realtime) return;
+    sb_t = $realtime;
+    if (ECC_EN && ecc_inj != 2'b00) inj_armed = inj_armed | ecc_inj;
+    if (clr_req) begin
+      for (int unsigned dd = 0; dd < NPD; dd++) begin
+        if (!PWR_GATE || dom_req(dd) == 2'd0 || dom_req(dd) == 2'd1) clr_mask[dd] = 1'b1;
+      end
+    end
+    if (clr_done) begin
+      for (int unsigned dd = 0; dd < NPD; dd++) begin
+        if (clr_mask[dd]) fill_domain(dd, 1'b1);
+      end
+      clr_mask = '0;
+    end
+    if (bist_done) begin
+      for (int unsigned dd = 0; dd < NPD; dd++) fill_domain(dd, 1'b1);
+    end
+    for (int unsigned dd = 0; dd < NPD; dd++) begin
+      if (pwr_mode_ack[2*dd +: 2] == 2'd3 && ack_q[2*dd +: 2] != 2'd3) fill_domain(dd, 1'b0);
+      if (pwr_mode_ack[2*dd +: 2] == 2'd0 && ack_q[2*dd +: 2] == 2'd3) fill_domain(dd, 1'b1);
+    end
+    ack_q = pwr_mode_ack;
+  endtask
+
   // ---------------------------------------------------------------------------
   // Port A and side-band
   // ---------------------------------------------------------------------------
@@ -345,27 +378,7 @@ module sram_model #(
         if (mismatch_o) n_mismatch++;
       end
 
-      // ---- side-band --------------------------------------------------------
-      if (ECC_EN && ecc_inj != 2'b00) inj_armed = inj_armed | ecc_inj;
-      if (clr_req) begin
-        for (int unsigned dd = 0; dd < NPD; dd++) begin
-          if (!PWR_GATE || dom_req(dd) == 2'd0 || dom_req(dd) == 2'd1) clr_mask[dd] = 1'b1;
-        end
-      end
-      if (clr_done) begin
-        for (int unsigned dd = 0; dd < NPD; dd++) begin
-          if (clr_mask[dd]) fill_domain(dd, 1'b1);
-        end
-        clr_mask = '0;
-      end
-      if (bist_done) begin
-        for (int unsigned dd = 0; dd < NPD; dd++) fill_domain(dd, 1'b1);
-      end
-      for (int unsigned dd = 0; dd < NPD; dd++) begin
-        if (pwr_mode_ack[2*dd +: 2] == 2'd3 && ack_q[2*dd +: 2] != 2'd3) fill_domain(dd, 1'b0);
-        if (pwr_mode_ack[2*dd +: 2] == 2'd0 && ack_q[2*dd +: 2] == 2'd3) fill_domain(dd, 1'b1);
-      end
-      ack_q = pwr_mode_ack;
+      side_band();
 
       // ---- predict the granted request -----------------------------------
       if (mem_req && mem_gnt) begin
@@ -440,6 +453,7 @@ module sram_model #(
           end
           if (mismatch_b_o) n_mismatch++;
         end
+        if (COMMON_CLK && rst_n) side_band();   // same edge: side band first
         if (mem_b_req && mem_b_gnt) begin
           access(WB, DEPTH_B, mem_b_addr, mem_b_we, 128'(mem_b_be), 1024'(mem_b_wdata),
                  BYTE_EN_B, PARTIAL_WR_ERR_B, READ_ONLY_B, 1'b0, rd, rk, er);

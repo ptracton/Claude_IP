@@ -4,7 +4,10 @@
 // that completes it. Fields: we, addr, size, be (effective byte enables:
 // the HSIZE lanes, masked by the write strobes for a write), wdata[0],
 // rdata, err, t_start (edge at which the DUT first saw the request), t_end
-// (edge of the response), beat (AHB: index inside a NONSEQ/SEQ run).
+// (edge of the response), t_rsp (edge the response was first offered: AXI
+// BVALID/RVALID rise, a fixed delay after the core's response even when the
+// master stalls BREADY/RREADY; = t_end on the other buses), beat (AHB: index
+// inside a NONSEQ/SEQ run).
 // Inputs are read right after the clock edge, before any nonblocking update
 // of that edge, i.e. the values the DUT sampled.
 
@@ -71,11 +74,13 @@ class sram_bus_monitor extends uvm_monitor;
     it.busy     = new [1];
     it.busy[0]  = 0;
     it.t_start  = t0;
+    it.t_rsp    = -1.0;
     return it;
   endfunction
 
   function void emit(sram_bus_item it);
     it.t_end = $realtime;
+    if (it.t_rsp < 0.0) it.t_rsp = it.t_end;
     n_beats++;
     `uvm_info("MON", it.convert2string(), UVM_HIGH)
     ap.write(it);
@@ -171,12 +176,14 @@ class sram_bus_monitor extends uvm_monitor;
     a_t           arq [$];
     a_t           a;
     w_t           w;
-    realtime      t_aw, t_ar;
-    bit           aw_seen, ar_seen;
+    realtime      t_aw, t_ar, t_bv, t_rv;
+    bit           aw_seen, ar_seen, bv_seen, rv_seen;
     int unsigned  wr_out, rd_out;    // in flight (address taken, no response)
     sram_bus_item it;
     aw_seen = 1'b0;
     ar_seen = 1'b0;
+    bv_seen = 1'b0;
+    rv_seen = 1'b0;
     wr_out  = 0;
     rd_out  = 0;
     forever begin
@@ -189,8 +196,17 @@ class sram_bus_monitor extends uvm_monitor;
         ar_seen = 1'b1;
         t_ar    = $realtime;
       end
+      if (vif.BVALID === 1'b1 && !bv_seen) begin
+        bv_seen = 1'b1;
+        t_bv    = $realtime;
+      end
+      if (vif.RVALID === 1'b1 && !rv_seen) begin
+        rv_seen = 1'b1;
+        t_rv    = $realtime;
+      end
       // Responses first: a response at this edge belongs to an earlier request
       if (vif.BVALID === 1'b1 && vif.BREADY === 1'b1) begin
+        bv_seen = 1'b0;
         if (awq.size() == 0 || wq.size() == 0) begin
           `uvm_error("MON", "AXI: B response without AW and W")
         end else begin
@@ -203,11 +219,13 @@ class sram_bus_monitor extends uvm_monitor;
           it.rdata    = '0;
           it.err      = (vif.BRESP != 2'b00);
           it.overlap  = (rd_out > 0);
+          it.t_rsp    = t_bv;
           wr_out--;
           emit(it);
         end
       end
       if (vif.RVALID === 1'b1 && vif.RREADY === 1'b1) begin
+        rv_seen = 1'b0;
         if (arq.size() == 0) begin
           `uvm_error("MON", "AXI: R response without AR")
         end else begin
@@ -218,6 +236,7 @@ class sram_bus_monitor extends uvm_monitor;
           it.rdata   = vif.RDATA;
           it.err     = (vif.RRESP != 2'b00);
           it.overlap = (wr_out > 0);
+          it.t_rsp   = t_rv;
           rd_out--;
           emit(it);
         end
