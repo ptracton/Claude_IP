@@ -13,6 +13,7 @@ bus_matrix run_regression.py (host split, per-test counting, stale-run guard).
     mutants   uvm_mutants.py --mutant all (every mutant must be killed) -
     formal    formal_sram.py --job all --lang all                       -
     lint      lint_sram.py --lang all                                   lint_sram.py --lang all
+    firmware  fw_sram.py (host unit tests, mutants, cross build)       fw_sram.py
 
 Collected entries (each PASS / FAIL; an expected result that is missing is FAIL):
     sim/<sim>/<proto>_<lang>_<tech>/<test>   one per directed test (12 per run)
@@ -20,6 +21,10 @@ Collected entries (each PASS / FAIL; an expected result that is missing is FAIL)
     mutant/<name>                            KILLED = PASS
     formal/<job>                             one per VC Formal job
     lint                                     first line of lint_results.log
+    fw/<step>/<check>                        one per PASS / FAIL row of
+                                             verification/firmware/fw_results.log
+                                             (SKIP rows, e.g. a missing cross
+                                             compiler, are not counted)
     coverage/...                             targets: every module >= 90 in every
                                              directed run and UVM build, UVM
                                              functional coverage 100 per config
@@ -28,7 +33,7 @@ Usage:
   source IP/system/sram/setup.sh
   python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py
       [--collect] [--skip-sim] [--skip-uvm] [--skip-mutants] [--skip-formal]
-      [--skip-lint] [--jobs N]
+      [--skip-lint] [--skip-firmware] [--jobs N]
 
   --collect   run nothing; report on the result files already in work/ (each
               source is listed with its timestamp so stale results are visible)
@@ -69,7 +74,7 @@ CODE_TARGET = 90.0          # every module, every run / build
 FUNC_TARGET = 100.0         # UVM covergroups merged per configuration
 
 STEP_TIMEOUT = 8 * 3600
-STEPS = ["sim", "uvm", "mutants", "formal", "lint"]
+STEPS = ["sim", "uvm", "mutants", "formal", "lint", "firmware"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,11 +107,13 @@ def step_commands(tools: str, jobs: int) -> dict:
             "formal": [py, t("formal_sram.py"), "--job", "all", "--lang", "all",
                        "--jobs", str(min(jobs, 3))],
             "lint": [py, t("lint_sram.py"), "--lang", "all"],
+            "firmware": [py, t("fw_sram.py")],
         }
     return {
         "sim": [py, t("sim_sram.py"), "--sim", "verilator", "--proto", "all", "--lang", "sv",
                 "--tech", "generic", "--jobs", str(jobs)],
         "lint": [py, t("lint_sram.py"), "--lang", "all"],
+        "firmware": [py, t("fw_sram.py")],
     }
 
 
@@ -225,6 +232,22 @@ def collect_lint(ip: str) -> list:
     return [("lint", st, "" if st == "PASS" else (line[:120] or "missing"))]
 
 
+def collect_firmware(ip: str) -> list:
+    log = os.path.join(ip, "verification", "firmware", "fw_results.log")
+    if not os.path.isfile(log):
+        return [("fw/fw_results.log", "FAIL", "missing")]
+    out = []
+    with open(log, errors="replace") as fh:
+        for ln in fh.read().splitlines():
+            m = re.match(r"^(PASS|FAIL) (\S+)(?:\s+(.*))?$", ln)
+            if m:
+                out.append((f"fw/{m.group(2)}", m.group(1),
+                            "" if m.group(1) == "PASS" else (m.group(3) or "")[:120]))
+    if not out:
+        out.append(("fw/fw_results.log", "FAIL", "no check rows"))
+    return out
+
+
 def _weakest(line: str):
     m = re.search(r"^(\S+)\s.*\s(\S.*?) \(([\d.]+)\)\s*$", line)
     return (m.group(1), m.group(2), float(m.group(3))) if m else None
@@ -325,7 +348,7 @@ def main() -> int:
     exit_codes = {}
     if not args.collect:
         labels = {"sim": "Directed simulation", "uvm": "UVM matrix", "mutants": "UVM mutants",
-                  "formal": "Formal (VC Formal)", "lint": "Lint"}
+                  "formal": "Formal (VC Formal)", "lint": "Lint", "firmware": "Firmware"}
         for s in active:
             exit_codes[s] = run_step(labels[s], cmds[s])
 
@@ -335,6 +358,7 @@ def main() -> int:
         "mutants": lambda: collect_mutants(work),
         "formal": lambda: collect_formal(ip),
         "lint": lambda: collect_lint(ip),
+        "firmware": lambda: collect_firmware(ip),
     }
     sources = {
         "sim": os.path.join(work, "results.log"),
@@ -342,6 +366,7 @@ def main() -> int:
         "mutants": os.path.join(work, "uvm", "mutants", "results.log"),
         "formal": os.path.join(ip, "verification", "formal", "vcf", "results.log"),
         "lint": os.path.join(ip, "verification", "lint", "lint_results.log"),
+        "firmware": os.path.join(ip, "verification", "firmware", "fw_results.log"),
     }
     entries = {s: collectors[s]() for s in active}
     # A sub-runner that failed without leaving a failing entry still fails

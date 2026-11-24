@@ -2,9 +2,9 @@ PASS
 
 # sram Regression Report
 
-**Generated:** 2026-11-23 20:09 on csun.edu (collect only: no step was run), 0 min
+**Generated:** 2026-11-23 21:05 on csun.edu (collect only: no step was run), 0 min
 
-**Overall Result:** PASS — 2599/2599 entries pass
+**Overall Result:** PASS — 2749/2749 entries pass
 
 ## Steps
 
@@ -14,7 +14,8 @@ PASS
 | uvm | 1440 | 1440 | PASS | `verification/work/uvm/results.log` (2026-11-23 17:16) |
 | mutants | 9 | 9 | PASS | `verification/work/uvm/mutants/results.log` (2026-11-21 13:44) |
 | formal | 26 | 26 | PASS | `verification/formal/vcf/results.log` (2026-11-15 23:41) |
-| lint | 1 | 1 | PASS | `verification/lint/lint_results.log` (2026-11-23 20:08) |
+| lint | 1 | 1 | PASS | `verification/lint/lint_results.log` (2026-11-23 20:51) |
+| firmware | 150 | 150 | PASS | `verification/firmware/fw_results.log` (2026-11-23 21:05) |
 | coverage | 163 | 163 | PASS | per_run / per_build / functional |
 
 ## Coverage
@@ -2485,6 +2486,161 @@ PASS
 | Entry | Result |
 |---|---|
 | lint | PASS |
+
+### firmware
+
+| Entry | Result |
+|---|---|
+| fw/host/build | PASS |
+| fw/host/fault_free/addr_bus/4B | PASS |
+| fw/host/fault_free/addr_bus/8B | PASS |
+| fw/host/fault_free/addr_bus/12B | PASS |
+| fw/host/fault_free/addr_bus/64B | PASS |
+| fw/host/fault_free/addr_bus/1020B | PASS |
+| fw/host/fault_free/addr_bus/4096B | PASS |
+| fw/host/fault_free/addr_bus/16384B | PASS |
+| fw/host/fault_free/walking/4B | PASS |
+| fw/host/fault_free/walking/8B | PASS |
+| fw/host/fault_free/walking/12B | PASS |
+| fw/host/fault_free/walking/64B | PASS |
+| fw/host/fault_free/walking/1020B | PASS |
+| fw/host/fault_free/walking/4096B | PASS |
+| fw/host/fault_free/walking/16384B | PASS |
+| fw/host/fault_free/addr_in/4B | PASS |
+| fw/host/fault_free/addr_in/8B | PASS |
+| fw/host/fault_free/addr_in/12B | PASS |
+| fw/host/fault_free/addr_in/64B | PASS |
+| fw/host/fault_free/addr_in/1020B | PASS |
+| fw/host/fault_free/addr_in/4096B | PASS |
+| fw/host/fault_free/addr_in/16384B | PASS |
+| fw/host/fault_free/march_c_0/4B | PASS |
+| fw/host/fault_free/march_c_0/8B | PASS |
+| fw/host/fault_free/march_c_0/12B | PASS |
+| fw/host/fault_free/march_c_0/64B | PASS |
+| fw/host/fault_free/march_c_0/1020B | PASS |
+| fw/host/fault_free/march_c_0/4096B | PASS |
+| fw/host/fault_free/march_c_0/16384B | PASS |
+| fw/host/fault_free/march_c_55/4B | PASS |
+| fw/host/fault_free/march_c_55/8B | PASS |
+| fw/host/fault_free/march_c_55/12B | PASS |
+| fw/host/fault_free/march_c_55/64B | PASS |
+| fw/host/fault_free/march_c_55/1020B | PASS |
+| fw/host/fault_free/march_c_55/4096B | PASS |
+| fw/host/fault_free/march_c_55/16384B | PASS |
+| fw/host/fault_free/byte_lanes/4B | PASS |
+| fw/host/fault_free/byte_lanes/8B | PASS |
+| fw/host/fault_free/byte_lanes/12B | PASS |
+| fw/host/fault_free/byte_lanes/64B | PASS |
+| fw/host/fault_free/byte_lanes/1020B | PASS |
+| fw/host/fault_free/byte_lanes/4096B | PASS |
+| fw/host/fault_free/byte_lanes/16384B | PASS |
+| fw/host/fault_free/all/4B | PASS |
+| fw/host/fault_free/all/8B | PASS |
+| fw/host/fault_free/all/12B | PASS |
+| fw/host/fault_free/all/64B | PASS |
+| fw/host/fault_free/all/1020B | PASS |
+| fw/host/fault_free/all/4096B | PASS |
+| fw/host/fault_free/all/16384B | PASS |
+| fw/host/args/addr_bus | PASS |
+| fw/host/args/walking | PASS |
+| fw/host/args/addr_in | PASS |
+| fw/host/args/march_c_0 | PASS |
+| fw/host/args/march_c_55 | PASS |
+| fw/host/args/byte_lanes | PASS |
+| fw/host/args/all | PASS |
+| fw/host/args/all_mask | PASS |
+| fw/host/detect/stuck0_w37b5/walking | PASS |
+| fw/host/detect/stuck0_w37b5/addr_in | PASS |
+| fw/host/detect/stuck0_w37b5/march_c_0 | PASS |
+| fw/host/detect/stuck0_w37b5/march_c_55 | PASS |
+| fw/host/detect/stuck0_w37b5/all | PASS |
+| fw/host/detect/stuck1_w1000b31/walking | PASS |
+| fw/host/detect/stuck1_w1000b31/addr_in | PASS |
+| fw/host/detect/stuck1_w1000b31/march_c_0 | PASS |
+| fw/host/detect/trans_w512b0/walking | PASS |
+| fw/host/detect/trans_w512b0/march_c_0 | PASS |
+| fw/host/detect/addr_b3_stuck0/addr_bus | PASS |
+| fw/host/detect/addr_b3_stuck0/addr_in | PASS |
+| fw/host/detect/addr_b3_stuck0/march_c_0 | PASS |
+| fw/host/blind/addr_b3_stuck0/walking | PASS |
+| fw/host/detect/addr_b9_stuck1/addr_bus | PASS |
+| fw/host/detect/addr_b9_stuck1/addr_in | PASS |
+| fw/host/detect/addr_b9_stuck1/march_c_0 | PASS |
+| fw/host/detect/addr_b2b6_short/addr_bus | PASS |
+| fw/host/detect/addr_b2b6_short/addr_in | PASS |
+| fw/host/detect/couple_w10_w200/march_c_0 | PASS |
+| fw/host/blind/couple_w10_w200/walking | PASS |
+| fw/host/detect/couple_w900_w3/march_c_0 | PASS |
+| fw/host/detect/couple_fall_w3_w900/march_c_0 | PASS |
+| fw/host/detect/npsf_w200_b5/walking | PASS |
+| fw/host/detect/npsf_w200_b5/march_c_55 | PASS |
+| fw/host/blind/npsf_w200_b5/march_c_0 | PASS |
+| fw/host/detect/npsf_w300_b31/walking | PASS |
+| fw/host/detect/multi_w0_w8/addr_bus | PASS |
+| fw/host/detect/multi_w4_w64/addr_bus | PASS |
+| fw/host/detect/bridge_w77_b3b4/walking | PASS |
+| fw/host/detect/bridge_w77_b3b4/march_c_55 | PASS |
+| fw/host/blind/bridge_w77_b3b4/march_c_0 | PASS |
+| fw/host/detect/lane_full_word/byte_lanes | PASS |
+| fw/host/blind/lane_full_word/march_c_0 | PASS |
+| fw/host/detect/lane_full_word/all | PASS |
+| fw/host/detect/lane_swap/byte_lanes | PASS |
+| fw/host/detect/lane_swap_last_word/byte_lanes | PASS |
+| fw/host/detect/half_low/byte_lanes | PASS |
+| fw/host/detect/stuck0_addr_bit_zero/addr_in | PASS |
+| fw/host/all/word_only_skips_lanes | PASS |
+| fw/host/all/lanes_only | PASS |
+| fw/host/byte_lanes/one_word | PASS |
+| fw/host/all/march_runs_checkerboard | PASS |
+| fw/host/sb/init_args | PASS |
+| fw/host/sb/init_required_hooks | PASS |
+| fw/host/sb/init_ok | PASS |
+| fw/host/sb/set_mode_each | PASS |
+| fw/host/sb/set_mode_args | PASS |
+| fw/host/sb/set_mode_all | PASS |
+| fw/host/sb/set_mode_all_parallel | PASS |
+| fw/host/sb/set_mode_timeout | PASS |
+| fw/host/sb/wait_idle_timeout | PASS |
+| fw/host/sb/domain_range | PASS |
+| fw/host/sb/domain_range_args | PASS |
+| fw/host/sb/clear_run_ls | PASS |
+| fw/host/sb/clear_refused_ds | PASS |
+| fw/host/sb/clear_refused_sd | PASS |
+| fw/host/sb/clear_nohook | PASS |
+| fw/host/sb/clear_timeout | PASS |
+| fw/host/sb/bist_pass | PASS |
+| fw/host/sb/bist_fail | PASS |
+| fw/host/sb/bist_fail_null | PASS |
+| fw/host/sb/bist_nohook | PASS |
+| fw/host/sb/ecc_inject | PASS |
+| fw/host/sb/ecc_inject_args | PASS |
+| fw/host/sb/ecc_nohook | PASS |
+| fw/host/sb/null_dev | PASS |
+| fw/mutant/march_m3_up | PASS |
+| fw/mutant/march_no_m5 | PASS |
+| fw/mutant/march_no_m1_read | PASS |
+| fw/mutant/walking_no_zero | PASS |
+| fw/mutant/walking_31_bits | PASS |
+| fw/mutant/addr_bus_no_phase1 | PASS |
+| fw/mutant/addr_bus_no_phase2 | PASS |
+| fw/mutant/addr_in_no_complement | PASS |
+| fw/mutant/lanes_no_upper_half | PASS |
+| fw/mutant/lanes_first_word_only | PASS |
+| fw/mutant/report_no_addr | PASS |
+| fw/mutant/args_no_align | PASS |
+| fw/mutant/all_skips_checker | PASS |
+| fw/mutant/ack_any_mode | PASS |
+| fw/mutant/timeout_off_by_one | PASS |
+| fw/mutant/set_all_serial | PASS |
+| fw/mutant/clear_no_state_check | PASS |
+| fw/mutant/clear_no_wait | PASS |
+| fw/mutant/bist_ignores_fail | PASS |
+| fw/mutant/ecc_accepts_3 | PASS |
+| fw/mutant/range_no_x4 | PASS |
+| fw/mutant/init_no_status_hook | PASS |
+| fw/compile/sram_memtest.c | PASS |
+| fw/compile/sram_sideband.c | PASS |
+| fw/compile/sram_example.c | PASS |
 
 ### coverage
 
