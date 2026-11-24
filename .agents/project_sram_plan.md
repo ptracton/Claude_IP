@@ -181,7 +181,7 @@ simulations sweep a config matrix on GENERIC and on each PDK's macro models.
 | 6 | UVM (VCS): random R/W + power-mode sequences, `sram_model` scoreboard | done 2026-11-23: 1440/1440, committed 805dd88 (§14) |
 | 7 | Regression runner/report | done 2026-11-23 (uncommitted): `regression_sram.py` (§15) |
 | 8 | Lint: SpyGlass (csun) / Verilator + VHDL lint on a standard host (needs black-box stubs for the macros). From 3c: SpyGlass CDC on the separate-clock dual port (waive the `claude_sync` first stage); documented deviations: plain `always` (SV) / shared variable (VHDL) in the generic dual-clock RAM | done 2026-11-23 (uncommitted): SpyGlass 20 lint + 4 CDC configs clean (§16) |
-| 9 | Firmware: memory tests (March, walking 1s) + power-mode helpers; no register driver | |
+| 9 | Firmware: memory tests (March, walking 1s) + power-mode helpers; no register driver | done 2026-11-23 (uncommitted): host tests 124/124, mutants 22/22, cross build not run (no compilers on csun) (§17) |
 | 10 | Synthesis: Yosys/Vivado/Quartus; DC x 4 PDKs with macro .db; UPF; PrimeTime with macro libs; post-syn sim using `pdk_sram_models.py` | |
 | 11 | Docs, cleanup, tag | |
 | 12 | PrimePower: per-mode power (RUN vs LS vs DS vs SD leakage) — the headline result | |
@@ -981,3 +981,29 @@ waivers as **RTL pragmas** + `waivers.md`.
 - SpyGlass tips: `set_option param {top.P=V ...}` works; report path uses the project name
   (`vcst_rtdb/spyglass/<prj>/<top>/<goal>/...`); CDC needs `reset ... -sync` (without it every
   crossing becomes Ac_unsync02); Setup_clockreset01 'Resets' fires with sync-only resets.
+- 2026-11-23 20:4x: CDC filter tightened: only the reviewed info rules (`_CDC_INFO_RULES`) are
+  dropped (was every CDC info row); waivers.md "CDC report filter". Re-run 24/24 PASS, same counts.
+
+## 17. Step 9 — firmware (2026-11-23)
+User decisions: side band through **integrator hooks** (`sram_hooks_t` callbacks; no address map,
+D2 holds); verification = **host unit tests on csun + timer-style cross build** on a standard host.
+- `firmware/include/sram.h`, `src/sram_memtest.c` (addr bus, walking 1s/0s, address-in-address,
+  March C- with background arg, byte lanes, `sram_test_all`), `src/sram_sideband.c` (set/get mode,
+  set_mode_all in parallel, domain_range, wait_idle, clear, BIST, ECC inject), `src/sram_access.h`
+  (8/16/32-bit accessors; common platform.h has only 32-bit, left untouched), CMakeLists.txt +
+  build.sh (from the timer, libsram.a), `examples/sram_example.c` (one assumed sysctl register).
+- Hardware facts used: clear engine skips DS/SD domains -> `sram_clear` refuses unless all RUN/LS;
+  `ecc_inj_i` re-arms every cycle it is high -> hook is a pulse; busy_o covers pending clear and BIST
+  from the cycle after the pulse -> done = busy low (pulse hooks must return after the pulse reached
+  the IP); sleep-to-sleep goes through RUN; SD wake acks RUN only after the zeroing pass.
+- `firmware/test/`: fault model (stuck, transition, addr stuck/short, decoder multi-access, coupling
+  rise/fall, NPSF, bridge, lane full/swap/half-low, last-word-only) + fake side band (delays in hook
+  calls). `verification/tools/fw_sram.py`: host / mutants / compile / cross -> `verification/firmware/
+  fw_results.log`; regression step `firmware` (collect 2749/2749).
+- First mutation run: 9/22 mutants survived (no fault exercised addr-bus phases, walking 0s, bit 31,
+  M5, complement pass, halfword, last word, checkerboard in test_all) -> new faults + checks; one
+  mutant (`lanes_no_halfword`) was equivalent (later RD16 checks cover it), replaced by
+  `lanes_no_upper_half`. Final: host 124/124, mutants 22/22, compile 3/3, cross SKIP x2.
+- Open: cross build + sizes (csun `/tmp/pet43490/CrossCompilers` deleted by /tmp aging; reinstall
+  outside /tmp or run on a standard host); ASan/UBSan (csun gcc 11.5 lacks libasan/libubsan);
+  CMakeLists never configured yet.

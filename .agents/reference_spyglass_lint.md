@@ -88,3 +88,20 @@ lint via SpyGlass following the exact pattern in
 `IP/system/timer/verification/tools/lint_timer.py`, and should skip VHDL
 lint on csun.edu the same way rather than re-attempting the VHDL-2008
 investigation above.
+
+**CDC (cdc/cdc_verify_struct), learned on sram Step 8 (2026-11-23):**
+- Run with `-goal cdc/cdc_verify_struct -app cdc` and an SGDC read by the .prj
+  (`read_file -type sgdc <cfg>.sgdc`): `clock -name <port> -domain <d> -period <ns>` per clock,
+  `reset -name <port> -value <active> -sync` per reset. Without `-sync` every crossing is
+  reported as Ac_unsync02.
+- Report: `vcst_rtdb/spyglass/<prj>/consolidated_reports/<top>_<goal>/moresimple.rpt` (path uses
+  the project name). Per-rule violation counts are in `<top>/cdc/cdc_verify_struct/spyglass.log`.
+- CDC reports every synchronized crossing and constraint check as `info`. **Do not drop all
+  info rows** — drop only a reviewed list (sram: Ac_sync02, Setup_port01, Reset_info01,
+  Clock_info03b, Propagate_Clocks, Clock_info01, Reset_check12), so a new info rule shows up as a
+  finding. Setup_clockreset01 "'Resets' have not been specified" is expected with sync-only resets.
+- Check that the structural rules ran and report 0 (Ac_unsync01/02, Ac_conv01-04, Ac_glitch03,
+  Ac_sync01, Ar_sync01, Ar_unsync01, Clock_sync05/06), and that Setup_port01 says 0 ports not
+  fully constrained.
+- A dual-clock behavioral RAM read across domains is accepted as Ac_sync02 "Recirculation flop"
+  (enable-gated read register); same-word collision safety is not checked by SpyGlass.

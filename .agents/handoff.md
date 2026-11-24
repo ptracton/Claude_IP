@@ -1,4 +1,14 @@
-# Handoff — SRAM, updated 2026-11-23 (Steps 7 + 8 done, uncommitted)
+# Handoff — SRAM, updated 2026-11-23 (Steps 7-9 done, uncommitted)
+
+## Step 9 firmware (2026-11-23 late, uncommitted) — read first
+- `IP/system/sram/firmware/`: sram.h, src/sram_memtest.c, src/sram_sideband.c, src/sram_access.h,
+  CMakeLists.txt, build.sh, examples/sram_example.c, test/ (fault model + test_sram.c). Plan §17.
+- Runner `verification/tools/fw_sram.py` -> `verification/firmware/fw_results.log`: host 124/124,
+  mutants 22/22 killed, compile 3/3, cross SKIP x2 (no compilers). Regression step `firmware`
+  added; `--collect` 2749/2749. README "Firmware" written.
+- Open: cross build + code size — csun `/tmp/pet43490/CrossCompilers` is gone (/tmp aging); either
+  reinstall outside /tmp (setup.sh points at /tmp) or run `fw_sram.py` on a standard host.
+  Next plan step: **Step 10 synthesis**.
 
 ## Step 8 lint (2026-11-23, uncommitted) — read first
 - `lint_sram.py` SpyGlass: 20 lint + 4 CDC configs, **24/24 PASS**; waivers `verification/lint/waivers.md`

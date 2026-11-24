@@ -384,7 +384,7 @@ deliverables exist before starting work.
 | 6  | [.agents/uvm.md](.agents/uvm.md) | UVM verification environment |
 | 7  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
 | 8  | [.agents/lint.md](.agents/lint.md) | RTL linting (runs in parallel with Steps 4–6) |
-| 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8) |
+| 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8); register-less IPs: memory tests + hook-based side-band helpers, host unit tests + mutants (`fw_<ip>.py`) |
 | 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, Quartus; Design Compiler + PrimeTime + gate-level simulation on csun.edu |
 | 11 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag |
 | 12 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |

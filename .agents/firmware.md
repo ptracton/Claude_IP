@@ -17,11 +17,22 @@ Step 2 complete (`firmware/include/IP_NAME_regs.h` exists). Runs in parallel wit
   - RISC-V 32-bit:  `riscv-none-elf-gcc`
     (xPack; standard hosts: `/opt/xpack-riscv-none-elf-gcc-*/bin`; `*.csun.edu`:
     `/tmp/pet43490/CrossCompilers/xpack-riscv-none-elf-gcc-*/bin`)
+  - **2026-11-23: `/tmp/pet43490/CrossCompilers` no longer exists on csun.edu** (removed by the
+    10-day `/tmp` cleanup). Cross builds there SKIP until the toolchains are reinstalled —
+    preferably outside `/tmp`, then fix the `CROSS_COMPILERS_PATH` block in every `setup.sh`.
+    Reinstalling downloads from Arm / xPack: ask the user first.
 
 ## Cross-Compilation Requirement (mandatory)
 
-**RULE — Firmware is NEVER built with the host (x86-64) GCC.** The driver targets embedded
-bare-metal SoC platforms. All compilation and syntax-checking must use cross-compilers.
+**RULE — Firmware libraries are NEVER built with the host (x86-64) GCC.** The driver targets
+embedded bare-metal SoC platforms. Every shipped artifact (`libIP_NAME.a`, example binary) and
+the syntax check must use the cross-compilers.
+
+**Exception — host unit tests (user decision 2026-11-23, sram Step 9).** A host-gcc test program
+under `firmware/test/` may compile the driver sources together with a model of the hardware
+(fault-injecting memory, fake side band, fake register file) and run on the build host. Its
+binaries stay in `firmware/build/host*/` and are never shipped. It is how firmware is verified on
+hosts with no cross compiler (csun.edu at the moment).
 
 Supported targets:
 
@@ -119,3 +130,42 @@ Supported targets:
 - No `#include` of anything outside `firmware/include/` and generated headers in driver sources.
 - **No host GCC output** — any `.a` file compiled with `x86-64-linux-gnu-gcc` or plain `gcc`
   is a quality gate failure.
+
+## Register-less IPs (memory-like, e.g. sram)
+
+An IP without a register block (no RDL, no `IP_NAME_regs.h`; sram decision D2) has no register
+driver. Step 9 then ships, following `IP/system/sram/firmware/`:
+
+- **Memory tests** on a base address and size: address bus, walking 1s/0s, address-in-address,
+  March C- (background as an argument; run 0 and 0x55555555), byte lanes, and a `*_test_all`
+  selector. First failure reported as `{addr, expected, actual}`.
+- **Side-band helpers** through integrator **hooks**: a struct of callbacks (`set_pwr_req`,
+  `get_pwr_ack`, `pulse_clr`, `get_status`, ...) plus `ctx`. The helpers only sequence (request,
+  poll with a timeout, refuse illegal states); they never assume an address map. Required hooks
+  are checked in `*_init`; optional ones may be NULL -> `*_ERR_NOHOOK`.
+- Read the RTL for the sequencing rules before writing them (sram: the clear engine skips
+  DS/SD domains; `ecc_inj_i` re-arms every cycle it is high, so its hook is a pulse; `busy_o`
+  covers a pending clear/BIST from the next cycle, so "done" = busy low).
+- Memory accesses need 8/16/32-bit accessors; `platform.h` has only `MMIO_*32`, so such an IP
+  uses its own `src/<ip>_access.h` (overridable macros) instead of copying `platform.h`. Do not
+  widen the common `platform.h` for one IP.
+- The example shows one *assumed* wiring of the side band (e.g. a system-control register),
+  clearly marked as an example.
+
+## Runner and verification (from sram Step 9)
+
+`verification/tools/fw_<ip>.py` (build it in Step 9; never report results from scratch scripts):
+
+| Step | What |
+|---|---|
+| host | host gcc `-std=c99 -Wall -Wextra -Werror -pedantic` build of `firmware/test/` + sources, run, one row per check; ASan/UBSan when the host can link them (csun gcc 11.5 cannot) |
+| mutants | a list of (file, original, mutated) edits to `src/`; the host test must fail for each (KILLED). A survivor means a missing fault or check; an equivalent mutant is replaced, not ignored |
+| compile | sources + example compiled with the real accessors (no test model), compile only |
+| cross | `firmware/build.sh arm` / `riscv`; SKIP (not FAIL) when the compiler is missing; record `<prefix>-size -t` totals for the README Code Size table |
+
+Results go to `verification/firmware/fw_results.log` (first line PASS/FAIL, then
+`PASS|FAIL|SKIP <step>/<check>` rows), and the regression runner collects them as step
+`firmware`. Lesson from sram: the first mutation run left 9/22 mutants alive — a fault model
+needs, per test step, a fault that only that step can see (pattern-sensitive bits for walking
+0s, decoder multi-access for each address-bus phase, falling-edge coupling for March C- M5,
+last-word and halfword lane faults), and "blind" checks that show what each test cannot see.

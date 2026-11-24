@@ -762,13 +762,14 @@ entry passes; an expected result that is missing counts as FAIL.
 | mutants | `uvm_mutants.py --mutant all` | — | one per mutant (must be killed) |
 | formal | `formal_sram.py --job all --lang all` | — | one per VC Formal job |
 | lint | `lint_sram.py --lang all` | same | one |
+| firmware | `fw_sram.py` (host unit tests, mutants, host compile; cross build SKIP without compilers) | same, plus the ARM / RISC-V cross build | one per PASS / FAIL row of `verification/firmware/fw_results.log` |
 | coverage | from the sim / uvm coverage reports | — | every module >= 90 per directed run and UVM build; UVM functional 100 per config |
 
 ```bash
 source IP/system/sram/setup.sh
 python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py            # run everything (~4-5 h on csun.edu)
 python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py --collect  # report on existing results only
-#   --skip-sim --skip-uvm --skip-mutants --skip-formal --skip-lint, --jobs N (default 3)
+#   --skip-sim --skip-uvm --skip-mutants --skip-formal --skip-lint --skip-firmware, --jobs N (default 3)
 ```
 
 The report lists each source file's timestamp, so stale results are visible in `--collect`
@@ -809,6 +810,9 @@ CDC: every crossing between the port-A and port-B clocks is synchronized (24 syn
 crossings per top, through `claude_sync` / `claude_pulse_sync` or the dual-clock RAM, none
 unsynchronized); the convergence of independent handshake bits of one multi-bit synchronizer
 is waived with the formal proof of the `sram_cdc` handshake (VC Formal `dp_async`).
+CDC reports its crossings and constraint checks as info rows. Only seven reviewed info
+rules are filtered out (`waivers.md`, "CDC report filter"); any other CDC row counts as a
+finding. This was re-run with that filter on 2026-11-23 20:45: 24/24 PASS.
 
 Fixed while linting: `sram_ecc_dec.sv` had a dead `stored_overall` net (SV only; no
 functional change — directed sims of all four buses on VCS and Xcelium re-run PASS with
@@ -831,16 +835,108 @@ Standard hosts: the same configurations through Verilator `--lint-only -Wall`
 
 ## Firmware
 
-> Populated by Step 9 (firmware): memory-test routines and power-mode helpers
-> (there is no register-level driver).
+C99, bare-metal, no OS, no dynamic allocation, no global state. There is no
+register driver, because the IP has no registers (D2). The firmware has two
+parts:
+
+- **Memory tests** (`firmware/src/sram_memtest.c`) run directly on the memory
+  through a base address and a size.
+- **Side-band helpers** (`firmware/src/sram_sideband.c`) handle power modes,
+  clear, BIST and ECC error injection. They only do the sequencing: the
+  integrator wires the side-band pins to something software can reach (GPIO,
+  a system-control register) and passes the pin access as a table of callbacks
+  (`sram_hooks_t`). No address map is assumed.
+  `firmware/examples/sram_example.c` shows one possible wiring (a single
+  system-control register) and a power-on self test.
+
+Memory accesses go through `SRAM_RD8/16/32` and `SRAM_WR8/16/32` in
+`firmware/src/sram_access.h`. These are volatile pointers by default; define
+them before the include to port the tests. Nothing from IP/common is needed.
+
+### Build Targets
+
+| Target | Toolchain | Library output |
+|---|---|---|
+| ARM Cortex-M33 | `arm-none-eabi-gcc` (`-mcpu=cortex-m33 -mthumb`) | `firmware/lib/arm-cortex-m33/libsram.a` |
+| RISC-V 32-bit | `riscv-none-elf-gcc` (`-march=rv32imac_zicsr -mabi=ilp32`) | `firmware/lib/riscv32/libsram.a` |
+
+`bash firmware/build.sh [arm|riscv|clean]`, the same as the timer. The toolchain files are in
+`IP/common/firmware/cmake/`. `-DSRAM_BUILD_EXAMPLE=ON` also links the example, which needs a
+board linker script and startup file.
+
+### Verification
+
+`verification/tools/fw_sram.py` writes `verification/firmware/fw_results.log` and is
+the `firmware` step of the regression.
+
+| Step | What | Result (2026-11-23, csun.edu, gcc 11.5.0) |
+|---|---|---|
+| host | `firmware/test/test_sram.c` with host gcc (`-std=c99 -Wall -Wextra -Werror -pedantic`): every test on fault-free memories (4 B to 16 KiB, three fills), argument checks, 39 fault/test pairs (34 must detect, 5 must stay blind) on a fault-injecting model, 24 side-band checks on a fake IP | 124/124 PASS (plus the build row). ASan/UBSan are used where the host can link them; csun.edu cannot (libasan/libubsan not installed). |
+| mutants | 22 deliberate bugs in `src/` (`fw_sram.py --list-mutants`); `test_sram` must fail for each one | 22/22 killed |
+| compile | library and example compiled without the test model (real volatile accessors) | 3/3 PASS |
+| cross | `build.sh` for ARM and RISC-V | SKIP on csun.edu: the cross compilers in `/tmp/pet43490/CrossCompilers` are gone (removed by the `/tmp` cleanup). Not run yet. |
+
+Faults in the model (`firmware/test/sram_test_mem.c`), and which test is meant
+to catch each one. "Blind" pairs are checked too, to show the limits of each test:
+
+| Fault | Caught by | Not caught by |
+|---|---|---|
+| stuck-at 0 / 1 bit | walking, address-in-address, March C- | |
+| transition (cannot rise) | walking, March C- | |
+| address bit stuck at 0 / 1, two address bits shorted | address bus, address-in-address, March C- | walking (single word) |
+| decoder multiple access (a write also hits another word) | address bus (both phases) | |
+| coupling between words, rising or falling aggressor, either order | March C- (the falling case only through its final read element) | walking |
+| bridge inside a word (wired-AND) | walking, March C- with background 0x55555555 | March C- with background 0 |
+| pattern-sensitive bit (0 between two 1s reads 1) | walking 0s, March C- with background 0x55555555 | March C- with background 0, walking 1s |
+| byte lane: full-word narrow write, swapped lanes, halfword in the wrong half, last word only | byte lanes | word tests |
 
 ### Code Size
 
-[TBD]
+Not measured yet: no cross compiler is installed on csun.edu. `fw_sram.py`
+writes the `text` / `data` / `bss` of each `libsram.a` to `fw_results.log`
+once `build.sh` runs on a standard host. `.data` and `.bss` are 0 by design,
+since there is no global state.
 
 ### API Summary
 
-[TBD]
+Declared in `firmware/include/sram.h`. Return codes: `SRAM_OK` 0, `SRAM_ERR_FAIL`,
+`SRAM_ERR_ARG`, `SRAM_ERR_TIMEOUT`, `SRAM_ERR_STATE`, `SRAM_ERR_NOHOOK`.
+
+**Memory tests.** Each test takes `base` (4-byte aligned), `size` (bytes, a non-zero
+multiple of 4) and `sram_fail_t *fail` (first failure: `addr`, `expected`, `actual`;
+may be NULL). The tests are destructive. The running program's stack, code and data
+must be outside the tested range.
+
+| Function | Accesses | Finds |
+|---|---|---|
+| `sram_test_addr_bus(base, size, fail)` | ~2 log2(words) + log2(words)^2 | stuck, shorted or multiply-selecting address lines |
+| `sram_test_walking(base, size, fail)` | 128 per word | stuck, bridged or pattern-sensitive data bits (size 4 = data-bus test) |
+| `sram_test_addr_in_addr(base, size, fail)` | 4 per word | address-decoder faults over the whole range |
+| `sram_test_march_c(base, size, bg, fail)` | 10 per word | March C- with background `bg`: stuck-at, transition, decoder and coupling faults |
+| `sram_test_byte_lanes(base, size, fail)` | first and last word | byte / halfword write merge and read lanes (needs `BYTE_EN = 1`, or `PARTIAL_WR_ERR = 0`) |
+| `sram_test_all(base, size, tests, fail)` | | the `SRAM_TEST_*` selection in that order (March C- with backgrounds 0 and 0x55555555); stops at the first failure |
+
+**Side band.** `sram_init(&dev, &hooks, num_domains, timeout)` binds an instance.
+`set_pwr_req`, `get_pwr_ack` and `get_status` are required. `pulse_clr`, `pulse_bist`,
+`get_bist_fail_addr` and `pulse_ecc_inj` may be NULL when the option is not built; a
+helper that needs a missing hook returns `SRAM_ERR_NOHOOK`. Each wait polls at most
+`timeout` times.
+
+| Function | Sequence |
+|---|---|
+| `sram_pwr_set_mode(dev, domain, mode)` | drive the request, wait until `pwr_mode_ack_o` shows it. A move between two sleep modes passes through RUN in hardware. Leaving SHUTDOWN also waits for the zeroing pass. |
+| `sram_pwr_set_mode_all(dev, mode)` | request every domain first, then wait for each, so the transitions run in parallel |
+| `sram_pwr_get_mode(dev, domain)` | mode in effect |
+| `sram_pwr_domain_range(dev, size, domain, &off, &len)` | byte range of one bank with `BANK_PG` (equal slices, domain 0 lowest), e.g. to test only the banks that are awake |
+| `sram_wait_idle(dev)` | wait for `busy_o` low |
+| `sram_clear(dev)` | refused (`SRAM_ERR_STATE`) unless every domain is in RUN or LIGHT_SLEEP, because the engine skips the others; then pulse `clr_req_i` and wait for `busy_o` low |
+| `sram_bist_run(dev, &fail_word)` | pulse `bist_start_i`, wait for `busy_o` low, then read `bist_fail_o` / `bist_fail_addr_o`. Destroys the contents. |
+| `sram_ecc_inject(dev, bits)` | pulse `ecc_inj_i` (1 = one stored bit, corrected; 2 = two bits, uncorrectable) on the next port-A write |
+
+Rules the hardware imposes. A bus access to a domain in DEEP_SLEEP or SHUTDOWN
+is a bus error, so do not test such a domain. LIGHT_SLEEP wakes on an access.
+A `pulse_*` hook must return only after the pulse has reached the IP, so that
+the next `get_status` sees `busy_o`.
 
 ## Synthesis Results
 

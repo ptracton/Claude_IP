@@ -172,6 +172,10 @@ parser with no VHDL-2008 support at all and are not worth using here either.
   (not a failure).
 - Pass/fail comes from `moresimple.rpt`, filtered for known translator
   noise — not from `spyglass_vc`'s own exit code (unreliable).
+- IPs with a separate-clock interface also run SpyGlass CDC
+  (`cdc/cdc_verify_struct`, generated SGDC). Its benign filter is an explicit list of
+  reviewed info rules, documented in `waivers.md` — never "every info row"
+  (`reference_spyglass_lint.md`, CDC; sram `lint_sram.py` `_CDC_INFO_RULES`).
 
 **All hosts:**
 - Every RTL waiver in `verification/lint/waivers.md` has a corresponding

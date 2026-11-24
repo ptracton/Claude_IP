@@ -82,6 +82,10 @@ When `ON_CSUN` is `True`:
   - On all hosts:
     8. `run_formal.py --proto all`                ← skip if `--skip-formal`
     9. Lint results (read `verification/lint/lint_results.log`) ← skip if `--skip-lint`
+    10. Firmware: `fw_<IP_NAME>.py` (host unit tests, mutants, compile check, cross build),
+        one entry per PASS/FAIL row of `verification/firmware/fw_results.log`; SKIP rows
+        (missing cross compiler) are not counted ← skip if `--skip-firmware`
+        (added 2026-11-23 with sram Step 9, see `.agents/firmware.md`)
 - Collects exit codes and reads `results.log` files.
 - Writes `verification/work/regression_results.log` with a complete pass/fail table.
 - Exits non-zero if **any** test is `FAIL`. `SKIP` (tool not installed) is neutral — not a failure.
