@@ -1,0 +1,8 @@
+# Clocks and resets of sram_wb_dp for SpyGlass CDC (written by lint_sram.py).
+# Ports A and B on separate, unrelated clocks (COMMON_CLK = 0); both
+# resets synchronous (the IP has no asynchronous reset).
+current_design sram_wb_dp
+clock -name A_CLK_I -domain dom_a -period 10
+clock -name B_CLK_I -domain dom_b -period 13.7
+reset -name A_RST_I -value 1 -sync
+reset -name B_RST_I -value 1 -sync

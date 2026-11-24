@@ -40,7 +40,9 @@ module sram_array #(
   parameter int unsigned DEPTH_B    = DEPTH, // port B words
   parameter int unsigned NLANES_B   = NLANES,// port B write lanes
   parameter bit          COMMON_CLK = 1,     // b_clk is clk
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE  = ""     // preload (GENERIC/FPGA, NUM_BANKS = 1, R = 1)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                       clk,        // port A clock
   input  logic                       cs_i,       // access this cycle
@@ -58,8 +60,10 @@ module sram_array #(
   input  logic                       b_cs_i,     // access this cycle
   input  logic                       b_we_i,     // 1 = write
   input  logic [$clog2(DEPTH_B)-1:0] b_idx_i,    // word index
+  //spyglass disable_block W240
   input  logic [MW_B-1:0]            b_wdata_i,  // stored word to write
   input  logic [NLANES_B-1:0]        b_lane_we_i,// lanes to write
+  //spyglass enable_block W240
   output logic [MW_B-1:0]            b_rdata_o   // stored word (cycle after a read)
 );
 
@@ -128,12 +132,14 @@ module sram_array #(
     assign a_saddr = SAw'(idx_i[BankAwA-1:0]);
   end
 
+  //spyglass disable_block W528
   always_ff @(posedge clk) begin : p_a_rd_sel
     if (cs_i && !we_i) begin
       a_rd_bank_q  <= a_bank;
       a_rd_slice_q <= a_slice;
     end
   end
+  //spyglass enable_block W528
 
   assign rdata_o = a_bank_rdata[(NUM_BANKS > 1) ? a_rd_bank_q : '0];
 
@@ -156,15 +162,19 @@ module sram_array #(
     assign b_saddr = SAw'(b_idx_i[BankAwB-1:0] >> RSh);
   end else begin : g_b_whole
     assign b_slice = '0;
+    //spyglass disable_block W528
     assign b_saddr = SAw'(b_idx_i[BankAwB-1:0]);
+    //spyglass enable_block W528
   end
 
+  //spyglass disable_block W528 FlopEConst
   always_ff @(posedge b_clk) begin : p_b_rd_sel
     if (b_cs_i && !b_we_i) begin
       b_rd_bank_q  <= b_bank;
       b_rd_slice_q <= b_slice;
     end
   end
+  //spyglass enable_block W528 FlopEConst
 
   assign b_rdata_o = DUAL_PORT ? b_bank_rdata[(NUM_BANKS > 1) ? b_rd_bank_q : '0] : '0;
 
@@ -174,7 +184,9 @@ module sram_array #(
   for (genvar k = 0; k < NUM_BANKS; k++) begin : g_bank
     logic a_bank_cs, b_bank_cs;
     assign a_bank_cs = cs_i && (a_bank == BankW'(k));
+    //spyglass disable_block W528
     assign b_bank_cs = b_cs_i && (b_bank == BankW'(k));
+    //spyglass enable_block W528
 
     if (DUAL_PORT) begin : g_dp
       logic [SW-1:0] a_slice_rdata [R];  // per-slice read data, port A
@@ -246,7 +258,9 @@ module sram_array #(
         assign b_bank_rdata[k] = b_slice_rdata[b_rd_slice_q];
       end
     end else begin : g_sp
+      //spyglass disable_block W528
       assign b_bank_rdata[k] = '0;
+      //spyglass enable_block W528
 
       sram_macro #(
         .TECH     (TECH),

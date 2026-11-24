@@ -748,11 +748,86 @@ change):
 - `claude_wb_mem_if` was at 89.9: the WB driver now drives stray STB / WE /
   ADR with CYC low in idle cycles (Wishbone B4: ignored by the slave).
 
+## Regression
+
+`verification/tools/regression_sram.py` (wrapper `verification/regression/run_regression.sh`)
+runs every sub-runner and writes one report, `verification/regression/report.md`
+(console table: `verification/work/regression_results.log`). Exit status 0 only when every
+entry passes; an expected result that is missing counts as FAIL.
+
+| Step | csun.edu | Standard host | Entries |
+|---|---|---|---|
+| sim | `sim_sram.py`, VCS + Xcelium, 4 buses x SV/VHDL x 5 techs, `--coverage` | `sim_sram.py --sim verilator`, SV, GENERIC | one per directed test (12 per run) |
+| uvm | `uvm_sram.py`, full matrix, `--coverage` | — | one per test run (1440) |
+| mutants | `uvm_mutants.py --mutant all` | — | one per mutant (must be killed) |
+| formal | `formal_sram.py --job all --lang all` | — | one per VC Formal job |
+| lint | `lint_sram.py --lang all` | same | one |
+| coverage | from the sim / uvm coverage reports | — | every module >= 90 per directed run and UVM build; UVM functional 100 per config |
+
+```bash
+source IP/system/sram/setup.sh
+python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py            # run everything (~4-5 h on csun.edu)
+python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py --collect  # report on existing results only
+#   --skip-sim --skip-uvm --skip-mutants --skip-formal --skip-lint, --jobs N (default 3)
+```
+
+The report lists each source file's timestamp, so stale results are visible in `--collect`
+mode. Last report (2026-11-23, `--collect` on csun.edu): **2599/2599 entries pass** — sim
+960/960, UVM 1440/1440, mutants 9/9, formal 26/26, lint 1/1 (24 SpyGlass configurations),
+coverage 163/163.
+
 ## Lint Results
 
-> Populated by Step 8 (lint)
+`verification/tools/lint_sram.py` (Step 8), 2026-11-23 on csun.edu, SpyGlass
+(`spyglass_vc`, VC Static Y-2026.03-SP1): **24/24 configurations clean, PASS**.
 
-[TBD]
+| Language | Tool | Configurations | Un-waived findings | Waivers | Result |
+|---|---|---|---|---|---|
+| SV | SpyGlass `lint/lint_rtl` | 20 | 0 | 60 RTL pragma blocks (`waivers.md` W1-W5) | PASS |
+| SV | SpyGlass `cdc/cdc_verify_struct` | 4 | 0 | 5 RTL pragma blocks (`waivers.md` W6) | PASS |
+| VHDL | — | — | — | — | SKIPPED: no GHDL on csun.edu and no VHDL-2008 path in SpyGlass (`.agents/reference_spyglass_lint.md`) |
+
+What is linted (user decision 2026-11-23): every top with every option on, because a reduced
+configuration only adds findings for logic it switches off.
+
+| Configurations | Top | TECH | Parameters |
+|---|---|---|---|
+| `<proto>_generic` (4) | `sram_ahb/apb/axi4l/wb` | GENERIC | ECC_EN, BANK_PG, NUM_BANKS 2, BIST_EN, READ_LATENCY 2 |
+| `<proto>_dp_generic` (4) | `sram_<proto>_dp` | GENERIC | same + WIDTH_B 8, COMMON_CLK 0 |
+| `apb_<tech>`, `apb_dp_<tech>` (12) | `sram_apb`, `sram_apb_dp` | SAED90, SAED32, SAED14, SKY130, XILINX, ALTERA | same (SAED14 dual port: COMMON_CLK 1) |
+| `<proto>_dp_cdc` (4) | `sram_<proto>_dp` | GENERIC | as `_dp_generic`; clocks and synchronous resets in an SGDC |
+
+The vendor cells are black boxes (`set_option stop`): the XPM / altsyncram ports are
+hand-written stubs (`verification/lint/stubs/`), the PDK cells are generated from the
+wrappers' own instantiations into `verification/work/lint_stubs/` (no vendor file content).
+Each configuration has its own SpyGlass directory `verification/lint/spyglass/<cfg>/`
+(project and SGDC written by the runner), so up to three run in parallel (`--jobs`, capped by
+free memory; ~1.8 GB each). Pass/fail comes from each `moresimple.rpt`; translator and
+black-box bookkeeping rows are filtered (listed in `waivers.md`).
+
+CDC: every crossing between the port-A and port-B clocks is synchronized (24 synchronized
+crossings per top, through `claude_sync` / `claude_pulse_sync` or the dual-clock RAM, none
+unsynchronized); the convergence of independent handshake bits of one multi-bit synchronizer
+is waived with the formal proof of the `sram_cdc` handshake (VC Formal `dp_async`).
+
+Fixed while linting: `sram_ecc_dec.sv` had a dead `stored_overall` net (SV only; no
+functional change — directed sims of all four buses on VCS and Xcelium re-run PASS with
+identical comparison counts). Everything else is configuration-dependent (single-port tops
+carry the core's port B; leaves share one interface; SKY130 port B read-only, SAED14 one
+write clock) or a documented style deviation (`INIT_FILE` string, `$readmemh` preload, the
+dual-clock RAM template, `sram_clr` default-then-override).
+
+```bash
+source IP/system/sram/setup.sh
+python3 $CLAUDE_SRAM_PATH/verification/tools/lint_sram.py --lang all        # ~6 min on csun.edu
+python3 $CLAUDE_SRAM_PATH/verification/tools/lint_sram.py --list            # the configurations
+python3 $CLAUDE_SRAM_PATH/verification/tools/lint_sram.py --cfg apb_dp_cdc  # one configuration
+```
+
+Standard hosts: the same configurations through Verilator `--lint-only -Wall`
+(`verification/lint/verilator.flags`, `-G` overrides) and every VHDL file through
+`ghdl -a --std=08`. **Not run yet** (neither tool is on csun.edu); expect Verilator
+`UNUSEDSIGNAL` pragmas to be added for the single-port port-B nets on the first run.
 
 ## Firmware
 

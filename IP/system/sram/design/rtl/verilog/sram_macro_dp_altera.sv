@@ -15,7 +15,9 @@ module sram_macro_dp_altera #(
   parameter int unsigned D          = 1024, // words
   parameter int unsigned NLANES     = 4,    // write lanes of W / NLANES bits
   parameter bit          COMMON_CLK = 1,    // 1: a_clk and b_clk are the same clock
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE  = ""    // optional preload (.mif / .hex)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock
   input  logic                 a_cs_i,      // port A chip select
@@ -33,9 +35,11 @@ module sram_macro_dp_altera #(
   output logic [W-1:0]         b_rdata_o,   // port B read data
   // M10K blocks have no sleep pins (see header).
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,        // light sleep (unused)
   input  logic                 ds_i,        // deep sleep (unused)
   input  logic                 sd_i         // shutdown (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
 );
 

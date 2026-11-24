@@ -40,9 +40,11 @@ module sram_macro_saed14 #(
   input  logic [NLANES-1:0]    lane_we_i, // lanes to write
   // No sleep pins on this primitive family: power is controlled through UPF.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,      // light sleep (unused)
   input  logic                 ds_i,      // deep sleep (unused)
   input  logic                 sd_i,      // shutdown (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
 );

@@ -16,7 +16,9 @@ module sram_macro_generic #(
   parameter int unsigned W         = 32,   // word width
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE = ""    // optional $readmemh preload
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock
   input  logic                 cs_i,      // chip select
@@ -26,8 +28,10 @@ module sram_macro_generic #(
   input  logic [NLANES-1:0]    lane_we_i, // lanes to write
   // Sleep pins are retention-only here; shutdown is simulation-only.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,      // light sleep
   input  logic                 ds_i,      // deep sleep
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
   input  logic                 sd_i,      // shutdown
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
@@ -38,11 +42,13 @@ module sram_macro_generic #(
   logic [W-1:0] mem [D];
   logic         sd_q;  // sd_i last cycle (edge detect, simulation only)
 
+  //spyglass disable_block SM_IGN_INITIAL
   initial begin : p_init
     if (INIT_FILE != "") begin
       $readmemh(INIT_FILE, mem);
     end
   end
+  //spyglass enable_block SM_IGN_INITIAL
 
   // Synchronous write (per lane) and registered read.
   always_ff @(posedge clk) begin : p_ram
@@ -57,7 +63,9 @@ module sram_macro_generic #(
         rdata_o <= mem[addr_i];
       end
     end
+    //spyglass disable_block W528
     sd_q <= sd_i;
+    //spyglass enable_block W528
     // synopsys translate_off
     // Deviation: X assignment, simulation only — models loss of contents
     // when the memory is shut down (power switched off).

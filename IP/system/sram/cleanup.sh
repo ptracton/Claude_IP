@@ -60,16 +60,11 @@ _run_if_present "${CLAUDE_SRAM_PATH}/verification/tools/formal_sram.py" \
 # Lint logs (keep config and waivers)
 rm -f "${CLAUDE_SRAM_PATH}/verification/lint/lint_results.log"
 
-# SpyGlass lint intermediates (csun.edu only — keep the .prj files)
-rm -rf "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/vcst_rtdb" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/vcst_rtdb.bak" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/"*.prj.tcl* \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/vcst_command.log" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/vcst_session.log"* \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/.vcstPref" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/spyglass.out" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/report_hdl.txt" \
-       "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/VCSOptFile.txt"
+# SpyGlass lint / CDC run output (csun.edu only — keep each configuration's .prj / .sgdc)
+for cfg in "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/"*/; do
+    [ -d "${cfg}" ] || continue
+    find "${cfg}" -mindepth 1 -maxdepth 1 ! -name '*.prj' ! -name '*.sgdc' -exec rm -rf {} +
+done
 
 # Files Synopsys tools drop into whatever directory they are launched from
 # (dc_shell/pt_shell/lc_shell command logs, fsdb2vcd/Verdi/VCS scratch) — left

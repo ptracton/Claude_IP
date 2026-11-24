@@ -15,7 +15,9 @@ module sram_macro_xilinx #(
   parameter int unsigned W         = 32,   // word width
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE = ""    // optional preload (.mem, hex)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock
   input  logic                 cs_i,      // chip select
@@ -68,8 +70,10 @@ module sram_macro_xilinx #(
     .sleep         (sleep),
     .injectsbiterra(1'b0),
     .injectdbiterra(1'b0),
+    //spyglass disable_block W287b
     .sbiterra      (),
     .dbiterra      ()
+    //spyglass enable_block W287b
   );
 
 endmodule : sram_macro_xilinx

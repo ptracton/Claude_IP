@@ -56,13 +56,11 @@ module sram_ecc_dec #(
 
   logic [K-1:0] data;
   logic [R-1:0] stored_check;
-  logic         stored_overall;
   logic [R-1:0] syndrome;
   logic         parity;
 
   assign data           = code_i[K-1:0];
   assign stored_check   = code_i[K+R-1:K];
-  assign stored_overall = code_i[K+R];
 
   // Syndrome and overall parity.
   for (genvar i = 0; i < R; i++) begin : g_syn

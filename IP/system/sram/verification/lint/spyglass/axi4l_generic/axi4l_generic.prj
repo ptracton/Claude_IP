@@ -1,0 +1,40 @@
+# SpyGlass lint project axi4l_generic: sram_axi4l, TECH GENERIC, all options.
+# Written by verification/tools/lint_sram.py (do not edit); run from this
+# directory: spyglass_vc -project axi4l_generic.prj -goal lint/lint_rtl -batch -app lint
+
+set_option projectwdir .
+set_option enableSV yes
+set_option top sram_axi4l
+set_option param {sram_axi4l.ECC_EN=1 sram_axi4l.BANK_PG=1 sram_axi4l.NUM_BANKS=2 sram_axi4l.BIST_EN=1 sram_axi4l.READ_LATENCY=2}
+read_file -type verilog { \
+  ../../../../../../common/design/rtl/verilog/claude_sync.sv \
+  ../../../../../../common/design/rtl/verilog/claude_pulse_sync.sv \
+  ../../../../../../common/design/rtl/verilog/claude_axi4l_mem_if.sv \
+  ../../../../design/rtl/verilog/sram_pkg.sv \
+  ../../../../design/rtl/verilog/sram_ecc_enc.sv \
+  ../../../../design/rtl/verilog/sram_ecc_dec.sv \
+  ../../../../design/rtl/verilog/sram_macro_generic.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed90.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed32.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed14.sv \
+  ../../../../design/rtl/verilog/sram_macro_sky130.sv \
+  ../../../../design/rtl/verilog/sram_macro_xilinx.sv \
+  ../../../../design/rtl/verilog/sram_macro_altera.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_generic.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed90.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed32.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed14.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_sky130.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_xilinx.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_altera.sv \
+  ../../../../design/rtl/verilog/sram_macro.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp.sv \
+  ../../../../design/rtl/verilog/sram_array.sv \
+  ../../../../design/rtl/verilog/sram_pwr_ctrl.sv \
+  ../../../../design/rtl/verilog/sram_clr.sv \
+  ../../../../design/rtl/verilog/sram_bist.sv \
+  ../../../../design/rtl/verilog/sram_port.sv \
+  ../../../../design/rtl/verilog/sram_cdc.sv \
+  ../../../../design/rtl/verilog/sram_core.sv \
+  ../../../../design/rtl/verilog/sram_axi4l.sv \
+}

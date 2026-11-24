@@ -42,9 +42,11 @@ module sram_macro_sky130 #(
   input  logic [NLANES-1:0]    lane_we_i, // lanes to write
   // No sleep pins on this primitive family: power is controlled through UPF.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,      // light sleep (unused)
   input  logic                 ds_i,      // deep sleep (unused)
   input  logic                 sd_i,      // shutdown (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
 );
@@ -124,7 +126,9 @@ module sram_macro_sky130 #(
           .clk1  (clk),
           .csb1  (1'b1),
           .addr1 ('0),
+          //spyglass disable_block W287b
           .dout1 ()
+          //spyglass enable_block W287b
         );
       end else if (PrimW == 32 && PrimD == 512) begin : g_32x512
         sky130_sram_2kbyte_1rw1r_32x512_8 #(
@@ -140,7 +144,9 @@ module sram_macro_sky130 #(
           .clk1  (clk),
           .csb1  (1'b1),
           .addr1 ('0),
+          //spyglass disable_block W287b
           .dout1 ()
+          //spyglass enable_block W287b
         );
       end else if (PrimW == 8 && PrimD == 1024) begin : g_8x1024
         sky130_sram_1kbyte_1rw1r_8x1024_8 #(
@@ -156,7 +162,9 @@ module sram_macro_sky130 #(
           .clk1  (clk),
           .csb1  (1'b1),
           .addr1 ('0),
+          //spyglass disable_block W287b
           .dout1 ()
+          //spyglass enable_block W287b
         );
       end else begin : g_unsupported
         // Elaboration-time error: no primitive of this size in the curated list.

@@ -1,4 +1,26 @@
-# Handoff — SRAM, updated 2026-11-23 (Step 6 UVM in progress, uncommitted)
+# Handoff — SRAM, updated 2026-11-23 (Steps 7 + 8 done, uncommitted)
+
+## Step 8 lint (2026-11-23, uncommitted) — read first
+- `lint_sram.py` SpyGlass: 20 lint + 4 CDC configs, **24/24 PASS**; waivers `verification/lint/waivers.md`
+  (65 RTL pragma blocks); README "Lint Results"; plan §16. RTL touched: pragmas (comments) in 26 SV
+  files + removal of dead `stored_overall` (sram_ecc_dec.sv). Sims re-run: 8/8 SV GENERIC VCS+Xcelium PASS.
+- Regression `--collect` 2599/2599. Coverage tables are from before the edit (sram_ecc_dec may move
+  slightly on the next `--coverage` run).
+- CDC filter tightened 20:4x: only the reviewed info rules in `_CDC_INFO_RULES` (lint_sram.py) are
+  dropped (was every CDC info row); waivers.md "CDC report filter". Full re-run 20:45: 24/24 PASS,
+  0 findings, same filtered counts; structural CDC checks (Ac_unsync/conv/glitch, Ar_*) all 0.
+- Open: standard-host lint (Verilator/GHDL) written but not run. Next plan step: **Step 9 firmware**.
+
+
+## Step 7 (2026-11-23, uncommitted)
+- `verification/tools/regression_sram.py` (+ `verification/regression/run_regression.sh`),
+  README "Regression", plan §15. `--collect` on csun: 2598/2599, the only FAIL is lint (Step 8
+  skeleton, by design). Full non-collect run not done (~4-5 h).
+- Next plan step: **Step 8 lint** (SpyGlass on csun incl. CDC on the separate-clock dual port;
+  Verilator/VHDL lint on a standard host). `verification/lint/spyglass/` already exists.
+- Scratch in `verification/work/`: run_full_recheck.sh, run_uvm_matrix.sh, full_recheck.done,
+  step4_regression.log, uvm_matrix_20261121/ (ignored, removable).
+
 
 ## 2026-11-23 session (read first)
 - **Full UVM matrix of 2026-11-21: 1352/1440 PASS** (copy: `verification/work/uvm_matrix_20261121/`).

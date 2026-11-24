@@ -1,0 +1,43 @@
+# SpyGlass lint project apb_dp_saed90: sram_apb_dp, TECH SAED90, all options.
+# Written by verification/tools/lint_sram.py (do not edit); run from this
+# directory: spyglass_vc -project apb_dp_saed90.prj -goal lint/lint_rtl -batch -app lint
+
+set_option projectwdir .
+set_option enableSV yes
+set_option top sram_apb_dp
+set_option param {sram_apb_dp.ECC_EN=1 sram_apb_dp.BANK_PG=1 sram_apb_dp.NUM_BANKS=2 sram_apb_dp.BIST_EN=1 sram_apb_dp.READ_LATENCY=2 sram_apb_dp.WIDTH_B=8 sram_apb_dp.COMMON_CLK=0 sram_apb_dp.TECH=3}
+# vendor cells: port-only stubs, not linted
+set_option stop {SRAM32x128 SRAM32x16 SRAM32x256_1rw SRAM32x32 SRAM32x512_1rw SRAM32x64 SRAM32x64_1rw SRAM39x32 SRAM8x1024_1rw SRAM8x128 SRAM8x128_1rw SRAM8x16 SRAM8x256_1rw SRAM8x32 SRAM8x512_1rw SRAM8x64 SRAM8x64_1rw}
+read_file -type verilog { \
+  ../../../work/lint_stubs/stubs_saed90.sv \
+  ../../../../../../common/design/rtl/verilog/claude_sync.sv \
+  ../../../../../../common/design/rtl/verilog/claude_pulse_sync.sv \
+  ../../../../../../common/design/rtl/verilog/claude_apb_mem_if.sv \
+  ../../../../design/rtl/verilog/sram_pkg.sv \
+  ../../../../design/rtl/verilog/sram_ecc_enc.sv \
+  ../../../../design/rtl/verilog/sram_ecc_dec.sv \
+  ../../../../design/rtl/verilog/sram_macro_generic.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed90.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed32.sv \
+  ../../../../design/rtl/verilog/sram_macro_saed14.sv \
+  ../../../../design/rtl/verilog/sram_macro_sky130.sv \
+  ../../../../design/rtl/verilog/sram_macro_xilinx.sv \
+  ../../../../design/rtl/verilog/sram_macro_altera.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_generic.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed90.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed32.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_saed14.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_sky130.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_xilinx.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp_altera.sv \
+  ../../../../design/rtl/verilog/sram_macro.sv \
+  ../../../../design/rtl/verilog/sram_macro_dp.sv \
+  ../../../../design/rtl/verilog/sram_array.sv \
+  ../../../../design/rtl/verilog/sram_pwr_ctrl.sv \
+  ../../../../design/rtl/verilog/sram_clr.sv \
+  ../../../../design/rtl/verilog/sram_bist.sv \
+  ../../../../design/rtl/verilog/sram_port.sv \
+  ../../../../design/rtl/verilog/sram_cdc.sv \
+  ../../../../design/rtl/verilog/sram_core.sv \
+  ../../../../design/rtl/verilog/sram_apb_dp.sv \
+}

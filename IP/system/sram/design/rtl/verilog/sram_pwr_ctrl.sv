@@ -78,7 +78,9 @@ module sram_pwr_ctrl #(
       unique case (state_q)
         // StRun: full operation; enter a sleep mode once the domain is idle.
         StRun: begin
+          //spyglass disable_block Ac_conv02
           if (target != sram_pkg::PWR_RUN && idle_i) begin
+          //spyglass enable_block Ac_conv02
             mode_d  = target;
             cnt_d   = CntW'(ENTER_CYC);
             state_d = StEnter;

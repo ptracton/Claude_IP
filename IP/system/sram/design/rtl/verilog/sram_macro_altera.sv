@@ -16,7 +16,9 @@ module sram_macro_altera #(
   parameter int unsigned W         = 32,   // word width
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE = ""    // optional preload (.mif / .hex)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock
   input  logic                 cs_i,      // chip select
@@ -26,9 +28,11 @@ module sram_macro_altera #(
   input  logic [NLANES-1:0]    lane_we_i, // lanes to write
   // M10K blocks have no sleep pins (see header).
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,      // light sleep (unused)
   input  logic                 ds_i,      // deep sleep (unused)
   input  logic                 sd_i,      // shutdown (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
 );
@@ -56,7 +60,9 @@ module sram_macro_altera #(
     .init_file                    (InitFile)
   // Deviation: only the ports this mode uses are connected. altsyncram has
   // about 40 optional ports (port B, ECC, clears) with defaults in altera_mf.
+  //spyglass disable_block W287a W287b TFIPC
   ) u_altsyncram (
+  //spyglass enable_block W287a W287b TFIPC
     .clock0   (clk),
     .clocken0 (cs_i),
     .address_a(addr_i),

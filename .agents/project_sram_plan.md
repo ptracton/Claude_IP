@@ -178,9 +178,9 @@ simulations sweep a config matrix on GENERIC and on each PDK's macro models.
 | 3c | Dual port with different widths and clocks (§12) | done |
 | 4 | Directed tests, SV + VHDL x 4 protos x single/dual: rw, byte enables, back2back, March sweep, AHB bursts, errors, power retention/loss/wake, clear, ECC (corr/uncorr/RMW), BIST (incl. fault injection), dual-port conflicts, config sweep incl. small DEPTHs (exercises SAED14 32x8); reference model as checker; backdoor preload/peek tasks. Also, from 3b/3c: tiler sweep (`macro/tb_macro.sv`), different widths and separate clocks on **every** protocol (AHB/AXI pipelining catches the surviving narrow-slice mutant), dual-clock `sram_model`, port-B-during-engine monitor | done |
 | 5 | Formal (VC Formal): protocol checkers, `claude_mem_fv` with `INITIATOR_IS_DUT=0` on the core, symbolic-address data integrity with byte merge, power FSM legality, dual-port conflict ordering (incl. A waiting for B's RMW — not hit in smoke). From 3c: `sram_cdc` handshake ("port B never uses the array while an engine runs or pins are on"; the four-phase mutant survived simulation), codeword-lane write-back | done 2026-11-15: 13 jobs x SV/VHDL 26/26 PASS; data/err in ECC + dual-port jobs bounded (user decision), see `verification/formal/vcf/README.md` |
-| 6 | UVM (VCS): random R/W + power-mode sequences, `sram_model` scoreboard | |
-| 7 | Regression runner/report | |
-| 8 | Lint: SpyGlass (csun) / Verilator + VHDL lint on a standard host (needs black-box stubs for the macros). From 3c: SpyGlass CDC on the separate-clock dual port (waive the `claude_sync` first stage); documented deviations: plain `always` (SV) / shared variable (VHDL) in the generic dual-clock RAM | |
+| 6 | UVM (VCS): random R/W + power-mode sequences, `sram_model` scoreboard | done 2026-11-23: 1440/1440, committed 805dd88 (§14) |
+| 7 | Regression runner/report | done 2026-11-23 (uncommitted): `regression_sram.py` (§15) |
+| 8 | Lint: SpyGlass (csun) / Verilator + VHDL lint on a standard host (needs black-box stubs for the macros). From 3c: SpyGlass CDC on the separate-clock dual port (waive the `claude_sync` first stage); documented deviations: plain `always` (SV) / shared variable (VHDL) in the generic dual-clock RAM | done 2026-11-23 (uncommitted): SpyGlass 20 lint + 4 CDC configs clean (§16) |
 | 9 | Firmware: memory tests (March, walking 1s) + power-mode helpers; no register driver | |
 | 10 | Synthesis: Yosys/Vivado/Quartus; DC x 4 PDKs with macro .db; UPF; PrimeTime with macro libs; post-syn sim using `pdk_sram_models.py` | |
 | 11 | Docs, cleanup, tag | |
@@ -944,3 +944,40 @@ coverage hier from `sim_sram.py` (imported, not copied). Results:
   bit for the ECC sweep; inert unless called). Read-path fault knob generalised (any data bit,
   either value) for single- and double-error sweeps over every data position. Mutation check:
   9/9 mutants killed (`work/uvm/mutants/results.log`).
+
+- 2026-11-23 full matrix 1352/1440 -> bench fixes (AXI irq by `t_rsp`, `sram_model` COMMON_CLK,
+  WB stray STB) -> **1440/1440**, Step 4 80/80. Committed by the user (805dd88). Step 6 done.
+
+## 15. Step 7 — regression runner (2026-11-23)
+`verification/tools/regression_sram.py` replaces the Step 1 skeleton (wrapper
+`verification/regression/run_regression.sh`). csun.edu: sim (VCS+Xcelium, coverage), UVM full
+matrix (coverage), mutants, formal, lint; standard host: Verilator sim + lint. `--collect` reports
+on existing results; `--skip-<step>`; `--jobs` (default 3). Entries: per directed test (960), per
+UVM run (1440), per mutant, per formal job, lint, coverage targets (per directed run / UVM build
+>= 90, functional 100 per config). Missing expected results = FAIL; report lists source
+timestamps. Outputs `verification/regression/report.md` (tracked, like the timer's) and
+`work/regression_results.log`. Checked: `--collect` 2598/2599 (lint skeleton FAIL, expected);
+fed the 2026-11-21 failing UVM results -> 88 FAIL; a flipped test line and missing runs -> FAIL.
+Not done: a full (non-collect) run — ~4-5 h; the sub-runners were all run individually this
+week (sim/UVM 2026-11-23, mutants 11-21, formal 11-15).
+
+## 16. Step 8 — lint (2026-11-23)
+User decisions: lint every top with **all options on** (not the defaults: unused-option findings only);
+waivers as **RTL pragmas** + `waivers.md`.
+- `lint_sram.py`: csun = SpyGlass `lint/lint_rtl` on 20 configs (8 tops GENERIC all options; apb sp/dp on
+  SAED90/32/14, SKY130, XILINX, ALTERA) + `cdc/cdc_verify_struct` on the 4 dp tops, COMMON_CLK 0 (SGDC
+  generated: clocks A/B, sync resets). One dir per config (`verification/lint/spyglass/<cfg>/`, .prj/.sgdc
+  tracked) so 3 run in parallel (`safe_jobs`). Vendor cells black-boxed: FPGA stubs hand-written
+  (`verification/lint/stubs/`), PDK stubs generated from our wrappers' instantiations + `PrimW/PrimD`
+  branches into `work/lint_stubs/` (no vendor content). Standard host: Verilator (-f verilator.flags, -G)
+  + GHDL — written, **not run** (expect Verilator UNUSEDSIGNAL pragmas for single-port port-B nets).
+- First run: 11-57 findings per config. Fixed: dead `stored_overall` in `sram_ecc_dec.sv` (SV only).
+  Waived (65 pragma blocks, `waivers.md` W1-W6): single-port port B, config-only signals (dom_want, b_idle,
+  a_rd_slice_q, clr_busy read by formal), uniform leaf power pins, vendor outputs, INIT_FILE string,
+  $readmemh initial, dual-clock RAM W415, sram_clr W415a, CDC convergence of independent handshake bits
+  (dp_async formal), AHB 8-bit port dp_mask_q reset check.
+- Final: 24/24 PASS (~6 min). Directed sims 8/8 (4 buses SV GENERIC, VCS+Xcelium) PASS after the RTL
+  edits, identical counts. Gate: injected unused signal -> FAIL rc 1. Regression --collect 2599/2599.
+- SpyGlass tips: `set_option param {top.P=V ...}` works; report path uses the project name
+  (`vcst_rtdb/spyglass/<prj>/<top>/<goal>/...`); CDC needs `reset ... -sync` (without it every
+  crossing becomes Ac_unsync02); Setup_clockreset01 'Resets' fires with sync-only resets.

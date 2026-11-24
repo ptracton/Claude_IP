@@ -11,7 +11,9 @@ module sram_macro_dp_xilinx #(
   parameter int unsigned D          = 1024, // words
   parameter int unsigned NLANES     = 4,    // write lanes of W / NLANES bits
   parameter bit          COMMON_CLK = 1,    // 1: a_clk and b_clk are the same clock
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE  = ""    // optional preload (.mem)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock
   input  logic                 a_cs_i,      // port A chip select
@@ -91,10 +93,12 @@ module sram_macro_dp_xilinx #(
     .injectdbiterra(1'b0),
     .injectsbiterrb(1'b0),
     .injectdbiterrb(1'b0),
+    //spyglass disable_block W287b
     .sbiterra      (),
     .dbiterra      (),
     .sbiterrb      (),
     .dbiterrb      ()
+    //spyglass enable_block W287b
   );
 
 endmodule : sram_macro_dp_xilinx

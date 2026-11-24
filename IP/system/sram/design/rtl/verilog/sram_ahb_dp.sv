@@ -47,7 +47,9 @@ module sram_ahb_dp #(
   parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR, // port B partial-write error
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,   // port B: 1 or 2
   parameter bit          COMMON_CLK       = 1,              // 1: B clock is A's clock; 0: separate
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE        = "",             // preload (GENERIC/FPGA)
+  //spyglass enable_block VC_SYNTH_STRING
   /* verilator lint_off UNUSEDPARAM */
   parameter int unsigned RST_POL          = 0,              // 0 = active-low (reset pins)
   /* verilator lint_on UNUSEDPARAM */
@@ -57,7 +59,9 @@ module sram_ahb_dp #(
   input  logic                      A_HCLK,             // port A bus clock (core, side-band)
   input  logic                      A_HRESETn,          // port A AHB active-low reset
   input  logic                      B_HCLK,             // port B bus clock (= A's if COMMON_CLK)
+  //spyglass disable_block Ar_syncrst_setupcheck01
   input  logic                      B_HRESETn,          // port B AHB active-low reset
+  //spyglass enable_block Ar_syncrst_setupcheck01
 
   // AHB-Lite bus, port A
   input  logic                      A_HSEL,             // slave select

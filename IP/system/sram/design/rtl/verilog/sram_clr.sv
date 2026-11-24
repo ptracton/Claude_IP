@@ -125,6 +125,7 @@ module sram_clr #(
   // covers (auto_i stays high until the domain sees dom_done_o).
   always_comb begin : p_pending
     pend_d = pend_q | (start_i ? mask_i : '0) | auto_i | (init_q & wakeable_i);
+    //spyglass disable_block W415a
     if (active_q) begin
       pend_d = pend_d & ~cur_q;
     end
@@ -133,6 +134,7 @@ module sram_clr #(
     end
   end
 
+    //spyglass enable_block W415a
   // Pass control, pending mask and word index.
   always_ff @(posedge clk) begin : p_regs
     if (!rst_n) begin

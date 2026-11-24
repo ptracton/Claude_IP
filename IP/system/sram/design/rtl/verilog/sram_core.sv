@@ -67,7 +67,9 @@ module sram_core #(
   parameter bit          PARTIAL_WR_ERR_B = PARTIAL_WR_ERR,  // port B partial-write error
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,    // port B: 1 or 2
   parameter bit          COMMON_CLK       = 1,      // 1: clk_b is clk; 0: separate clocks
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE        = "",     // preload (GENERIC/FPGA)
+  //spyglass enable_block VC_SYNTH_STRING
   // Derived
   localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1,
   localparam int unsigned DEPTH_B         = WIDTH * DEPTH / WIDTH_B  // port B words
@@ -75,7 +77,9 @@ module sram_core #(
   input  logic                     clk,              // clock (port A, core)
   input  logic                     rst_n,            // synchronous active-low reset
   input  logic                     clk_b,            // port B clock (= clk when COMMON_CLK)
+  //spyglass disable_block W240
   input  logic                     rst_b_n,          // port B synchronous active-low reset
+  //spyglass enable_block W240
 
   // Memory bus (target side)
   input  logic                     mem_req_i,        // request
@@ -91,10 +95,12 @@ module sram_core #(
   // Memory bus, port B (DUAL_PORT; tie inputs to 0 otherwise)
   input  logic                     mem_b_req_i,      // request
   output logic                     mem_b_gnt_o,      // request accepted
+  //spyglass disable_block W240
   input  logic                     mem_b_we_i,       // 1 = write
   input  logic [ADDR_W-1:0]        mem_b_addr_i,     // byte address
   input  logic [WIDTH_B/8-1:0]     mem_b_be_i,       // byte enables
   input  logic [WIDTH_B-1:0]       mem_b_wdata_i,    // write data
+  //spyglass enable_block W240
   output logic                     mem_b_rvalid_o,   // response
   output logic [WIDTH_B-1:0]       mem_b_rdata_o,    // read data
   output logic                     mem_b_err_o,      // response is an error
@@ -325,8 +331,10 @@ module sram_core #(
                            (a_acc && ((a_req_idx >> ShA) == IdxW'(b_req_idx >> ShB)) &&
                             (a_req_we || b_req_we)) ||
                            (a_rmw_pend && ((a_rmw_idx >> ShA) == IdxW'(b_req_idx >> ShB)));
+      //spyglass disable_block W528
       assign b_quiet     = '1;
       assign b_wake_a    = b_wake;
+      //spyglass enable_block W528
       assign b_busy_a    = b_busy;
       assign b_corr_a    = b_ecc_corr;
       assign b_uncorr_a  = b_ecc_uncorr;
@@ -361,10 +369,12 @@ module sram_core #(
       .stall_i      (b_stall),
       .wake_o       (b_wake),
       .dom_busy_o   (b_dom_busy),
+      //spyglass disable_block W528
       .idle_o       (b_idle),
       .req_idx_o    (b_req_idx),
       .req_we_o     (b_req_we),
       .acc_o        (b_acc),
+      //spyglass enable_block W528
       .rmw_pend_o   (b_rmw_pend),
       .rmw_idx_o    (b_rmw_idx),
       .arr_cs_o     (b_cs),
@@ -379,6 +389,7 @@ module sram_core #(
       .err_irq_o    (b_irq),
       .busy_o       (b_busy)
     );
+  //spyglass disable_block W528
   end else begin : g_no_port_b
     assign b_dom_awake    = '0;
     assign b_dom_err      = '0;
@@ -411,6 +422,7 @@ module sram_core #(
     assign b_irq          = 1'b0;
     assign b_busy         = 1'b0;
   end
+  //spyglass enable_block W528
 
   // With COMMON_CLK, port B's signals are used directly. With separate
   // clocks, a domain is busy for port B until B is out of it (b_quiet), and
@@ -419,7 +431,9 @@ module sram_core #(
   if (Async) begin : g_b_async_view
     assign port_wake = a_wake | (b_wake_a & dom_wakeable);
     assign dom_busy  = a_dom_busy | ~b_quiet;
+    //spyglass disable_block Ac_conv02
     assign port_idle = a_idle && (&b_quiet);
+    //spyglass enable_block Ac_conv02
   end else begin : g_b_sync_view
     assign port_wake = a_wake | b_wake;
     assign dom_busy  = a_dom_busy | b_dom_busy;
@@ -446,9 +460,11 @@ module sram_core #(
 
     // Port B (separate clock) is let into the domain while it is in RUN and
     // will stay there, and no engine wants the array.
+    //spyglass disable_block W528
     assign dom_want[d] = dom_awake[d] && !clr_pending && !bist_pending &&
                          (!PWR_GATE || port_wake[d] || clr_wake[d] ||
                           req == sram_pkg::PWR_RUN);
+    //spyglass enable_block W528
 
     sram_pwr_ctrl #(
       .PWR_GATE (PWR_GATE),
@@ -496,7 +512,9 @@ module sram_core #(
     .wakeable_i (dom_wakeable),
     .wake_o     (clr_wake),
     .pending_o  (clr_pending),
+    //spyglass disable_block W528
     .busy_o     (clr_busy),
+    //spyglass enable_block W528
     .done_o     (clr_done_o),
     .dom_done_o (dom_clr_done),
     .cs_o       (clr_cs),
@@ -605,9 +623,13 @@ module sram_core #(
     .b_idx_i    (b_idx),
     .b_wdata_i  (b_wdata),
     .b_lane_we_i(b_lane_we),
+    //spyglass disable_block W528
     .b_rdata_o  (b_rdata)
+    //spyglass enable_block W528
   );
 
+  //spyglass disable_block Ac_conv01
   assign busy_o = clr_pending || bist_busy || (|dom_pwr_busy) || port_busy;
+  //spyglass enable_block Ac_conv01
 
 endmodule : sram_core

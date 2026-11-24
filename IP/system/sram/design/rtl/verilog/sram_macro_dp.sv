@@ -12,7 +12,9 @@ module sram_macro_dp #(
   parameter int unsigned D          = 1024,                   // words (power of two)
   parameter int unsigned NLANES     = 4,                      // write lanes of W / NLANES bits
   parameter bit          COMMON_CLK = 1,                      // 1: a_clk and b_clk are one clock
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE  = ""                      // preload (GENERIC/FPGA)
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock
   input  logic                 a_cs_i,      // port A chip select

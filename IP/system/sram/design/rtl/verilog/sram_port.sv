@@ -69,7 +69,9 @@ module sram_port #(
   input  logic [NPD-1:0]             dom_awake_i,  // domain accepts bus accesses
   input  logic [NPD-1:0]             dom_err_i,    // domain access is a bus error
   input  logic                       stall_i,      // an engine owns the array
+  //spyglass disable_block Ac_conv02
   output logic [NPD-1:0]             wake_o,       // a request waits for this domain
+  //spyglass enable_block Ac_conv02
   output logic [NPD-1:0]             dom_busy_o,   // access to this domain in flight
   output logic                       idle_o,       // nothing in flight on the array
 

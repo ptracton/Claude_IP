@@ -14,7 +14,9 @@ module sram_macro_dp_generic #(
   parameter int unsigned W         = 32,   // word width
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE = ""    // optional $readmemh preload
+  //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock
   input  logic                 a_cs_i,      // port A chip select
@@ -32,8 +34,10 @@ module sram_macro_dp_generic #(
   output logic [W-1:0]         b_rdata_o,   // port B read data
   // Retention-only here; shutdown is simulation-only.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,        // light sleep (unused)
   input  logic                 ds_i,        // deep sleep (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
   input  logic                 sd_i         // shutdown (simulation only)
 );
@@ -43,11 +47,13 @@ module sram_macro_dp_generic #(
   logic [W-1:0] mem [D];
   logic         sd_q;  // sd_i last a_clk cycle (edge detect, simulation only)
 
+  //spyglass disable_block SM_IGN_INITIAL
   initial begin : p_init
     if (INIT_FILE != "") begin
       $readmemh(INIT_FILE, mem);
     end
   end
+  //spyglass enable_block SM_IGN_INITIAL
 
   // Deviation: plain always blocks, not always_ff. Both ports write the one
   // array from their own clocks (the dual-clock true dual-port RAM
@@ -66,7 +72,9 @@ module sram_macro_dp_generic #(
         a_rdata_o <= mem[a_addr_i];
       end
     end
+    //spyglass disable_block W528
     sd_q <= sd_i;
+    //spyglass enable_block W528
     // synopsys translate_off
     // Deviation: X assignment, simulation only — models loss of contents
     // when the memory is shut down (power switched off).
@@ -84,7 +92,9 @@ module sram_macro_dp_generic #(
       if (b_we_i) begin
         for (int unsigned l = 0; l < NLANES; l++) begin
           if (b_lane_we_i[l]) begin
+            //spyglass disable_block W415
             mem[b_addr_i][LaneW*l +: LaneW] <= b_wdata_i[LaneW*l +: LaneW];
+            //spyglass enable_block W415
           end
         end
       end else begin

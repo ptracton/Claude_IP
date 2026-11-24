@@ -45,7 +45,9 @@ module sram_macro_dp_saed14 #(
   input  logic [W-1:0]         a_wdata_i,   // port A write data
   input  logic [NLANES-1:0]    a_lane_we_i, // port A lanes to write
   output logic [W-1:0]         a_rdata_o,   // port A read data
+  //spyglass disable_block W240
   input  logic                 b_clk,       // port B clock
+  //spyglass enable_block W240
   input  logic                 b_cs_i,      // port B chip select
   input  logic                 b_we_i,      // port B 1 = write
   input  logic [$clog2(D)-1:0] b_addr_i,    // port B word address
@@ -54,9 +56,11 @@ module sram_macro_dp_saed14 #(
   output logic [W-1:0]         b_rdata_o,   // port B read data
   // No sleep pins on this primitive family: power is controlled through UPF.
   /* verilator lint_off UNUSEDSIGNAL */
+  //spyglass disable_block W240
   input  logic                 ls_i,        // light sleep (unused)
   input  logic                 ds_i,        // deep sleep (unused)
   input  logic                 sd_i         // shutdown (unused)
+  //spyglass enable_block W240
   /* verilator lint_on UNUSEDSIGNAL */
 );
 

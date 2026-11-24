@@ -30,7 +30,9 @@ module sram_wb #(
   parameter bit          BANK_PG        = 0,     // one power domain per bank
   parameter int unsigned NUM_BANKS      = 1,     // banks (power of two)
   parameter bit          BIST_EN        = 0,     // March C- engine
+  //spyglass disable_block VC_SYNTH_STRING
   parameter string       INIT_FILE      = "",    // preload (GENERIC/FPGA)
+  //spyglass enable_block VC_SYNTH_STRING
   /* verilator lint_off UNUSEDPARAM */
   parameter int unsigned RST_POL        = 0,     // 0 = active-low; polarity carried by RST_I
   /* verilator lint_on UNUSEDPARAM */
@@ -138,6 +140,7 @@ module sram_wb #(
     .mem_rdata_o     (mem_rdata),
     .mem_err_o       (mem_err),
     .mem_b_req_i     (1'b0),
+    //spyglass disable_block W287b
     .mem_b_gnt_o     (),
     .mem_b_we_i      (1'b0),
     .mem_b_addr_i    ('0),
@@ -146,6 +149,7 @@ module sram_wb #(
     .mem_b_rvalid_o  (),
     .mem_b_rdata_o   (),
     .mem_b_err_o     (),
+    //spyglass enable_block W287b
     .pwr_mode_req_i  (pwr_mode_req_i),
     .pwr_mode_ack_o  (pwr_mode_ack_o),
     .clr_req_i       (clr_req_i),
