@@ -3,8 +3,10 @@
 # lint_sram.py analyses every VHDL-2008 RTL file with `ghdl -a --std=08` in
 # compile order (IP/common synchronizers and the four memory-bus adapters,
 # then sram_pkg ... sram_core and the eight tops; see vhdl_files() in the
-# runner); any warning or error fails. No VHDL lint on csun.edu (no GHDL;
-# SpyGlass has no VHDL-2008 path).
+# runner); any warning or error fails, except the diagnostics waived in
+# _GHDL_WAIVERS (waivers.md "Standard host"): sram_macro_dp_generic.vhd is
+# analysed with -frelaxed (shared-variable dual-clock RAM, W5). No VHDL lint
+# on csun.edu (no GHDL; SpyGlass has no VHDL-2008 path).
 
 [ghdl]
 std = "08"

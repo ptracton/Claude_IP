@@ -347,11 +347,12 @@ def lint_verilator(ip: str, cfgs: list) -> tuple:
     ok_all = True
     crtl = os.path.join(common_path(ip), "design", "rtl", "verilog")
     flags = os.path.join(ip, "verification", "lint", "verilator.flags")
+    vlt = os.path.join(ip, "verification", "lint", "verilator_waivers.vlt")
     for name, top, proto, tech, params in cfgs:
         if is_cdc(name):
             det.append(f"[SV] SKIPPED {name} (SpyGlass CDC: csun.edu only)")
             continue
-        cmd = [VERILATOR_BIN, "--lint-only", "-f", flags, f"-I{crtl}", "--top-module", top]
+        cmd = [VERILATOR_BIN, "--lint-only", "-f", flags, vlt, f"-I{crtl}", "--top-module", top]
         cmd += [f"-G{k}={v}" for k, v in params.items()]
         cmd += stub_files(ip, tech) + sv_files(ip, proto, top)
         r = subprocess.run(cmd, cwd=ip, capture_output=True, text=True)
@@ -364,6 +365,40 @@ def lint_verilator(ip: str, cfgs: list) -> tuple:
     return ok_all, det
 
 
+# GHDL waivers (waivers.md "VHDL (GHDL, standard hosts)"): (file, message regex, class).
+# Only the matching diagnostic line is dropped; anything else in the file still fails.
+_GHDL_WAIVERS = [
+    # W5: the dual-clock true dual-port RAM template is a plain shared variable
+    # (VHDL-93 style; Vivado / Quartus infer block RAM from it, a protected type
+    # would not). Analysed with -frelaxed, which turns the 2008 error into this warning.
+    ("sram_macro_dp_generic.vhd", r"type of a shared variable must be a protected type", "W5"),
+    # W7: byte_size_of(w, nlanes) parameters shadow the generics W / NLANES of the
+    # same name (the function is called with exactly those generics).
+    ("sram_macro_altera.vhd", r'declaration of "(w|nlanes)" hides generic', "W7"),
+    ("sram_macro_dp_altera.vhd", r'declaration of "(w|nlanes)" hides generic', "W7"),
+]
+_GHDL_DIAG = re.compile(r"^(?P<file>[^:\s]+\.vhdl?):\d+:\d+:(?P<kind>warning|error|note):\s*(?P<msg>.*)$")
+
+
+def ghdl_findings(fname: str, out: str) -> tuple:
+    """(findings, waived count) of one GHDL analysis: diagnostics minus the waivers."""
+    real, waived = [], 0
+    for ln in out.splitlines():
+        m = _GHDL_DIAG.match(ln.strip())
+        if not m:
+            if re.search(r"ghdl:error", ln):
+                real.append(ln.strip())
+            continue
+        if m.group("kind") == "note" and "-frelaxed" in m.group("msg"):
+            continue
+        if any(os.path.basename(m.group("file")) == wf and re.search(rx, m.group("msg"))
+               for wf, rx, _ in _GHDL_WAIVERS):
+            waived += 1
+            continue
+        real.append(ln.strip())
+    return real, waived
+
+
 def lint_ghdl(ip: str) -> tuple:
     det = [f"[VHDL] GHDL: {get_ghdl_version(GHDL_BIN)}"]
     work = os.path.join(ip, "verification", "work", "ghdl_lint")
@@ -371,14 +406,16 @@ def lint_ghdl(ip: str) -> tuple:
     os.makedirs(work)
     ok_all = True
     for f in vhdl_files(ip):
-        r = subprocess.run([GHDL_BIN, "-a", "--std=08", f"--workdir={work}", f], cwd=ip,
-                           capture_output=True, text=True)
-        out = (r.stdout + r.stderr).strip()
-        ok = r.returncode == 0 and not re.search(r"warning|error", out, re.I)
+        name = os.path.basename(f)
+        relaxed = ["-frelaxed"] if any(w[0] == name for w in _GHDL_WAIVERS[:1]) else []
+        r = subprocess.run([GHDL_BIN, "-a", "--std=08", *relaxed, f"--workdir={work}", f],
+                           cwd=ip, capture_output=True, text=True)
+        real, waived = ghdl_findings(name, r.stdout + r.stderr)
+        ok = r.returncode == 0 and not real
         ok_all &= ok
-        det.append(f"[VHDL] {'PASS' if ok else 'FAIL'} {os.path.basename(f)}")
-        if not ok:
-            det += [f"       {ln}" for ln in out.splitlines()]
+        det.append(f"[VHDL] {'PASS' if ok else 'FAIL'} {name}"
+                   + (f"  ({waived} waived)" if waived else ""))
+        det += [f"       {ln}" for ln in real]
     return ok_all, det
 
 

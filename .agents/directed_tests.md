@@ -268,7 +268,9 @@ all four testbenches through the appropriate BFM interface:
 ### 5. Complete `verification/tools/sim_IP_NAME.py`
 
 - Accepts `--proto {ahb,apb,axi4l,wb,all}` and `--lang {sv,vhdl,all}`.
-- Accepts `--sim {icarus,ghdl,modelsim,vcs,xcelium,all}`.
+- Accepts `--sim {icarus,ghdl,modelsim,verilator,xsim,vcs,xcelium,all}` (`all` = the
+  simulators of the current host: VCS + Xcelium on csun.edu; Verilator + xsim on a standard
+  host when the IP's bench is SV-only with VHDL tops, as for the sram IP).
 - Detects `ON_CSUN` at startup (see **Machine-Specific Environment** above); when true,
   rejects `icarus`, `ghdl`, `modelsim`, and `vivado` with a clear error message.
 - Builds the correct file list for the selected simulator, DUT top-level, and language.
@@ -539,6 +541,47 @@ else:
 `stdin=subprocess.DEVNULL`, `quit -f` triggers a crash ("Unexpected EOF on RPC channel")
 because vsim's internal IPC tries to read from the closed stdin pipe. Omitting it is safe:
 `run -all` returns naturally when the simulation reaches `std.env.stop`.
+
+**Verilator (standard hosts, SV bench) — lessons from the sram IP (2026-11-13 / 11-25)**
+
+- `verilator --binary --timing --vpi`; one build per protocol / technology, `+test=` selects
+  the test at run time. Use the OSS CAD Suite Verilator (5.043), i.e. source `setup.sh`
+  first: a distribution `/usr/bin/verilator` (Debian 5.020) rejects nonblocking assignment
+  to an array inside a `for` loop (`BLKLOOPINIT`, e.g. a simulation-only X fill).
+- Large benches need a memory cap and serial builds: wrap build and run in
+  `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0` (env override), run
+  Verilator jobs in their own single-worker pool, and report rc -9 / 137 as "memory cap".
+  An OOM kill at the cap means the build itself is too big for its job count: one g++ on a
+  large generated file can take ~4 GB (sram AXI4-Lite: 191 MB of C++, largest file 40 MB,
+  killed with 4 and with 2 jobs). Limit the compile with Verilator's `--build-jobs` per
+  bench (sram: `VERILATOR_BUILD_JOBS_PROTO`, AXI4-Lite 1 job, peak 4.8 GB) and keep `-j`
+  for Verilator's own threads. A pass on one try is not proof — it can be scheduling luck.
+  Treat a `make ... Terminated` in the compile log as a memory-cap kill too.
+- With `--timing`, drive bench signals a small delay after the clock edge (a nonblocking
+  assignment from a process resumed by the edge reaches flops on that same edge).
+- Backdoor via VPI needs the leaf arrays public (`verification/testbench/*.vlt`) and the
+  path retried under Verilator's `TOP.` root.
+
+**Vivado xsim (standard hosts, SV bench around SV and VHDL tops) — sram IP 2026-11-25**
+
+xsim (Vivado 2023.2, free) is the free mixed-language simulator, and the only one here that
+runs the FPGA technology leaves: XILINX with `-L xpm` (precompiled XPM), ALTERA with
+Quartus' `altera_mf.v` (SV tops) or `altera_mf.vhd` compiled into library `altera_mf` (VHDL
+tops; xsim does not apply Verilog port defaults when a VHDL component binds a Verilog
+module, so the Verilog model leaves unused altsyncram ports undriven). Limits found, and
+the bench rule for each — keep the work-around under `` `ifdef XILINX_SIMULATOR `` so the
+csun.edu simulators see unchanged code:
+
+| xsim limitation | Bench rule |
+|---|---|
+| No VPI | DPI backdoor off (`+define+TB_NO_BACKDOOR`); backdoor checks SKIPPED |
+| No SV write or force into a VHDL object (43-4618/4619), no force on a port connected to VHDL (43-4289) | No fault injection with a VHDL top (`BF_OK = 0`, the stuck-bit sections log SKIPPED); a tech whose vendor model itself forces such a port (XPM with a VHDL top) is SKIP, not FAIL |
+| No `force` of a bit-select of a variable; a released variable keeps its forced value until its driver changes | One permanent, masked force of the whole read-data variable from its source (`force x = src ^ mask;` with the mask changed by the test) |
+| Kernel crash on a second `fork` in one task frame whose branches declare automatic variables | Move each concurrent fork into its own helper task |
+| Kernel crash when a fork branch ends while its `join_none` children still run | Fork plain task calls directly (`fork t(a); t(b); join_none`); do not nest a `join_none` inside a `join` branch |
+
+Remember that `wait fork` waits for immediate children only; threads forked by a child are
+not waited for.
 
 ### ModelSim GUI .do files (for interactive waveform viewing)
 

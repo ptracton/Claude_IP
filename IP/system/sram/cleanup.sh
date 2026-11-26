@@ -60,6 +60,9 @@ _run_if_present "${CLAUDE_SRAM_PATH}/verification/tools/formal_sram.py" \
 # Lint logs (keep config and waivers)
 rm -f "${CLAUDE_SRAM_PATH}/verification/lint/lint_results.log"
 
+# Firmware verification log (fw_sram.py regenerates it; the directory holds nothing else)
+rm -rf "${CLAUDE_SRAM_PATH}/verification/firmware"
+
 # SpyGlass lint / CDC run output (csun.edu only — keep each configuration's .prj / .sgdc)
 for cfg in "${CLAUDE_SRAM_PATH}/verification/lint/spyglass/"*/; do
     [ -d "${cfg}" ] || continue

@@ -45,6 +45,15 @@ task automatic start_bists();
   for (int sbi = 0; sbi < NSB; sbi++) bist_start[sbi] <= 1'b0;
 endtask
 
+// A read of word 9 of slave s, issued while its SRAM is busy (stalls in the
+// bus adapter until the reset). Forked as plain calls, with no declarations
+// in the fork branches (Vivado xsim 2023.2 kernel faults otherwise).
+task automatic stalled_read(input int s);
+  logic [63:0] rd;
+  logic        er;
+  xfer(s, 1'b0, woff(s, 9), fsz(s), '0, '0, rd, er);
+endtask
+
 task automatic test_reset_busy();
   int unsigned c;
   // One stalled read per master: masters 0..7 and a slave of theirs that
@@ -61,21 +70,25 @@ task automatic test_reset_busy();
   cyc_b(1);
   for (int sbi = 0; sbi < NSB; sbi++) clr_req[sbi] <= 1'b0;
   cyc_a(3);
+  // The reads are not waited for. Until 2026-11-25 they were spawned by a
+  // loop inside a fork, which made them grandchildren of this task, so the
+  // `wait fork` after reset_all() did not wait for them (it waits for
+  // immediate children only). That is kept: a reset drops a read the
+  // AXI4-Lite adapter has already accepted, and that BFM thread is left
+  // waiting. The old form (and any fork branch that ends while its join_none
+  // children run) stops the Vivado xsim 2023.2 kernel.
   fork
-    for (int m = 0; m < 8; m++) begin
-      automatic int mm = m;
-      fork
-        begin
-          logic [63:0] rd;
-          logic        er;
-          xfer(stall_sl[mm], 1'b0, woff(stall_sl[mm], 9), fsz(stall_sl[mm]), '0, '0, rd, er);
-        end
-      join_none
-    end
-  join
+    stalled_read(stall_sl[0]);
+    stalled_read(stall_sl[1]);
+    stalled_read(stall_sl[2]);
+    stalled_read(stall_sl[3]);
+    stalled_read(stall_sl[4]);
+    stalled_read(stall_sl[5]);
+    stalled_read(stall_sl[6]);
+    stalled_read(stall_sl[7]);
+  join_none
   cyc_a(12);
   reset_all();
-  wait fork;
   all_alive("reset during BIST M0 / clears / stalled reads");
   row("R1 reset during BIST writes, clears, and a stalled read in every adapter: recovers");
   // ---- R2: BIST read elements, two offsets

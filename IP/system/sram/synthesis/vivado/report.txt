@@ -1,0 +1,37 @@
+==============================================================================
+Vivado Synthesis Report — sram IP (xc7z010clg400-1, 100 MHz, TECH = XILINX)
+Run date : 2026-11-25
+==============================================================================
+
+STATUS: PASS — 24/24 variants
+
+Netlist               LUTs  FFs  BRAM tiles  WNS (ns)  Result
+--------------------  ----  ---  ----------  --------  ------
+sram_apb              128   31   1           4.630     PASS  
+sram_ahb              133   67   1           4.174     PASS  
+sram_axi4l            163   169  1           3.360     PASS  
+sram_wb               127   31   1           4.380     PASS  
+sram_apb_vhdl         122   32   1           4.598     PASS  
+sram_ahb_vhdl         136   68   1           3.803     PASS  
+sram_axi4l_vhdl       150   170  1           3.645     PASS  
+sram_wb_vhdl          121   32   1           4.462     PASS  
+sram_apb_opts         395   218  2           0.717     PASS  
+sram_ahb_opts         416   254  2           0.834     PASS  
+sram_axi4l_opts       439   356  2           0.628     PASS  
+sram_wb_opts          430   218  2           0.829     PASS  
+sram_apb_opts_vhdl    413   222  2           0.572     PASS  
+sram_ahb_opts_vhdl    473   258  2           0.921     PASS  
+sram_axi4l_opts_vhdl  456   360  2           0.689     PASS  
+sram_wb_opts_vhdl     412   222  2           0.572     PASS  
+sram_apb_dp           496   201  4           3.555     PASS  
+sram_ahb_dp           507   272  4           3.222     PASS  
+sram_axi4l_dp         533   430  4           2.621     PASS  
+sram_wb_dp            502   201  4           3.555     PASS  
+sram_apb_dp_vhdl      478   203  4           1.945     PASS  
+sram_ahb_dp_vhdl      491   274  4           1.938     PASS  
+sram_axi4l_dp_vhdl    519   432  4           1.938     PASS  
+sram_wb_dp_vhdl       474   203  4           1.938     PASS  
+
+Configurations: base = WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE; opts = base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2; dp = opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+(dp on FPGA: COMMON_CLK 0 on every variant.)
+==============================================================================

@@ -335,6 +335,48 @@
     end
 `endif
 `endif
+`ifdef XILINX_SIMULATOR
+`ifdef VHDL_DUT
+// Vivado xsim cannot write a VHDL object from SV (XSIM 43-4618/4619: cross-
+// language hierarchical writes are not supported), so with a VHDL DUT the
+// read-path faults are not injected and the tests that need them report
+// SKIPPED (BF_OK = 0).
+`define BF_BODY(U, I, MW)
+`define BF_NONE
+`endif
+`endif
+`ifdef BF_NONE
+  localparam bit BF_OK = 1'b0;
+`else
+  localparam bit BF_OK = 1'b1;
+`endif
+`ifdef XILINX_SIMULATOR
+`ifndef BF_BODY
+// Vivado xsim rejects a force on a bit-select of a variable (VRFC 10-3149),
+// and after a release it keeps the forced value until the driver changes
+// (a repeated read of the same word does not change it). So on xsim the
+// array output is forced once, for the whole run, to sram_array's bank read
+// data (the same select as its rdata_o assign) through a clear / set mask
+// that is non-zero only while the fault is active.
+`define BF_BODY(U, I, MW) \
+    logic [MW-1:0] bf_clr, bf_set; \
+    initial begin \
+      bf_clr = '0; \
+      bf_set = '0; \
+      force U.u_core.arr_rdata = \
+        (U.u_core.u_array.a_bank_rdata[(U.u_core.u_array.NUM_BANKS > 1) ? \
+                                       U.u_core.u_array.a_rd_bank_q : 0] & ~bf_clr) | bf_set; \
+    end \
+    always @(negedge clk_a) begin \
+      bf_clr = '0; \
+      bf_set = '0; \
+      if (hit_q) begin \
+        bf_clr[bf_bit[I]] = 1'b1; \
+        bf_set[bf_bit[I]] = bf_val[I]; \
+      end \
+    end
+`endif
+`endif
 `ifndef BF_BODY
 `define BF_BODY(U, I, MW) \
     for (genvar gb = 0; gb < MW; gb++) begin : g_bit \

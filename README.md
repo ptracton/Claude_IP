@@ -7,7 +7,7 @@ verified, linted, synthesized and documented through the same flow.
 
 Two tool flows are supported, and every script picks one from the host name:
 - **Open-source / FPGA (standard hosts):** Icarus Verilog, GHDL, ModelSim,
-  Vivado, Quartus, Yosys, SymbiYosys and Verilator.
+  Verilator, Vivado (xsim and synthesis), Quartus, Yosys and SymbiYosys.
 - **Commercial ASIC (`*.csun.edu` hosts):** Synopsys VCS, Cadence Xcelium,
   VC Formal, SpyGlass, VC LP, Design Compiler, PrimeTime and PrimePower. It
   targets the SAED90/32/14 and SkyWater SKY130 PDKs.
@@ -41,7 +41,7 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 | IP | Description | Protocols | Status |
 |----|-------------|-----------|--------|
 | [timer](IP/system/timer/) | Programmable 32-bit timer with prescaler, one-shot/free-running modes, interrupt, trigger output, restart and atomic snapshot | APB4, AHB-Lite, AXI4-Lite, WB | Complete (both flows) |
-| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-10 and 12 done on the csun.edu flow; FPGA / Yosys synthesis and standard-host runs pending; Step 11 (release) open |
+| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-12 done (standard host: no open-source formal or UVM; Step 11 cleanup done 2026-11-25, `v1.0.0` tag and csun.edu clean regression pending) |
 
 ### Interface
 
@@ -56,6 +56,17 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 | timer | 16/16 PASS | 8/8 PASS | 1/1 PASS on xsim (standard host; not run on csun.edu) | PASS | SAED90 -0.40 ns accepted; others MET | SAED32/14, SKY130 PASS; SAED90 known fail | 12/16 (SAED90 skipped) |
 | bus_matrix | 16/16 PASS (82 checks each) | 10/10 PASS | 5/5 PASS on VCS, 100 % coverage | PASS | SAED90 -0.56 ns accepted; others MET | 16/16 PASS | 16/16 |
 | sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 26/26 PASS (bounded waivers) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 24/24 PASS (20 lint + 4 CDC) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | 36/36 (SAED90 skipped; SAED32 macro power not valid) |
+
+### Verification status (standard-host flow)
+
+| IP | Directed sim | Lint | Firmware | FPGA / open-source synthesis | Regression |
+|----|------|------|------|------|------|
+| sram | Verilator 4/4 (SV, generic tech); Vivado xsim 20/20 (SV + VHDL tops, generic / Xilinx XPM / Altera altsyncram; 4 combinations xsim cannot run are skipped); 12 tests per run | Verilator 20/20, GHDL 40/40 configurations | 152/152 host checks, ARM Cortex-M33 and RISC-V cross builds | Vivado 24/24 (block RAM, 100 MHz met), Quartus 24/24 (M10K), Yosys 24/24 | 513/513 PASS (2026-11-25) |
+
+The sram's formal (VC Formal) and UVM flows run only on csun.edu; they have
+not been ported to open-source tools. The standard-host work changed only RTL that no csun.edu flow
+elaborates (the Xilinx / Altera memory leaves) plus xsim-only bench code; see
+the sram README for the list and the optional csun.edu re-runs.
 
 See each IP's README for the details and `synthesis/known_issues.md` for the
 accepted SAED90 violations. The sram also has power intent (UPF) for the PDKs
@@ -111,16 +122,16 @@ Each IP follows a 12-step sub-agent workflow defined in
 2. **rdl**: SystemRDL register definitions and code generation (PeakRDL).
    Only for IPs with registers.
 3. **rtl**: core logic and bus adapters in SV and VHDL-2008
-4. **directed_tests**: testbenches on Icarus/GHDL/ModelSim/xsim, or on
-   VCS/Xcelium on csun.edu
+4. **directed_tests**: testbenches on Icarus/GHDL/ModelSim/Verilator/xsim,
+   or on VCS/Xcelium on csun.edu
 5. **formal**: SymbiYosys BMC, or VC Formal unbounded proofs with shared
    protocol checkers (SV and VHDL)
 6. **uvm**: UVM environment on Vivado xsim, or on VCS on csun.edu
 7. **regression**: `run_regression.py` with full pass/fail reporting
 8. **lint**: Verilator and GHDL, or SpyGlass on csun.edu. Zero un-waived
    findings.
-9. **firmware**: C99 device driver, cross-compiled for ARM Cortex-M33 and
-   RISC-V. Only for IPs with registers.
+9. **firmware**: C99 device driver (or, for the register-less sram, memory
+   tests and side-band helpers), cross-compiled for ARM Cortex-M33 and RISC-V
 10. **synthesis**:
     - Yosys, Vivado (Zynq-7010) and Quartus (Cyclone V SE);
     - Design Compiler (SAED90/32/14, SKY130);
@@ -140,11 +151,11 @@ Each IP follows a 12-step sub-agent workflow defined in
 |------|---------|
 | Icarus Verilog 11+ | SV directed simulation |
 | GHDL 3.0+ | VHDL-2008 directed simulation |
-| Verilator 5.0+ | SV linting |
-| Yosys 0.36+ / SymbiYosys | Open-source synthesis and formal verification |
+| Verilator 5.043 (OSS CAD Suite) | SV linting and SV directed simulation |
+| Yosys 0.60 (slang and ghdl plugins) / SymbiYosys | Open-source synthesis and formal verification |
 | ModelSim ASE 21.1 | Mixed-language simulation (optional) |
-| Vivado 2023.2 | xsim and UVM simulation, Zynq-7010 synthesis |
-| Quartus Prime Lite 23.1 | Cyclone V SE synthesis |
+| Vivado 2023.2 | xsim directed (mixed SV/VHDL, Xilinx XPM) and UVM simulation, Zynq-7010 synthesis |
+| Quartus Prime Lite 23.1 | Cyclone V SE synthesis (SystemVerilog-2005 only; SV goes through generated copies); `altera_mf` simulation models for xsim |
 
 **`*.csun.edu` hosts**
 

@@ -418,16 +418,24 @@ comparison counts as VCS / Xcelium:
 
 | Bus | Result | Comparisons | Model-checked responses | Build (wall) |
 |---|---|---|---|---|
-| AHB-Lite | PASS | 117,663 | 53,826 | ~5 min |
-| APB4 | PASS | 117,492 | 53,762 | ~6 min |
-| AXI4-Lite | PASS | 118,360 | 54,045 | ~29 min |
-| Wishbone | PASS | 117,492 | 53,762 | ~5 min |
+| AHB-Lite | PASS | 121,280 | 54,462 | ~5 min |
+| APB4 | PASS | 121,109 | 54,398 | ~6 min |
+| AXI4-Lite | PASS | 121,977 | 54,681 | ~50 min (C++ compiled one file at a time) |
+| Wishbone | PASS | 121,109 | 54,398 | ~5 min |
 
 Each run simulates in 3-6 s. The build and run are capped at 8 GB
 (`systemd-run --user --scope -p MemoryMax=8G`; `SRAM_VERILATOR_MEM`
 overrides) and Verilator runs go one at a time; Verilator itself allocates
 0.9-1.9 GB. The AXI4-Lite build is slow in Verilator's conversion step
-(about 1000 s against 140 s for the other buses). Bench adaptations, all
+(about 1000 s against 140 s for the other buses), and it becomes 191 MB of C++ in 64
+files (the largest 40 MB). One g++ on such a file takes up to about 3.7 GB, so two at
+once can reach the 8 GB cap: with 4 and with 2 compile jobs the build was OOM-killed in
+3 of 4 tries (2026-11-25). `sim_sram.py` therefore compiles AXI4-Lite with
+`--build-jobs 1` (`VERILATOR_BUILD_JOBS_PROTO`; Verilator's own `-j 4` is kept): peak
+4.8 GB, conversion ~17 min plus compile ~32 min. The other buses keep 4 jobs. Source
+`setup.sh` first: it puts the
+OSS CAD Suite Verilator (5.043) ahead of a distribution one (Debian's 5.020 rejects
+the simulation-only X fill of the macro models, `BLKLOOPINIT`). Bench adaptations, all
 inactive on VCS / Xcelium:
 
 - drives 1 ns after the clock edge (`sram_tb_drv.svh`): with `--timing`, a
@@ -442,6 +450,59 @@ The ECC encoder / decoder build their Hamming position tables at
 elaboration (constant functions, O(K)). Calling the 1024-step
 `sram_pkg::ecc_data_pos()` per bit in `always_comb` ran on every evaluation
 in Verilator, and unrolling it ran Verilator out of memory (> 10 GB).
+
+### Results (Vivado xsim, standard host)
+
+`--sim xsim` (Vivado 2023.2 simulator, free) runs the same bench with the SV
+tops and, mixed language, with the VHDL tops, on GENERIC and on the two FPGA
+leaves: **XILINX** elaborates `xpm_memory_spram` / `xpm_memory_tdpram` from
+Vivado's precompiled `xpm` library, **ALTERA** compiles Quartus'
+`altera_mf` model (Verilog for the SV tops, VHDL for the VHDL tops). This is
+the first simulation of the XILINX / ALTERA leaves, including their
+dual-clock modes (XPM `independent_clock`, altsyncram `clock1`). 20/20 runs
+pass, 12 tests each (2026-11-25):
+
+| Tops | GENERIC | XILINX | ALTERA | Comparisons per run |
+|---|---|---|---|---|
+| SV, 4 buses | 4/4 | 4/4 | 4/4 | 119,438 - 120,306 |
+| VHDL, 4 buses | 4/4 | SKIP | 4/4 | 115,820 - 116,688 |
+
+```bash
+python3 sim_sram.py --sim xsim --proto all --lang all --tech all --jobs 4   # ~10 min
+```
+
+What xsim cannot do, and how the run handles it (all reported in the log, none
+silently dropped):
+
+- no VPI / VHPI: the backdoor bit flips of `test_ecc` (GENERIC) report
+  SKIPPED (`+define+TB_NO_BACKDOOR`, already in the bench);
+- no write from SV into a VHDL object (XSIM 43-4618/4619): with a VHDL top the
+  read-path stuck-bit faults (`test_ecc` stuck-bit sweeps, `test_bist`
+  stuck-at) report SKIPPED (`BF_OK = 0` in the bench); the reference models
+  still check every response;
+- no force on a port connected to VHDL (XSIM 43-4289), which the XPM model
+  itself does: XILINX with a VHDL top is SKIP (Vivado synthesis elaborates
+  that leaf from VHDL, 12/12);
+- no `force` on a bit-select of a variable, and a released variable keeps the
+  forced value until its driver changes: on xsim the bench forces the array
+  output once, through a clear / set mask (`sram_tb_body.svh`,
+  `` `ifdef XILINX_SIMULATOR ``);
+- kernel faults ("exceptional condition", "engine not responding") on two
+  fork patterns: a second fork in one task whose branches declare automatic
+  variables, and a fork branch that ends while its `join_none` children run.
+  `test_dp` and `test_reset_busy` were restructured without either pattern
+  (same transfers, same checks; see Bench changes below).
+
+Bench changes for xsim (2026-11-25; none changes what VCS / Xcelium / Verilator
+check): the `XILINX_SIMULATOR` force body and `BF_OK` (= 1 elsewhere) in
+`sram_tb_body.svh`; the `BF_OK` guards in `test_ecc.sv` / `test_bist.sv`;
+`test_dp.sv` runs its two concurrent A/B blocks through a helper task
+(`dp_both_busy`, one fork per call); `test_reset_busy.sv` forks the eight
+stalled reads as plain calls and no longer has a `wait fork` — the old one was a
+no-op (the reads were grandchildren of the task, and `wait fork` waits for
+immediate children only), which also hid that a reset drops a read the
+AXI4-Lite adapter has already accepted (that BFM thread stays waiting; it is
+not part of the check).
 
 ### Code coverage
 
@@ -639,6 +700,10 @@ report it, so the Xcelium runs are functional checks.
 | `bus_matrix_ahb_ini` (first version of that fix) | sparse write strobes at a word address became a byte transfer at the wrong lane | HSIZE must contain the address offset, else the bus size with the lanes in HWSTRB |
 | `bus_matrix_ahb_ini` (found 2026-11-07 while adding HSIZE to the bus_matrix formal harness) | a sub-word write whose strobes are not an aligned block (halfword at offset 2, only byte 3 on) went out as a word transfer at an unaligned HADDR | HADDR is aligned to the HSIZE sent (SV and VHDL); proven by VC Formal |
 | `sram_port` (SV and VHDL) | an all-zero-strobe write to an 8-bit SRAM wrote the word | lane enables follow the strobes whenever BYTE_EN = 1 |
+| `sram_macro[_dp]_xilinx` (SV and VHDL; found 2026-11-25, xsim) | `MEMORY_PRIMITIVE "auto"` with `WAKEUP_TIME "use_sleep_pin"`: XPM DRC 40-42 rejects the sleep pin unless the primitive is block RAM / UltraRAM | `MEMORY_PRIMITIVE "block"` |
+| `sram_macro_dp_altera` (SV and VHDL; found 2026-11-25, xsim ALTERA, test_dp dp2) | with COMMON_CLK both ports are clocked when either is selected, but the write enables were the array's shared `we_i`: a port-A write to one bank while port B read another also wrote the other bank | `wren_a/b` gated with the port's chip select |
+| `sram_macro[_dp]_altera` (found 2026-11-25, Quartus) | one lane (39-bit ECC word, 13-bit ECC slice) with a driven `byteena` and `byte_size 8`: Quartus error 272006 (open item since Step 3) | one lane: `byteena` tied high, the lane enable gates the write enable |
+| `sram_macro_altera.vhd` (found 2026-11-25, Quartus) | the local `altsyncram` component had no port-B generics; Quartus sized `data_b` / `q_b` from 0 (error 287087) | `width_b`, `widthad_b`, `numwords_b` declared (default 1) |
 
 Mixed-language (VHDL top-levels) tool behaviour found and handled in the
 bench and `sim_sram.py`:
@@ -649,6 +714,8 @@ bench and `sim_sram.py`:
 | Xcelium | VHDL generic maps bind Verilog parameters by position unless `-namemap_mixgen` (the SKY130 wrapper's `VERBOSE => 0` set the model's `NUM_WMASKS`) | `-namemap_mixgen` |
 | VCS | SV `force` of a VHDL bit (or of a VHDL signal the bench also reads) is not supported | `$hdl_xmr_force` for the BIST stuck-at fault |
 | both | VPI cannot read VHDL storage | VHPI entry points in `claude_backdoor.c` |
+| xsim | no SV write to a VHDL object, no force on a port connected to VHDL (also inside the XPM model) | stuck-bit faults SKIPPED with a VHDL top; XILINX + VHDL top SKIP (see xsim results) |
+| xsim | Verilog port defaults are not applied when a VHDL component binds a Verilog module (the ALTERA leaves leave altsyncram's unused ports out) | VHDL tops use Quartus' VHDL `altera_mf` model |
 
 Behaviour confirmed and documented while writing the tests: every response
 (writes too) comes READ_LATENCY cycles after the grant; a clear requested
@@ -795,25 +862,28 @@ change):
 ## Regression
 
 `verification/tools/regression_sram.py` (wrapper `verification/regression/run_regression.sh`)
-runs every sub-runner and writes one report, `verification/regression/report.md`
-(console table: `verification/work/regression_results.log`). Exit status 0 only when every
+runs every sub-runner and writes one report: `verification/regression/report.md` on csun.edu,
+`verification/regression/report_standard_host.md` on a standard host (each host keeps its own
+report; console table: `verification/work/regression_results.log`). Exit status 0 only when every
 entry passes; an expected result that is missing counts as FAIL.
 
 | Step | csun.edu | Standard host | Entries |
 |---|---|---|---|
-| sim | `sim_sram.py`, VCS + Xcelium, 4 buses x SV/VHDL x 5 techs, `--coverage` | `sim_sram.py --sim verilator`, SV, GENERIC | one per directed test (12 per run) |
+| sim | `sim_sram.py`, VCS + Xcelium, 4 buses x SV/VHDL x 5 techs, `--coverage` | `sim_sram.py --sim all`: Verilator SV GENERIC (4) + xsim SV/VHDL x GENERIC/XILINX/ALTERA (20) | one per directed test (12 per run) |
 | uvm | `uvm_sram.py`, full matrix, `--coverage` | — | one per test run (1440) |
 | mutants | `uvm_mutants.py --mutant all` | — | one per mutant (must be killed) |
 | formal | `formal_sram.py --job all --lang all` | — | one per VC Formal job |
-| lint | `lint_sram.py --lang all` | same | one |
+| lint | `lint_sram.py --lang all` (SpyGlass) | same (Verilator + GHDL) | one |
 | firmware | `fw_sram.py` (host unit tests, mutants, host compile; cross build SKIP without compilers) | same, plus the ARM / RISC-V cross build | one per PASS / FAIL row of `verification/firmware/fw_results.log` |
+| synth | — (DC / PrimeTime run on their own, Synthesis Results) | `run_vendor_synth.py`: Vivado, Quartus, Yosys | one per netlist (3 x 24) |
 | coverage | from the sim / uvm coverage reports | — | every module >= 90 per directed run and UVM build; UVM functional 100 per config |
 
 ```bash
 source IP/system/sram/setup.sh
 python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py            # run everything (~4-5 h on csun.edu)
 python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py --collect  # report on existing results only
-#   --skip-sim --skip-uvm --skip-mutants --skip-formal --skip-lint --skip-firmware, --jobs N (default 3)
+#   --skip-sim --skip-uvm --skip-mutants --skip-formal --skip-lint --skip-firmware
+#   (standard host: --skip-synth), --jobs N (default 3)
 ```
 
 The report lists each source file's timestamp, so stale results are visible in `--collect`
@@ -822,6 +892,16 @@ mode. Last report (2026-11-23, `--collect` on csun.edu): **2599/2599 entries pas
 coverage 163/163. The Step 10 RTL was re-verified run by run (directed 80/80,
 UVM 1440/1440, mutants 9/9, formal 26/26, lint 24/24, 2026-11-24/25); the
 regression report was not regenerated after it.
+
+Standard host (2026-11-25, `report_standard_host.md`): **513/513 entries pass** — sim 288/288
+(Verilator 4 runs + xsim 20 runs, 12 tests each), lint 1/1 (Verilator 20 + GHDL 40
+configurations), firmware 152/152 (with the ARM / RISC-V cross builds), synth 72/72
+(Vivado, Quartus, Yosys 24 each); uvm, mutants and formal SKIP (csun.edu flows). A full run
+takes about 100 min, most of it the four Verilator builds (one at a time, 8 GB cap).
+Step 11 (2026-11-25): `cleanup.sh`, then the full regression from the clean tree: 501/513,
+the 12 failures all the AXI4-Lite Verilator build, OOM-killed at the cap. Fixed in the flow
+(one compile job for that build, see Verilator results), re-run, report rebuilt with
+`--collect`: 513/513.
 
 ## Lint Results
 
@@ -876,10 +956,15 @@ python3 $CLAUDE_SRAM_PATH/verification/tools/lint_sram.py --list            # th
 python3 $CLAUDE_SRAM_PATH/verification/tools/lint_sram.py --cfg apb_dp_cdc  # one configuration
 ```
 
-Standard hosts: the same configurations through Verilator `--lint-only -Wall`
-(`verification/lint/verilator.flags`, `-G` overrides) and every VHDL file through
-`ghdl -a --std=08`. **Not run yet** (neither tool is on csun.edu); expect Verilator
-`UNUSEDSIGNAL` pragmas to be added for the single-port port-B nets on the first run.
+Standard host (2026-11-25, Verilator 5.043, GHDL 6.0.0-dev): the same 20 SV configurations
+through Verilator `--lint-only -Wall` (`verification/lint/verilator.flags`, `-G` overrides)
+and every VHDL file through `ghdl -a --std=08`: **SV 20/20 clean, VHDL 40/40 clean, PASS**
+(the 4 CDC configurations are SpyGlass-only, SKIPPED). Verilator does not read the SpyGlass
+pragmas, so its waivers are in `verification/lint/verilator_waivers.vlt` — by file, rule
+and signal, not in the RTL — mapped onto the same W1-W5 classes, plus the port-only stubs;
+GHDL needs `-frelaxed` for the shared-variable dual-clock RAM (W5) and has two `-Whide`
+waivers (W7). All are listed in `waivers.md` ("Standard host"). A planted unused signal in
+`sram_core` / `sram_array` fails the run.
 
 ## Firmware
 
@@ -919,10 +1004,10 @@ the `firmware` step of the regression.
 
 | Step | What | Result (2026-11-23, csun.edu, gcc 11.5.0) |
 |---|---|---|
-| host | `firmware/test/test_sram.c` with host gcc (`-std=c99 -Wall -Wextra -Werror -pedantic`): every test on fault-free memories (4 B to 16 KiB, three fills), argument checks, 39 fault/test pairs (34 must detect, 5 must stay blind) on a fault-injecting model, 24 side-band checks on a fake IP | 124/124 PASS (plus the build row). ASan/UBSan are used where the host can link them; csun.edu cannot (libasan/libubsan not installed). |
-| mutants | 22 deliberate bugs in `src/` (`fw_sram.py --list-mutants`); `test_sram` must fail for each one | 22/22 killed |
-| compile | library and example compiled without the test model (real volatile accessors) | 3/3 PASS |
-| cross | `build.sh` for ARM and RISC-V | SKIP on csun.edu: the cross compilers in `/tmp/pet43490/CrossCompilers` are gone (removed by the `/tmp` cleanup). Not run yet. |
+| host | `firmware/test/test_sram.c` with host gcc (`-std=c99 -Wall -Wextra -Werror -pedantic`): every test on fault-free memories (4 B to 16 KiB, three fills), argument checks, 39 fault/test pairs (34 must detect, 5 must stay blind) on a fault-injecting model, 24 side-band checks on a fake IP | 124/124 PASS (plus the build row). ASan/UBSan are used where the host can link them; csun.edu cannot (libasan/libubsan not installed). Standard host (2026-11-25, gcc 13.3.0, with ASan/UBSan): 152/152 PASS. |
+| mutants | 22 deliberate bugs in `src/` (`fw_sram.py --list-mutants`); `test_sram` must fail for each one | 22/22 killed (both hosts) |
+| compile | library and example compiled without the test model (real volatile accessors) | 3/3 PASS (both hosts) |
+| cross | `build.sh` for ARM and RISC-V | standard host 2026-11-25: ARM Cortex-M33 (arm-none-eabi-gcc 13.2.1) and RV32 (riscv-none-elf-gcc 15.2.0) PASS, `-Werror`. SKIP on csun.edu (no cross compilers there). |
 
 Faults in the model (`firmware/test/sram_test_mem.c`), and which test is meant
 to catch each one. "Blind" pairs are checked too, to show the limits of each test:
@@ -940,10 +1025,14 @@ to catch each one. "Blind" pairs are checked too, to show the limits of each tes
 
 ### Code Size
 
-Not measured yet: no cross compiler is installed on csun.edu. `fw_sram.py`
-writes the `text` / `data` / `bss` of each `libsram.a` to `fw_results.log`
-once `build.sh` runs on a standard host. `.data` and `.bss` are 0 by design,
-since there is no global state.
+`libsram.a`, `-O2` Release (`fw_sram.py`, 2026-11-25, standard host):
+
+| Target | text | data | bss |
+|---|---|---|---|
+| ARM Cortex-M33 (arm-none-eabi-gcc 13.2.1) | 2000 B | 0 | 0 |
+| RISC-V RV32IMAC (riscv-none-elf-gcc 15.2.0) | 2228 B | 0 | 0 |
+
+`.data` and `.bss` are 0 by design, since there is no global state.
 
 ### API Summary
 
@@ -988,8 +1077,8 @@ the next `get_status` sees `busy_o`.
 
 ## Synthesis Results
 
-Step 10, csun.edu, 2026-11-25. Details: `synthesis/known_issues.md` and the
-per-target reports.
+Step 10, csun.edu and a standard host, 2026-11-25. Details: `synthesis/known_issues.md`
+and the per-target reports.
 
 | Flow | Runner | Result |
 |---|---|---|
@@ -998,7 +1087,26 @@ per-target reports.
 | Gate-level simulation (3 netlists per bus, SDF, 2448 checks per run) | `verification/tools/sim_sram.py --postsyn` | 24/24 PASS (SAED32, SAED14, SKY130 x 4 buses x SV / VHDL netlists); SAED90 8 known (pass with `--no-sdf`) |
 | UPF (VC LP) | `verification/tools/lp_sram.py` | 12/12 PASS |
 | PrimePower (Step 12) | `verification/tools/sim_sram.py --power` | 36/36 PASS (SAED90 skipped); see Power Analysis |
-| Vivado / Quartus / Yosys | `synthesis/run_vendor_synth.py --vivado / --quartus / --yosys` | not run yet (standard host) |
+| Vivado 2023.2 (xc7z010clg400-1, OOC, 100 MHz, TECH = XILINX) | `synthesis/run_vendor_synth.py --vivado` (standard host) | 24/24: every array in block RAM, every netlist meets 100 MHz |
+| Quartus Prime Lite 23.1 (5CSEMA4U23C6, Analysis & Synthesis, TECH = ALTERA) | `synthesis/run_vendor_synth.py --quartus` (standard host) | 24/24: every array in M10K |
+| Yosys 0.60 (generic cells, TECH = GENERIC) | `synthesis/run_vendor_synth.py --yosys` (standard host) | 24/24: every array inferred as memory |
+
+FPGA and Yosys results per configuration (ranges over 4 buses x SV / VHDL; every netlist in
+`synthesis/{vivado,quartus,yosys}/report.txt`):
+
+| Config | Vivado LUTs / FFs | BRAM tiles | WNS (ns) | Quartus ALMs (est.) / registers | M10K bits | Yosys cells | Yosys memories |
+|---|---|---|---|---|---|---|---|
+| base (32 x 1024) | 121-163 / 31-170 | 1 | +3.36 .. +4.63 | 100-133 / 32-170 | 32,768 | 284-529 | 1 (SV), 4 (VHDL, one per lane) |
+| opts (ECC, 2 banks, BIST, RL 2) | 395-473 / 218-360 | 2 | +0.57 .. +0.92 | 333-398 / 222-360 | 39,936 | 1,396-1,676 | 2 |
+| dp (opts + 8-bit port B, 2 clocks) | 474-533 / 201-432 | 4 | +1.94 .. +3.56 | 422-484 / 205-434 | 53,248 | 1,604-2,980 | 13 (SV), 8 (VHDL) |
+
+Getting there needed four FPGA-leaf RTL fixes (XPM sleep pin with `MEMORY_PRIMITIVE "auto"`,
+ALTERA dual-port write enables, ALTERA one-lane byte enables, ALTERA VHDL port-B generics;
+see "Bugs found by these tests"; no csun.edu flow elaborates these leaves) and three tool
+work-arounds outside the RTL: Quartus Lite reads SystemVerilog-2005 copies of the SV made by
+`synthesis/quartus/quartus_sv.py` (explicit generate regions, genvars, header localparams);
+Yosys reads SV through the yosys-slang plugin; the VHDL dual-port netlists skip Yosys' memory
+pass (an assert in `memory_collect` on the ghdl plugin's dual-clock RAM).
 
 SAED90 misses 100 MHz by -0.20 ns (base, read latency 1) to -1.4 ns (options,
 dual port), and -35 / -42 ns on the AXI4-Lite dual port (wire-load model
@@ -1063,7 +1171,8 @@ sram/
 ├── doc/                        specification
 ├── firmware/                   memory-test and power-mode helpers (C99)
 ├── synthesis/                  run_vendor_synth.py (DC, Vivado, Quartus, Yosys), run_primetime_sta.py,
-│                               known_issues.md, report_<pdk>.txt, primetime/report_sta_*.txt
+│                               known_issues.md, report_<pdk>.txt, primetime/report_sta_*.txt,
+│                               {vivado,quartus,yosys}/report.txt, quartus/quartus_sv.py (SV-2005 copies)
 └── verification/
     ├── testbench/              SV system bench (tb_sram_<proto>.sv + shared body), BFMs
     ├── tests/                  directed tests and helpers (shared by SV and VHDL tops)
@@ -1073,6 +1182,7 @@ sram/
     ├── tools/formal_sram.py, lint_sram.py, lp_sram.py (VC LP), fw_sram.py, regression_sram.py
     ├── testbench/sram_tb_postsyn_body.svh  gate-level bench (sim_sram.py --postsyn)
     ├── formal/ lint/ lp/ regression/ modelsim/ vivado/   per-step configuration and results
+    │                           (lint/: verilator.flags, verilator_waivers.vlt, waivers.md)
     └── work/                   run outputs (results, logs, coverage); removed by cleanup.sh
 ```
 
@@ -1095,14 +1205,21 @@ python3 sim_sram.py --sim all --proto all --lang all --tech all --coverage --job
                                                        # all 80 runs + coverage reports
 ```
 
-Standard host (Verilator, SV tops, GENERIC):
+Standard host (Verilator: SV tops, GENERIC; Vivado xsim: SV and VHDL tops, GENERIC /
+XILINX / ALTERA):
 
 ```bash
 python3 sim_sram.py --sim verilator --proto all        # 4 builds, one at a time, 8 GB cap
+python3 sim_sram.py --sim xsim --proto all --lang all --tech all --jobs 4   # 20 runs + 4 SKIP
+python3 sim_sram.py --sim all --proto all --lang all --tech all --jobs 3    # both
+python3 lint_sram.py                                   # Verilator + GHDL
+python3 fw_sram.py                                     # host tests, mutants, ARM / RISC-V build
+python3 $CLAUDE_SRAM_PATH/synthesis/run_vendor_synth.py --jobs 3   # Vivado, Quartus, Yosys (72 netlists)
+python3 regression_sram.py --jobs 3                    # all of the above -> report_standard_host.md
 ```
 
-Options: `--sim vcs|xcelium|verilator|all`, `--proto ahb|apb|axi4l|wb|all`,
-`--lang sv|vhdl|all`, `--tech generic|saed90|saed32|saed14|sky130|all`,
+Options: `--sim vcs|xcelium|verilator|xsim|all`, `--proto ahb|apb|axi4l|wb|all`,
+`--lang sv|vhdl|all`, `--tech generic|saed90|saed32|saed14|sky130|xilinx|altera|all`,
 `--test <name>` (see Tests), `--waves`, `--coverage`, `--jobs N`. Results and
 coverage files are listed under Simulation Results.
 

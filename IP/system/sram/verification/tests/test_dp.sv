@@ -41,6 +41,26 @@ function automatic bit either_order(input int s, input int idx, input logic [63:
   return ((got ^ ab) & wmask(s)) == 0 || ((got ^ ba) & wmask(s)) == 0;
 endfunction
 
+// Both ports of a dual port busy at once on different words: port A writes
+// and reads back four INCR16 bursts of words from offset 0, port B four of
+// size b_size from offset 512 (stride b_step). One fork per call: Vivado xsim
+// 2023.2 crashes when one task frame runs a second fork whose branches
+// declare automatic variables (the loop variables here).
+task automatic dp_both_busy(input int a, input int b, input int b_step,
+                            input logic [2:0] b_size, input string dp);
+  int unsigned c;
+  fork
+    for (int i = 0; i < 4; i++) begin
+      burst(a, 1'b1, 64 * i, 3'd2, B_INCR16, 16, '0, {dp, " A concurrent"}, c);
+      burst(a, 1'b0, 64 * i, 3'd2, B_INCR16, 16, '0, {dp, " A concurrent"}, c);
+    end
+    for (int i = 0; i < 4; i++) begin
+      burst(b, 1'b1, 512 + b_step * i, b_size, B_INCR16, 16, '0, {dp, " B concurrent"}, c);
+      burst(b, 1'b0, 512 + b_step * i, b_size, B_INCR16, 16, '0, {dp, " B concurrent"}, c);
+    end
+  join
+endtask
+
 task automatic test_dp();
   int          a, b, sb, ra, rb, w;
   int unsigned c, h0;
@@ -65,26 +85,8 @@ task automatic test_dp();
   end
   // ---- both ports at once, different words (dp0, then dp2: dp0.A and
   // dp2.A share the CPU master)
-  fork
-    for (int i = 0; i < 4; i++) begin
-      burst(SL_DP0A, 1'b1, 64 * i, 3'd2, B_INCR16, 16, '0, "dp0 A concurrent", c);
-      burst(SL_DP0A, 1'b0, 64 * i, 3'd2, B_INCR16, 16, '0, "dp0 A concurrent", c);
-    end
-    for (int i = 0; i < 4; i++) begin
-      burst(SL_DP0B, 1'b1, 512 + 16 * i, 3'd0, B_INCR16, 16, '0, "dp0 B concurrent", c);
-      burst(SL_DP0B, 1'b0, 512 + 16 * i, 3'd0, B_INCR16, 16, '0, "dp0 B concurrent", c);
-    end
-  join
-  fork
-    for (int i = 0; i < 4; i++) begin
-      burst(SL_DP2A, 1'b1, 64 * i, 3'd2, B_INCR16, 16, '0, "dp2 A concurrent", c);
-      burst(SL_DP2A, 1'b0, 64 * i, 3'd2, B_INCR16, 16, '0, "dp2 A concurrent", c);
-    end
-    for (int i = 0; i < 4; i++) begin
-      burst(SL_DP2B, 1'b1, 512 + 64 * i, 3'd2, B_INCR16, 16, '0, "dp2 B concurrent", c);
-      burst(SL_DP2B, 1'b0, 512 + 64 * i, 3'd2, B_INCR16, 16, '0, "dp2 B concurrent", c);
-    end
-  join
+  dp_both_busy(SL_DP0A, SL_DP0B, 16, 3'd0, "dp0");
+  dp_both_busy(SL_DP2A, SL_DP2B, 64, 3'd2, "dp2");
   row("dp0/2  A and B busy at once on different words (dp0: two clocks; dp2: CPU + DMA)");
   // ---- same-word races (one clock): dp1 and dp2
   h0 = n_dp1_hold + n_dp2_hold;

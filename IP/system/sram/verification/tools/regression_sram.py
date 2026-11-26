@@ -6,14 +6,21 @@ report. Ported from the timer's regression_timer.py (report.md layout) and the
 bus_matrix run_regression.py (host split, per-test counting, stale-run guard).
 
     step      csun.edu (VCS / Xcelium / VC Formal / SpyGlass)          standard host
-    sim       sim_sram.py  --sim all --proto all --lang all --tech all  sim_sram.py --sim verilator
-              --coverage   (80 runs x 12 tests, code coverage)          --proto all --tech generic
+    sim       sim_sram.py  --sim all --proto all --lang all --tech all  sim_sram.py --sim all (Verilator
+              --coverage   (80 runs x 12 tests, code coverage)          SV GENERIC x 4 buses, xsim SV +
+                                                                        VHDL x GENERIC / XILINX / ALTERA
+                                                                        x 4 buses: 4 + 20 runs; XILINX
+                                                                        with a VHDL DUT is not run, see
+                                                                        sim_sram.py UNSUPPORTED)
     uvm       uvm_sram.py  all x all x all x all x all --coverage       -
               (240 builds, 1440 runs, functional + code coverage)
     mutants   uvm_mutants.py --mutant all (every mutant must be killed) -
     formal    formal_sram.py --job all --lang all                       -
     lint      lint_sram.py --lang all                                   lint_sram.py --lang all
+                                                                        (Verilator + GHDL)
     firmware  fw_sram.py (host unit tests, mutants, cross build)       fw_sram.py
+    synth     - (Design Compiler / PrimeTime are run on their own)      run_vendor_synth.py: Vivado,
+                                                                        Quartus, Yosys (24 netlists each)
 
 Collected entries (each PASS / FAIL; an expected result that is missing is FAIL):
     sim/<sim>/<proto>_<lang>_<tech>/<test>   one per directed test (12 per run)
@@ -21,6 +28,8 @@ Collected entries (each PASS / FAIL; an expected result that is missing is FAIL)
     mutant/<name>                            KILLED = PASS
     formal/<job>                             one per VC Formal job
     lint                                     first line of lint_results.log
+    synth/<tool>/<netlist>                   one per row of synthesis/<tool>/report.txt
+                                             (standard host: vivado, quartus, yosys)
     fw/<step>/<check>                        one per PASS / FAIL row of
                                              verification/firmware/fw_results.log
                                              (SKIP rows, e.g. a missing cross
@@ -46,7 +55,10 @@ and mutants the rest); run it detached (setsid / nohup).
 
 Results:
   verification/regression/report.md          overall result, step and coverage
-                                             summary, every entry
+                                             summary, every entry (csun.edu run)
+  verification/regression/report_standard_host.md   the same for a standard-host
+                                             run (both are kept: neither host
+                                             overwrites the other's report)
   verification/work/regression_results.log   the console table
 Exit status 0 only when every collected entry passes.
 """
@@ -75,6 +87,12 @@ FUNC_TARGET = 100.0         # UVM covergroups merged per configuration
 
 STEP_TIMEOUT = 8 * 3600
 STEPS = ["sim", "uvm", "mutants", "formal", "lint", "firmware"]
+if not ON_CSUN:
+    STEPS.append("synth")
+XSIM_TECHS = ["generic", "xilinx", "altera"]
+XSIM_UNSUPPORTED = {("vhdl", "xilinx")}    # sim_sram.py UNSUPPORTED (reported there as SKIP)
+SYNTH_TOOLS = ["vivado", "quartus", "yosys"]
+SYNTH_NETLISTS = 24                         # 3 configurations x 4 buses x 2 languages
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +127,14 @@ def step_commands(tools: str, jobs: int) -> dict:
             "lint": [py, t("lint_sram.py"), "--lang", "all"],
             "firmware": [py, t("fw_sram.py")],
         }
+    synth = os.path.join(os.path.dirname(os.path.dirname(tools)), "synthesis",
+                         "run_vendor_synth.py")
     return {
-        "sim": [py, t("sim_sram.py"), "--sim", "verilator", "--proto", "all", "--lang", "sv",
-                "--tech", "generic", "--jobs", str(jobs)],
+        "sim": [py, t("sim_sram.py"), "--sim", "all", "--proto", "all", "--lang", "all",
+                "--tech", "all", "--jobs", str(jobs)],
         "lint": [py, t("lint_sram.py"), "--lang", "all"],
         "firmware": [py, t("fw_sram.py")],
+        "synth": [py, synth, "--jobs", str(jobs)],
     }
 
 
@@ -138,34 +159,56 @@ def first_line(path: str) -> str:
 def collect_sim(work: str) -> list:
     """One entry per directed test of every expected run. A run directory that
     is missing, or a test without its 'test_x: PASS' line, is FAIL."""
-    sims = ["vcs", "xcelium"] if ON_CSUN else ["verilator"]
-    langs = LANGS if ON_CSUN else ["sv"]
-    techs = TECHS if ON_CSUN else ["generic"]
+    if ON_CSUN:
+        combos = [(s, p, lang, tech) for s in ("vcs", "xcelium") for p in PROTOS
+                  for lang in LANGS for tech in TECHS]
+    else:
+        combos = [("verilator", p, "sv", "generic") for p in PROTOS]
+        combos += [("xsim", p, lang, tech) for p in PROTOS for lang in LANGS
+                   for tech in XSIM_TECHS if (lang, tech) not in XSIM_UNSUPPORTED]
     out = []
-    for s in sims:
-        for p in PROTOS:
-            for lang in langs:
-                for tech in techs:
-                    run = f"{p}_{lang}_{tech}"
-                    log = os.path.join(work, s, run, "results.log")
-                    status = {}
-                    overall = ""
-                    if os.path.isfile(log):
-                        with open(log, errors="replace") as fh:
-                            lines = fh.read().splitlines()
-                        overall = lines[0].strip() if lines else ""
-                        for ln in lines:
-                            m = re.match(r"^(test_\w+): (PASS|FAIL)\b", ln)
-                            if m:
-                                # a test listed twice keeps a FAIL
-                                if status.get(m.group(1)) != "FAIL":
-                                    status[m.group(1)] = m.group(2)
-                    for test in DIRECTED_TESTS:
-                        st = status.get(test, "FAIL")
-                        if overall != "PASS":
-                            st = "FAIL"
-                        note = "" if os.path.isfile(log) else "no results.log"
-                        out.append((f"sim/{s}/{run}/{test}", st, note))
+    for s, p, lang, tech in combos:
+        run = f"{p}_{lang}_{tech}"
+        log = os.path.join(work, s, run, "results.log")
+        status = {}
+        overall = ""
+        if os.path.isfile(log):
+            with open(log, errors="replace") as fh:
+                lines = fh.read().splitlines()
+            overall = lines[0].strip() if lines else ""
+            for ln in lines:
+                m = re.match(r"^(test_\w+): (PASS|FAIL)\b", ln)
+                if m:
+                    # a test listed twice keeps a FAIL
+                    if status.get(m.group(1)) != "FAIL":
+                        status[m.group(1)] = m.group(2)
+        for test in DIRECTED_TESTS:
+            st = status.get(test, "FAIL")
+            if overall != "PASS":
+                st = "FAIL"
+            note = "" if os.path.isfile(log) else "no results.log"
+            out.append((f"sim/{s}/{run}/{test}", st, note))
+    return out
+
+
+def collect_synth(ip: str) -> list:
+    """One entry per netlist row of synthesis/<tool>/report.txt (standard host).
+    A missing report, or fewer rows than expected, is FAIL."""
+    out = []
+    for tool in SYNTH_TOOLS:
+        rpt = os.path.join(ip, "synthesis", tool, "report.txt")
+        rows = []
+        if os.path.isfile(rpt):
+            with open(rpt, errors="replace") as fh:
+                for ln in fh:
+                    m = re.match(r"^(sram_\w+)\s+.*\s(PASS|FAIL)\s*$", ln)
+                    if m:
+                        rows.append((f"synth/{tool}/{m.group(1)}", m.group(2), ""))
+        if len(rows) < SYNTH_NETLISTS:
+            rows.append((f"synth/{tool}/report", "FAIL",
+                         f"{len(rows)} of {SYNTH_NETLISTS} netlists in {rpt}"
+                         if rows else f"no {rpt}"))
+        out += rows
     return out
 
 
@@ -348,7 +391,8 @@ def main() -> int:
     exit_codes = {}
     if not args.collect:
         labels = {"sim": "Directed simulation", "uvm": "UVM matrix", "mutants": "UVM mutants",
-                  "formal": "Formal (VC Formal)", "lint": "Lint", "firmware": "Firmware"}
+                  "formal": "Formal (VC Formal)", "lint": "Lint", "firmware": "Firmware",
+                  "synth": "FPGA / Yosys synthesis"}
         for s in active:
             exit_codes[s] = run_step(labels[s], cmds[s])
 
@@ -359,6 +403,7 @@ def main() -> int:
         "formal": lambda: collect_formal(ip),
         "lint": lambda: collect_lint(ip),
         "firmware": lambda: collect_firmware(ip),
+        "synth": lambda: collect_synth(ip),
     }
     sources = {
         "sim": os.path.join(work, "results.log"),
@@ -367,6 +412,7 @@ def main() -> int:
         "formal": os.path.join(ip, "verification", "formal", "vcf", "results.log"),
         "lint": os.path.join(ip, "verification", "lint", "lint_results.log"),
         "firmware": os.path.join(ip, "verification", "firmware", "fw_results.log"),
+        "synth": os.path.join(ip, "synthesis", "vivado", "report.txt"),
     }
     entries = {s: collectors[s]() for s in active}
     # A sub-runner that failed without leaving a failing entry still fails
@@ -417,7 +463,7 @@ def main() -> int:
     # ---- report.md --------------------------------------------------------
     rdir = os.path.join(ip, "verification", "regression")
     os.makedirs(rdir, exist_ok=True)
-    report = os.path.join(rdir, "report.md")
+    report = os.path.join(rdir, "report.md" if ON_CSUN else "report_standard_host.md")
     with open(report, "w") as fh:
         fh.write(f"{overall}\n\n# sram Regression Report\n\n")
         fh.write(f"**Generated:** {when} on {host}"

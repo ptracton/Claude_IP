@@ -63,25 +63,30 @@ task automatic test_bist();
     chk(n_busy[sb] - b0 >= cyc / 2, $sformatf("%s: busy_o during BIST", slv[s].name));
     row($sformatf("%-6s March C- passes in %0d cycles (D=%0d); array zero; reads stall",
                   slv[s].name, cyc, slv[s].depth));
-    // Stuck-at-0 fault, at two words with alternating address bits (every
-    // bit of bist_fail_addr_o changes both ways)
-    for (int f = 0; f < 2; f++) begin
-      fa = (f ? 32'h2AAA : 32'h1555) & (slv[s].depth - 1);
-      bf_addr[sb] = fa;
-      bf_on[sb]   = 1'b1;
+    if (!BF_OK) begin
+      row($sformatf("%-6s stuck-at fault SKIPPED (no forces into the DUT on this simulator)",
+                    slv[s].name));
+    end else begin
+      // Stuck-at-0 fault, at two words with alternating address bits (every
+      // bit of bist_fail_addr_o changes both ways)
+      for (int f = 0; f < 2; f++) begin
+        fa = (f ? 32'h2AAA : 32'h1555) & (slv[s].depth - 1);
+        bf_addr[sb] = fa;
+        bf_on[sb]   = 1'b1;
+        run_bist(sb, cyc);
+        bf_on[sb]   = 1'b0;
+        sb_cyc(sb, 2);
+        chk(bist_fail[sb] === 1'b1, $sformatf("%s: stuck-at fault detected", slv[s].name));
+        // bist_fail_addr_o is $clog2(DEPTH) bits (port A words)
+        chk((bist_fail_addr[sb] & 16'((1 << $clog2(slv[s].depth)) - 1)) == 16'(fa),
+            $sformatf("%s: failing word %0d (exp %0d)", slv[s].name,
+                      bist_fail_addr[sb] & 16'((1 << $clog2(slv[s].depth)) - 1), fa));
+      end
       run_bist(sb, cyc);
-      bf_on[sb]   = 1'b0;
-      sb_cyc(sb, 2);
-      chk(bist_fail[sb] === 1'b1, $sformatf("%s: stuck-at fault detected", slv[s].name));
-      // bist_fail_addr_o is $clog2(DEPTH) bits (port A words)
-      chk((bist_fail_addr[sb] & 16'((1 << $clog2(slv[s].depth)) - 1)) == 16'(fa),
-          $sformatf("%s: failing word %0d (exp %0d)", slv[s].name,
-                    bist_fail_addr[sb] & 16'((1 << $clog2(slv[s].depth)) - 1), fa));
+      chk(bist_fail[sb] === 1'b0, $sformatf("%s: passes again without the fault", slv[s].name));
+      row($sformatf("%-6s stuck-at-0 bit 3 at words 0x%0h and 0x%0h: bist_fail_o, address right",
+                    slv[s].name, 32'h1555 & (slv[s].depth - 1), 32'h2AAA & (slv[s].depth - 1)));
     end
-    run_bist(sb, cyc);
-    chk(bist_fail[sb] === 1'b0, $sformatf("%s: passes again without the fault", slv[s].name));
-    row($sformatf("%-6s stuck-at-0 bit 3 at words 0x%0h and 0x%0h: bist_fail_o, address right",
-                  slv[s].name, 32'h1555 & (slv[s].depth - 1), 32'h2AAA & (slv[s].depth - 1)));
   end
   // Sleeping domains are brought to RUN for the test (s32e: d0 LS, d1 SD).
   s  = SL_S32E;

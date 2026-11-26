@@ -7,6 +7,10 @@
 //   clock0 = clk, clocken0 = cs_i (the block is clock-gated when not
 //   selected, which is also its only low-power mode), wren_a = we_i,
 //   byteena_a = lane_we_i, address_a, data_a, q_a.
+// One lane (NLANES = 1, e.g. an ECC word): no byte enables. Quartus accepts a
+// driven byteena_a only if W / byte_size = 1 with a legal byte size, which a
+// 39-bit word cannot meet; byteena_a is tied high and the lane enable gates
+// wren_a instead (the same write).
 // M10K has no sleep pins: ls_i/ds_i/sd_i are not needed (the core never
 // selects a sleeping memory, so clocken0 is already low).
 // Only elaborated on a host with Quartus/ModelSim (altera_mf); elsewhere
@@ -67,8 +71,8 @@ module sram_macro_altera #(
     .clocken0 (cs_i),
     .address_a(addr_i),
     .data_a   (wdata_i),
-    .wren_a   (we_i),
-    .byteena_a(lane_we_i),
+    .wren_a   (we_i && ((NLANES > 1) || lane_we_i[0])),
+    .byteena_a((NLANES > 1) ? lane_we_i : {NLANES{1'b1}}),
     .q_a      (rdata_o)
   );
 

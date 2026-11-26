@@ -4,7 +4,8 @@
 // "common_clock" with COMMON_CLK, else "independent_clock" (a_clk / b_clk);
 // Vivado cascades block RAMs itself, so the wrapper is not tiled. One-cycle
 // read latency and lane writes (W / NLANES bits) on both ports; sleep = ls_i | ds_i | sd_i with
-// WAKEUP_TIME = "use_sleep_pin". Only elaborated on a host with Vivado.
+// WAKEUP_TIME = "use_sleep_pin", so MEMORY_PRIMITIVE is "block" (XPM DRC
+// 40-42 rejects the sleep pin with "auto"). Only elaborated on a host with Vivado.
 
 module sram_macro_dp_xilinx #(
   parameter int unsigned W          = 32,   // word width
@@ -54,7 +55,7 @@ module sram_macro_dp_xilinx #(
     .MEMORY_INIT_FILE   (InitFile),
     .MEMORY_INIT_PARAM  ("0"),
     .MEMORY_OPTIMIZATION("true"),
-    .MEMORY_PRIMITIVE   ("auto"),
+    .MEMORY_PRIMITIVE   ("block"),
     .MEMORY_SIZE        (W * D),
     .MESSAGE_CONTROL    (0),
     .READ_DATA_WIDTH_A  (W),

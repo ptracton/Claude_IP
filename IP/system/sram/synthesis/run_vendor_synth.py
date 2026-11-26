@@ -27,6 +27,8 @@ Usage:
     python3 synthesis/run_vendor_synth.py --dc90 / --dc32 / --dc14 / --dcsky130
     python3 synthesis/run_vendor_synth.py --dc --cfg base   # one configuration
     python3 synthesis/run_vendor_synth.py --dc --jobs 2     # parallel dc_shell runs (default 3)
+    python3 synthesis/run_vendor_synth.py --vivado --jobs 3 # parallel Vivado runs (also Quartus / Yosys)
+    python3 synthesis/run_vendor_synth.py --quartus --cfg dp --proto apb --lang vhdl   # one netlist
     python3 synthesis/run_vendor_synth.py --report     # rewrite report_<pdk>.txt from existing reports
     python3 synthesis/run_vendor_synth.py --clean      # clean all tool outputs
 
@@ -43,6 +45,17 @@ Outputs:
     synthesis/designcompiler/netlists/<pdk>/             — netlists + SDF + SDC
     synthesis/vivado/report.txt, synthesis/quartus/report.txt,
     synthesis/yosys/report.txt                           — FPGA / Yosys summaries
+    synthesis/{vivado,quartus,yosys}/work/               — logs, reports, netlists per variant
+
+Standard-host flows (24 netlists per tool: base / opts / dp x 4 buses x SV / VHDL):
+    Vivado   xc7z010clg400-1, OOC, 100 MHz, TECH = XILINX (XPM): PASS = BRAM used, WNS >= 0
+    Quartus  5CSEMA4U23C6, Analysis & Synthesis, TECH = ALTERA (altsyncram): PASS = block
+             memory bits > 0. SV is read from SystemVerilog-2005 copies made by
+             synthesis/quartus/quartus_sv.py (Quartus Lite rejects implicit generate
+             regions, genvar in for headers and header localparams; the RTL is not changed).
+    Yosys    generic cells, TECH = GENERIC: PASS = the array is inferred as memories.
+             SV through the yosys-slang plugin, VHDL through the ghdl plugin (-frelaxed for
+             the documented shared-variable dual-clock RAM).
 """
 
 import argparse
@@ -364,12 +377,14 @@ def rtl_files(lang: str, proto: str, top: str) -> list:
     return [str(f) for f in files]
 
 
-def fpga_variants(tech: str) -> list:
-    """(name, top, lang, proto, cfg, generics dict, clk_a, clk_b)."""
+def fpga_variants(tech: str, sel: Optional[dict] = None) -> list:
+    """(name, top, lang, proto, cfg, generics dict, clk_a, clk_b); sel limits the
+    configurations / buses / languages ({"cfg": [...], "proto": [...], "lang": [...]})."""
+    sel = sel or {}
     out = []
-    for cfg in CFGS:
-        for lang in ("sv", "vhdl"):
-            for proto in PROTOS:
+    for cfg in sel.get("cfg") or CFGS:
+        for lang in sel.get("lang") or ("sv", "vhdl"):
+            for proto in sel.get("proto") or PROTOS:
                 gen = {"TECH": TECH_NUM[tech]}
                 if cfg in ("opts", "dp"):
                     gen.update(OPTS)
@@ -402,7 +417,8 @@ def run_tool(cmd: list, cwd: Path, env: dict, log: Path) -> int:
         return 127
 
 
-def write_fpga_report(path: Path, title: str, cols: list, rows: list) -> bool:
+def write_fpga_report(path: Path, title: str, cols: list, rows: list,
+                      notes: Optional[list] = None) -> bool:
     ok = all(r[-1] == "PASS" for r in rows)
     w = [max(len(str(c)), *(len(str(r[i])) for r in rows)) for i, c in enumerate(cols)]
     lines = ["=" * 78, title, f"Run date : {datetime.now():%Y-%m-%d}", "=" * 78, "",
@@ -412,21 +428,27 @@ def write_fpga_report(path: Path, title: str, cols: list, rows: list) -> bool:
              "  ".join("-" * x for x in w)]
     lines += ["  ".join(str(c).ljust(w[i]) for i, c in enumerate(r)) for r in rows]
     lines += ["", "Configurations: " + "; ".join(f"{c} = {t}" for c, t in CFG_TEXT.items()),
-              "(dp on FPGA: COMMON_CLK 0 on every variant.)", "=" * 78]
+              "(dp on FPGA: COMMON_CLK 0 on every variant.)"] + (notes or []) + ["=" * 78]
     path.write_text("\n".join(lines) + "\n")
     print(f"  Report  : {path}  ({'PASS' if ok else 'FAIL'})")
     return ok
 
 
-def run_vivado(synth_dir: Path) -> bool:
+def run_parallel(fn, variants: list, jobs: int) -> list:
+    """fn(variant) -> row for every variant, up to jobs at a time, rows in variant order."""
+    with ThreadPoolExecutor(max(1, jobs)) as ex:
+        return list(ex.map(fn, variants))
+
+
+def run_vivado(synth_dir: Path, sel: Optional[dict] = None, jobs: int = 1) -> bool:
     print("=== Vivado (Zynq-7010 xc7z010clg400-1, TECH = XILINX) ===")
     if not shutil.which("vivado"):
         print("  ERROR: vivado not found on PATH — is setup.sh sourced?")
         return False
     work = synth_dir / "vivado" / "work"
     work.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for v in fpga_variants("xilinx"):
+
+    def one(v):
         name = v[0]
         rc = run_tool(["vivado", "-mode", "batch", "-nojournal", "-nolog", "-source",
                        str(synth_dir / "vivado" / "synth.tcl")], work, fpga_env(work, v),
@@ -441,81 +463,124 @@ def run_vivado(synth_dir: Path) -> bool:
         m = re.search(r"WNS\(ns\).*\n\s*-+.*\n\s*([-\d.]+)", tim.read_text()) if tim.exists() else None
         wns = m.group(1) if m else "?"
         ok = rc == 0 and bram not in ("?", "0") and wns != "?" and float(wns) >= 0
-        rows.append((name, luts, ffs, bram, wns, "PASS" if ok else "FAIL"))
-        print(f"  [Vivado] {name}: {rows[-1][-1]} (rc {rc}, BRAM {bram}, WNS {wns})")
+        row = (name, luts, ffs, bram, wns, "PASS" if ok else "FAIL")
+        print(f"  [Vivado] {name}: {row[-1]} (rc {rc}, BRAM {bram}, WNS {wns})", flush=True)
+        return row
+
+    rows = run_parallel(one, fpga_variants("xilinx", sel), jobs)
     return write_fpga_report(synth_dir / "vivado" / "report.txt",
                              "Vivado Synthesis Report — sram IP (xc7z010clg400-1, 100 MHz, TECH = XILINX)",
                              ["Netlist", "LUTs", "FFs", "BRAM tiles", "WNS (ns)", "Result"], rows)
 
 
-def run_quartus(synth_dir: Path) -> bool:
+def run_quartus(synth_dir: Path, sel: Optional[dict] = None, jobs: int = 1) -> bool:
     print("=== Quartus (Cyclone V SE 5CSEMA4U23C6, TECH = ALTERA) ===")
     if not shutil.which("quartus_sh"):
         print("  ERROR: quartus_sh not found on PATH — is setup.sh sourced?")
         return False
     work = synth_dir / "quartus" / "work"
     work.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for v in fpga_variants("altera"):
+
+    sys.path.insert(0, str(synth_dir / "quartus"))
+    import quartus_sv  # noqa: E402  (SV-2005 form of the SV RTL for Quartus Lite)
+
+    def one(v):
         name = v[0]
+        env = fpga_env(work, v)
+        if v[2] == "sv":
+            env["SRAM_FILES"] = " ".join(quartus_sv.write_sources(
+                env["SRAM_FILES"].split(), str(work / f"{name}_src")))
         rc = run_tool(["quartus_sh", "-t", str(synth_dir / "quartus" / "synth.tcl")], work,
-                      fpga_env(work, v), work / f"{name}_quartus.log")
+                      env, work / f"{name}_quartus.log")
         rpts = list((work / name).glob("*.map.summary")) + list((work / name).glob("*.map.rpt"))
-        text = rpts[0].read_text(errors="replace") if rpts else ""
+        text = "\n".join(r.read_text(errors="replace") for r in rpts)
         get = lambda rx: (re.search(rx, text).group(1).replace(",", "")  # noqa: E731
                           if re.search(rx, text) else "?")
-        alms = get(r"Logic utilization \(in ALMs\)\s*[;:]\s*([\d,]+)")
+        # Analysis & Synthesis only: the summary's ALM count is N/A before the
+        # Fitter, so the map report's estimate is used.
+        alms = get(r"Estimate of Logic utilization \(ALMs needed\)\s*;\s*([\d,]+)")
         regs = get(r"Total registers\s*[;:]\s*([\d,]+)")
         bits = get(r"Total block memory bits\s*[;:]\s*([\d,]+)")
         ok = rc == 0 and bits not in ("?", "0")
-        rows.append((name, alms, regs, bits, "PASS" if ok else "FAIL"))
-        print(f"  [Quartus] {name}: {rows[-1][-1]} (rc {rc}, block memory bits {bits})")
+        row = (name, alms, regs, bits, "PASS" if ok else "FAIL")
+        print(f"  [Quartus] {name}: {row[-1]} (rc {rc}, block memory bits {bits})", flush=True)
+        return row
+
+    rows = run_parallel(one, fpga_variants("altera", sel), jobs)
     return write_fpga_report(synth_dir / "quartus" / "report.txt",
                              "Quartus Synthesis Report — sram IP (5CSEMA4U23C6, TECH = ALTERA)",
-                             ["Netlist", "ALMs", "Registers", "Block mem bits", "Result"], rows)
+                             ["Netlist", "ALMs (est.)", "Registers", "Block mem bits", "Result"], rows,
+                             ["SV netlists are synthesized from the SystemVerilog-2005 copies "
+                              "written by synthesis/quartus/quartus_sv.py",
+                              "(work/<netlist>_src/; Quartus Lite needs explicit generate regions, "
+                              "no genvar in for headers, no header localparams)."])
 
 
-def run_yosys(synth_dir: Path) -> bool:
+def run_yosys(synth_dir: Path, sel: Optional[dict] = None, jobs: int = 1) -> bool:
     """Generic Yosys synthesis (TECH = GENERIC): logic mapped, the array kept
     as one $mem cell per bank (memory -nomap) so the report shows it was
-    inferred as a memory, not as flip-flops. VHDL through the ghdl plugin."""
+    inferred as a memory, not as flip-flops. SV through the yosys-slang plugin
+    (the built-in Verilog frontend lacks SV constructs the RTL uses, e.g. ++
+    in sram_pkg's constant functions), VHDL through the ghdl plugin; both ship
+    with the OSS CAD Suite."""
     print("=== Yosys (generic, TECH = GENERIC) ===")
     if not os.access(YOSYS, os.X_OK):
         print(f"  ERROR: yosys not found at {YOSYS}")
         return False
     work = synth_dir / "yosys" / "work"
     work.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for v in fpga_variants("generic"):
-        name, top, lang, proto, _cfg, gen, _a, _b = v
+
+    def one(v):
+        name, top, lang, proto, cfg, gen, _a, _b = v
         files = " ".join(rtl_files(lang, proto, top))
         if lang == "sv":
-            read = [f"read_verilog -sv {files}"]
-            read += [f"chparam -set {k} {x} {top}" for k, x in gen.items()]
-            read.append(f"hierarchy -check -top {top}")
+            gens = " ".join(f"-G {k}={x}" for k, x in gen.items())
+            read = ["plugin -i slang", f"read_slang --top {top} {gens} {files}",
+                    f"hierarchy -check -top {top}"]
         else:
             gens = " ".join(f"-g{k}={x}" for k, x in gen.items())
-            read = ["plugin -i ghdl", f"ghdl --std=08 {gens} {files} -e {top}",
+            # -frelaxed: the dual-clock RAM template is a plain shared variable
+            # (documented deviation, verification/lint/waivers.md W5)
+            read = ["plugin -i ghdl", f"ghdl --std=08 -frelaxed {gens} {files} -e {top}",
                     f"hierarchy -check -top {top}"]
+        # VHDL dual port: the ghdl plugin gives the dual-clock RAM read ports
+        # that Yosys' memory_collect rejects (kernel/mem.cc assert port.clk ==
+        # wport.clk; Yosys 0.60). Its memories stay as unmerged $memrd / $memwr
+        # (still memories: counted from stat's "memories" line), no memory pass,
+        # and the netlist is written as RTLIL (write_verilog asserts the same way).
+        unmerged = lang == "vhdl" and cfg == "dp"
+        mem_pass = [] if unmerged else ["memory -nomap"]
+        out = (f"write_rtlil {work / (name + '_synth.il')}" if unmerged
+               else f"write_verilog -noattr {work / (name + '_synth.v')}")
         ys = work / f"{name}.ys"
         ys.write_text("\n".join(read + [
-            "proc", "flatten", "opt -full", "memory -nomap", "opt -full",
-            "techmap", "opt -fast", "abc", "opt_clean", "stat",
-            f"write_verilog -noattr {work / (name + '_synth.v')}"]) + "\n")
+            "proc", "flatten", "opt -full"] + mem_pass + ["opt -full",
+            "techmap", "opt -fast", "abc", "opt_clean", "stat", out]) + "\n")
         log = work / f"{name}_yosys.log"
         rc = run_tool([YOSYS, "-q", "-l", str(log.with_suffix('.stat')), str(ys)], work,
                       dict(os.environ), log)
         stat = log.with_suffix(".stat")
         text = stat.read_text(errors="replace") if stat.exists() else ""
         mems = sum(int(m.group(1)) for m in re.finditer(r"^\s+(\d+)\s+\$mem(?:_v2)?\s*$", text, re.M))
-        cells = re.findall(r"Number of cells:\s+(\d+)", text)
+        mems += sum(int(m.group(1)) for m in re.finditer(r"^\s+(\d+)\s+memories\s*$", text, re.M))
+        cells = re.findall(r"Number of cells:\s+(\d+)|^\s+(\d+)\s+cells\s*$", text, re.M)
+        cells = [a or b for a, b in cells]
         ffs = sum(int(m.group(1)) for m in re.finditer(r"^\s+(\d+)\s+\$_S?DFF\w*\s*$", text, re.M))
         ok = rc == 0 and mems > 0
-        rows.append((name, cells[-1] if cells else "?", ffs, mems, "PASS" if ok else "FAIL"))
-        print(f"  [Yosys] {name}: {rows[-1][-1]} (rc {rc}, $mem {mems})")
+        row = (name, cells[-1] if cells else "?", ffs, mems, "PASS" if ok else "FAIL")
+        print(f"  [Yosys] {name}: {row[-1]} (rc {rc}, $mem {mems})", flush=True)
+        return row
+
+    rows = run_parallel(one, fpga_variants("generic", sel), jobs)
     return write_fpga_report(synth_dir / "yosys" / "report.txt",
                              "Yosys Synthesis Report — sram IP (generic cells, TECH = GENERIC)",
-                             ["Netlist", "Cells", "FFs", "$mem cells", "Result"], rows)
+                             ["Netlist", "Cells", "FFs", "Memories", "Result"], rows,
+                             ["Memories = $mem cells, plus unmerged memories ($memrd / $memwr) "
+                              "for the VHDL dual-port",
+                              "netlists: Yosys 0.60 memory_collect / write_verilog assert on the "
+                              "ghdl plugin's dual-clock RAM",
+                              "(kernel/mem.cc port.clk == wport.clk), so those skip the memory "
+                              "pass and are written as RTLIL (.il)."])
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +609,8 @@ def main() -> None:
     ap.add_argument("--lang", choices=["sv", "vhdl"], action="append",
                     help="language(s) to synthesize (default both; debugging)")
     ap.add_argument("--jobs", type=int, default=3,
-                    help="parallel dc_shell runs (default 3: csun has 8 CPUs / 15 GB)")
+                    help="parallel tool runs (default 3: csun has 8 CPUs / 15 GB; also Vivado / "
+                         "Quartus / Yosys on a standard host)")
     ap.add_argument("--report", action="store_true",
                     help="only rewrite report_<pdk>.txt from the existing reports")
     ap.add_argument("--clean", action="store_true", help="remove outputs")
@@ -586,12 +652,14 @@ def main() -> None:
                                            args.lang or ["sv", "vhdl"]))
     if not ON_CSUN:
         run_all = not fpga_any
+        sel = {"cfg": args.cfg, "proto": args.proto, "lang": args.lang}
+        jobs = max(1, args.jobs)
         if run_all or args.vivado:
-            results["vivado"] = run_vivado(synth_dir)
+            results["vivado"] = run_vivado(synth_dir, sel, jobs)
         if run_all or args.quartus:
-            results["quartus"] = run_quartus(synth_dir)
+            results["quartus"] = run_quartus(synth_dir, sel, jobs)
         if run_all or args.yosys:
-            results["yosys"] = run_yosys(synth_dir)
+            results["yosys"] = run_yosys(synth_dir, sel, jobs)
 
     print("=" * 40)
     for tool, ok in results.items():

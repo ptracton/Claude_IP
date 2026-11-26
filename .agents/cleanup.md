@@ -37,7 +37,9 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
      `fsdb2vcdLog/`, `verdiLog/`, `novas_dump.log`, `ucli.key`, `DVEfiles/`, `csrc/`,
      `simv*`, `vcdplus.vpd`, `.rce/`. These appear when a tool is run by hand (debugging),
      not from the scripts.
-   - `firmware/build/`, `firmware/obj/`, `firmware/lib/`.
+   - `firmware/build/`, `firmware/obj/`, `firmware/lib/`, and the firmware runner's log
+     directory (sram: `verification/firmware/fw_results.log`, recreated by `fw_sram.py`;
+     missed by the sram cleanup.sh until Step 11).
    - Synthesis intermediate files in `synthesis/*/` via two calls:
      - `python3 synthesis/run_vendor_synth.py --clean` — Vivado, Quartus outputs.
      - `bash synthesis/clean.sh` — Design Compiler outputs (`reports/`, `netlists/`,
@@ -84,6 +86,12 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
 4. Run a final full regression from a clean state:
    - `bash cleanup.sh && python3 verification/tools/regression_IP_NAME.py`
    - Confirm `verification/regression/report.md` regenerates and shows all `PASS`.
+   - Each host writes its own report (sram: `report.md` on csun.edu,
+     `report_standard_host.md` on a standard host). Run the clean regression on every host
+     whose flows the IP uses; the release is not clean until both reports are current.
+   - Run `bash cleanup.sh` again afterwards, so the tree handed to the commit holds only
+     sources and committed reports (`git status --ignored` shows nothing).
+   - Do not create the tag or commit unless the user asks; the user commits and tags.
 5. Finalize `README.md`:
    - Confirm every `[TBD]` placeholder has been replaced by its owning sub-agent.
      Run `grep -n "\[TBD\]" README.md` — must return zero results.

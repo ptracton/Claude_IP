@@ -142,6 +142,12 @@ export PATH="${XPACK_RISCV_PATH}/bin:${OSS_CAD_SUITE_PATH}/bin:${QUARTUS_PATH}:$
 echo "IP_NAME environment ready. CLAUDE_IP_NAME_PATH=${CLAUDE_IP_NAME_PATH}"
 ```
 
+**Why the PATH order matters (sram, 2026-11-25):** OSS CAD Suite must come before the system
+directories. A distribution Verilator (`/usr/bin/verilator`, Debian 5.020) is older than the
+OSS CAD Suite one (5.043) and rejects RTL that 5.043 builds (`BLKLOOPINIT`). Runner scripts
+that are started without sourcing `setup.sh` pick up the distribution tools, so always
+`source setup.sh` first — including for background or one-off re-runs.
+
 **Important substitution**: replace every literal `IP_NAME` above with the actual IP name
 provided by the user, and rename the variable `CLAUDE_IP_NAME_PATH` to
 `CLAUDE_<ACTUAL_NAME>_PATH` (uppercased). For example, for an IP named `gpio`:

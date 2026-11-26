@@ -1,0 +1,87 @@
+`verilator_config
+// File: Verilator lint waivers of the sram IP (standard hosts).
+//
+// lint_sram.py passes this file to every Verilator lint run (after verilator.flags).
+// The waivers are kept here, not as pragmas in the RTL, so the RTL that was signed off
+// on csun.edu (SpyGlass, VCS, Xcelium, VC Formal, Design Compiler) is unchanged.
+// Each entry names the file, the rule and the signal (-match on the message text);
+// the W<n> classes are those of waivers.md, which also lists the SpyGlass rule of the
+// same finding. A new finding on another signal or in another file is not hidden.
+
+// ---------------------------------------------------------------------------
+// Port-only stubs of the vendor cells (verification/lint/stubs/ and the
+// generated verification/work/lint_stubs/): black boxes, not linted.
+// ---------------------------------------------------------------------------
+lint_off -file "*/verification/lint/stubs/*"
+lint_off -file "*/verification/work/lint_stubs/*"
+
+// ---------------------------------------------------------------------------
+// W1 — single-port tops: the core's port B is unused
+// ---------------------------------------------------------------------------
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'rst_b_n'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'mem_b_we_i'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'mem_b_addr_i'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'mem_b_be_i'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'mem_b_wdata_i'"
+// g_no_port_b constant drivers of port B's internal nets
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_busy'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_stall'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_ecc_corr'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_ecc_uncorr'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_irq'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_rdata'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_dom_awake'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_dom_err'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'b_wdata_i'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'b_lane_we_i'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'b_saddr'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'b_bank_cs'"
+// core outputs mem_b_* left open in the four single-port tops
+lint_off -rule PINCONNECTEMPTY -file "*/sram_ahb.sv" -match "*'mem_b_*'"
+lint_off -rule PINCONNECTEMPTY -file "*/sram_apb.sv" -match "*'mem_b_*'"
+lint_off -rule PINCONNECTEMPTY -file "*/sram_axi4l.sv" -match "*'mem_b_*'"
+lint_off -rule PINCONNECTEMPTY -file "*/sram_wb.sv" -match "*'mem_b_*'"
+
+// ---------------------------------------------------------------------------
+// W2 — signals one configuration family does not read
+// ---------------------------------------------------------------------------
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_quiet'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_wake_a'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_idle'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'b_acc'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'dom_want'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'clr_busy'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'a_rd_slice_q'"
+// b_rd_slice_q: the port-B twin of a_rd_slice_q (read only when port B is the
+// narrower port; SpyGlass does not report it because the lint configurations
+// have WIDTH_B 8 < WIDTH 32, Verilator reports the unused variable in every
+// generate copy)
+lint_off -rule UNUSEDSIGNAL -file "*/sram_array.sv" -match "*'b_rd_slice_q'"
+lint_off -rule UNUSEDSIGNAL -file "*/sram_macro_dp_saed14.sv" -match "*'b_clk'"
+// Byte address bits: sram_port addresses words, byte lanes come from mem_be_i
+// (mem_bus.md). Verilator-only finding (SpyGlass W240 does not report part-selects).
+lint_off -rule UNUSEDSIGNAL -file "*/sram_port.sv" -match "*'mem_addr_i'*"
+// IP/common AHB adapter: HTRANS[0] (SEQ vs NONSEQ) is not needed, every NONSEQ /
+// SEQ beat is one memory request (Step 0; IP/common/verification/mem_if/).
+lint_off -rule UNUSEDSIGNAL -file "*/claude_ahb_mem_if.sv" -match "*'HTRANS'*"
+
+// ---------------------------------------------------------------------------
+// W4 — vendor primitive outputs not used / ports of an unused altsyncram mode
+// ---------------------------------------------------------------------------
+lint_off -rule PINCONNECTEMPTY -file "*/sram_macro_xilinx.sv" -match "*'*biterr*'"
+lint_off -rule PINCONNECTEMPTY -file "*/sram_macro_dp_xilinx.sv" -match "*'*biterr*'"
+lint_off -rule PINCONNECTEMPTY -file "*/sram_macro_sky130.sv" -match "*'dout1'"
+lint_off -rule PINMISSING -file "*/sram_macro_altera.sv" -match "*'q_b'"
+
+// ---------------------------------------------------------------------------
+// W5 — documented style deviations
+// ---------------------------------------------------------------------------
+// Untyped INIT_FILE string: the "" -> "none"/"UNUSED" substitution selects
+// between string literals of different lengths (padded, as intended).
+lint_off -rule WIDTHEXPAND -file "*/sram_macro_xilinx.sv" -match "*Conditional False*"
+lint_off -rule WIDTHEXPAND -file "*/sram_macro_dp_xilinx.sv" -match "*Conditional False*"
+lint_off -rule WIDTHEXPAND -file "*/sram_macro_altera.sv" -match "*Conditional False*"
+lint_off -rule WIDTHEXPAND -file "*/sram_macro_dp_altera.sv" -match "*Conditional False*"
+// The dual-clock true dual-port RAM template: both ports write mem from their own
+// clocks (SpyGlass W415).
+lint_off -rule MULTIDRIVEN -file "*/sram_macro_dp_generic.sv" -match "*.mem'"

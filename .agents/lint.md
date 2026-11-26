@@ -65,7 +65,10 @@ resolved without extra configuration in each IP.
    required format.
 4. For any warning that must be waived, add an entry to `verification/lint/waivers.md`:
    - File path, line number, tool + warning code, one-line justification.
-   - Corresponding suppression pragma must appear in the source file at that line.
+   - Corresponding suppression pragma must appear in the source file at that line —
+     **except** for Verilator / GHDL waivers of RTL that has already been signed off on
+     csun.edu: those go in tool configuration files instead (see "Verilator and GHDL
+     waivers outside the RTL" below), so the signed-off RTL is not edited.
 5. Complete `verification/tools/lint_IP_NAME.py`:
    - Accepts `--lang {sv,vhdl,all}`.
    - Sources `setup.sh` environment at startup.
@@ -123,6 +126,26 @@ parser with no VHDL-2008 support at all and are not worth using here either.
   attempt to force this via undocumented internal-file patching in
   production scripts — it's fragile across tool versions. Log VHDL as
   `SKIPPED` on csun.edu instead.
+### Verilator and GHDL waivers outside the RTL (standard hosts)
+
+Verilator does not read SpyGlass pragmas, and adding `/* verilator lint_off */` pragmas to
+RTL that SpyGlass / VCS / Xcelium / VC Formal / Design Compiler have signed off on csun.edu
+would make that RTL "changed" and call for a re-run there. Keep standard-host lint waivers
+out of the RTL (first used by the sram IP, 2026-11-25):
+
+- **Verilator:** a configuration file `verification/lint/verilator_waivers.vlt` (starts with
+  `` `verilator_config ``), passed by `lint_IP_NAME.py` to every Verilator run after
+  `verilator.flags`. One entry per finding, narrowed by file, rule **and** signal:
+  `lint_off -rule UNUSEDSIGNAL -file "*/sram_core.sv" -match "*'rst_b_n'"`. A new finding on
+  another signal or file is then still reported. Port-only vendor stubs are waived whole
+  with `lint_off -file "*/lint/stubs/*"`.
+  - Pitfall: a `//` comment in a `.vlt` file that contains words such as `verilator` followed
+    by a rule-like token can be read as a meta-comment; keep comments plain prose.
+- **GHDL:** per-file option tables in `lint_IP_NAME.py` (e.g. `-frelaxed` for one file's
+  shared variable, `-Wno-hide` for named files), each referencing a `waivers.md` class.
+- `waivers.md` lists every such waiver by class (W1, W2, ...) with the matching SpyGlass rule,
+  so one class covers the same finding in every tool.
+
 7. Update `README.md` — replace the `[TBD]` placeholder in **Lint Results** with:
    - Overall result (`PASS` / `FAIL` / `SKIPPED`) for each language:
 
@@ -146,6 +169,7 @@ parser with no VHDL-2008 support at all and are not worth using here either.
 | Artifact | Description |
 |----------|-------------|
 | `verification/lint/verilator.flags` | Verilator lint flags and include paths |
+| `verification/lint/verilator_waivers.vlt` | Verilator waivers by file / rule / signal (keeps signed-off RTL unchanged) |
 | `verification/lint/vhdl_lint.toml` | VHDL linter configuration |
 | `verification/lint/waivers.md` | Approved waivers with justifications |
 | `verification/lint/lint_results.log` | `PASS` or `FAIL` |
@@ -179,5 +203,6 @@ parser with no VHDL-2008 support at all and are not worth using here either.
 
 **All hosts:**
 - Every RTL waiver in `verification/lint/waivers.md` has a corresponding
-  suppression pragma at that exact line in the source, a one-line
-  justification, and the tool + warning code that triggered it.
+  suppression — a pragma at that exact line in the source, or (Verilator / GHDL on
+  signed-off RTL) a file + rule + signal entry in `verilator_waivers.vlt` / the GHDL
+  option table — a one-line justification, and the tool + warning code that triggered it.

@@ -1,9 +1,9 @@
 # sram IP — Specification
 
-Status: requirements agreed 2026-10-15 (see `.agents/project_sram_plan.md`);
-RTL implemented 2026-10-15 (Step 3) — decisions taken during implementation
-are marked *[Step 3]*.
-Sections marked _[TBD — Step N]_ are filled in by that step.
+Status: **final, Step 11 (2026-11-25).** Requirements agreed 2026-10-15 (see
+`.agents/project_sram_plan.md`); RTL implemented 2026-10-15 (Step 3). Decisions
+and results added by later steps are marked *[Step N]*. Verification and
+implementation results are in the [README](../README.md).
 
 ## Overview
 
@@ -14,7 +14,7 @@ same RTL targets:
 | `TECH` | Storage | Notes |
 |---|---|---|
 | `GENERIC` | behavioral array | simulation, formal, Yosys; portable inference |
-| `XILINX` | `xpm_memory_spram` (block RAM / UltraRAM) | used when Vivado is installed |
+| `XILINX` | `xpm_memory_spram` (block RAM: `MEMORY_PRIMITIVE "block"`, needed for the sleep pin) | used when Vivado is installed |
 | `ALTERA` | `altsyncram` (M10K on Cyclone V) | used when Quartus is installed |
 | `SAED90` | `SRAM<w>x<d>_1rw` macros | |
 | `SAED32` | `SRAMLP1RW<d>x<w>` low-power macros | native light sleep / deep sleep / shutdown pins |
@@ -110,6 +110,14 @@ word `j` is at byte offset `j * WIDTH_B / 8`, and it has
 little-endian: narrow word `j` is bits `[(j % R) * N +: N]` of wide word
 `j / R` (R = width ratio, N = narrow width).
 
+## Register Map
+
+None. The sram has no register block, so there is no SystemRDL source and no
+`doc/sram_regs.html` (design decision D2, 2026-10-15). Every control and
+status function (power modes, clear, BIST, ECC injection and events) is a
+side-band port; see Side-band ports. The firmware (`firmware/`) therefore has
+no register driver: it has memory tests and side-band helpers.
+
 ## Interfaces
 
 ### Bus protocol top-levels
@@ -175,7 +183,7 @@ domain. Checked with VC LP (`verification/tools/lp_sram.py`).
 | SAED32 | `SRAMLP1RW<d>x<w>` | no | 8-bit macro columns per lane |
 | SAED14 | `SRAM1RW<d>x<w>` | no | 8-bit macro columns per lane |
 | SKY130 | `sky130_sram_2kbyte_1rw1r_32x512_8` and others | yes (`wmask`) | native |
-| XILINX / ALTERA / GENERIC | inferred / primitive | yes | native |
+| XILINX / ALTERA / GENERIC | inferred / primitive | yes | native (ALTERA with one lane, e.g. a 39-bit ECC word: `byteena` tied high, the lane enable gates `wren`) |
 
 *[Step 3c]* Two-port primitives and their clocking (dual port):
 
@@ -204,18 +212,127 @@ active high (two-port and SAED90/32 active low); `SRAM1RW32x8` has a 32-bit
 
 ## Timing
 
-_[TBD — Step 3/4: cycle-level timing per protocol; Step 10: achieved clock per PDK]_
+*[Step 4]* **Core.** Every response, writes included, comes `READ_LATENCY` (1 or 2) cycles
+after the grant on the memory bus. An ECC partial write is a read-modify-write: it reads in
+the grant cycle, registers the raw word (s1), and merges, encodes and writes back in s2, so
+with `READ_LATENCY = 1` it answers one cycle later than other accesses. The macro access and
+the SECDED decode / encode never share a cycle. A pending clear or BIST stops new grants, and
+a domain waking from light sleep adds wait states (entry / wake counts under Power).
+
+**Bus adapters** (`IP/common/design/rtl/mem_bus.md`; SRAM answering at full speed,
+`READ_LATENCY = 1`, attached directly):
+
+| Protocol | Read / write | 16 transfers (measured, `test_burst` / `test_pipeline`) |
+|---|---|---|
+| APB4 | 2 cycles, zero wait (request issued in SETUP) | 32 cycles |
+| AHB-Lite | one wait state per beat, SEQ included | 16-beat INCR burst: 33 cycles |
+| AXI4-Lite | AR→R and AW/W→B 3 cycles; one read and one write in flight | 64 cycles one at a time; 16 writes + 16 reads interleaved and pipelined: 66 instead of 128 |
+| Wishbone B4 | ACK 1 cycle after STB (classic cycles) | 32 cycles |
+
+With `READ_LATENCY = 2`, AXI4-Lite one at a time takes 80 cycles for 16 (one more per
+transfer); pipelined and interleaved, 98. Through the
+bus matrix every beat is a single transfer (AHB: 4 cycles per beat).
+
+*[Step 10]* **Achieved clock** (target 100 MHz, 10 ns; base / opts / dp configurations x 4
+buses x SV / VHDL netlists; DC with a 0.2 ns setup margin, PrimeTime setup and hold):
+
+| Target | Result | Worst setup slack |
+|---|---|---|
+| SAED32 | 24/24 met | +3.53 ns |
+| SAED14 | 24/24 met | +0.42 ns |
+| SKY130 SS / TT / FF | 24/24 met at each corner (TT macro timing, see Known Limitations) | +0.18 / +1.28 / +1.42 ns |
+| SAED90 | 2/24 met, accepted (user decision 2026-11-25): about 98 MHz (base, RL 1) down to about 88 MHz (opts, dp); the AXI4-Lite dual port's -35 / -42 ns is a wire-load-model artefact | -0.20 to -1.4 ns |
+| Xilinx xc7z010-1 (Vivado, OOC) | 24/24 met | +0.57 ns (opts) .. +4.63 ns |
+| Altera 5CSEMA4U23C6 (Quartus) | Analysis & Synthesis only (no timing run) | — |
+
+Details: README "Synthesis Results", `synthesis/known_issues.md`.
+
+## Resource Utilization
+
+*[Step 10]* Three synthesized configurations, each for 4 buses x SV / VHDL
+(ranges over those 8 netlists): **base** = WIDTH 32, DEPTH 1024, BYTE_EN,
+PWR_GATE; **opts** = base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2;
+**dp** = opts + 8-bit port B on its own clock (SAED14: common clock).
+
+ASIC (Design Compiler, SRAM macros; area in library units, µm² for SAED32,
+SAED14 and SKY130; logic = total - macros; `synthesis/designcompiler/report_<pdk>.txt`):
+
+| PDK | Config | Cells | Macros | Logic area | Total area |
+|---|---|---|---|---|---|
+| SAED90 | base / opts / dp | 325-760 / 1,573-2,031 / 2,524-3,965 | 4 / 10 / 64 | 2,783-8,943 / 17,290-23,594 / 26,585-41,464 | 583,351-589,511 / 830,915-837,219 / 2,059,543-2,074,421 |
+| SAED32 | base / opts / dp | 367-856 / 1,528-2,019 / 2,467-3,306 | 4 / 10 / 64 | 1,052-2,546 / 4,748-6,244 / 7,795-10,173 | 478,822-480,316 / 1,199,173-1,200,669 / 1,687,054-1,689,431 |
+| SAED14 | base / opts / dp | 337-701 / 1,300-1,677 / 1,492-2,137 | 8 / 10 / 16 | 127-347 / 605-828 / 633-1,010 | 211,666-211,886 / 265,029-265,252 / 699,858-700,236 |
+| SKY130 | base / opts / dp | 370-738 / 1,605-1,997 / 1,874-2,950 | 2 / 10 / 16 | 2,694-7,351 / 13,200-17,657 / 14,878-24,560 | 571,771-576,428 / 2,045,933-2,050,389 / 3,267,250-3,276,932 |
+
+The macros are at least 97 % of the total area in every netlist (lowest
+per PDK: SAED90 97.2 %, SKY130 98.7 %, SAED32 99.4 %, SAED14 99.7 %). AXI4-Lite has the most
+logic of the four buses in every configuration.
+
+FPGA and open-source (standard host; `synthesis/{vivado,quartus,yosys}/report.txt`):
+
+| Tool | base | opts | dp |
+|---|---|---|---|
+| Vivado (xc7z010-1): LUTs / FFs / BRAM tiles | 121-163 / 31-170 / 1 | 395-473 / 218-360 / 2 | 474-533 / 201-432 / 4 |
+| Quartus (5CSEMA4U23C6): ALMs (est.) / registers / M10K bits | 100-133 / 32-170 / 32,768 | 333-398 / 222-360 / 39,936 | 422-484 / 205-434 / 53,248 |
+| Yosys (generic cells): cells / memories | 284-529 / 1 (SV), 4 (VHDL) | 1,396-1,676 / 2 | 1,604-2,980 / 13 (SV), 8 (VHDL) |
+
+## Tools and Versions
+
+| Flow | Tool | Version | Host |
+|---|---|---|---|
+| Directed simulation, gate-level, UVM | Synopsys VCS MX (+ URG coverage) | Y-2026.03-SP1 | csun.edu |
+| Directed simulation | Cadence Xcelium | 25.03 | csun.edu |
+| Formal | Synopsys VC Formal | Y-2026.03-SP1 | csun.edu |
+| Lint and CDC (SV) | Synopsys SpyGlass (`spyglass_vc`, VC Static) | Y-2026.03-SP1 | csun.edu |
+| Low power (UPF) | Synopsys VC LP (VC Static) | Y-2026.03-SP1 | csun.edu |
+| ASIC synthesis, STA, power | Synopsys Design Compiler, PrimeTime, PrimePower, Library Compiler | csun.edu install (version not recorded in the reports) | csun.edu |
+| Directed simulation (SV), lint (SV) | Verilator (OSS CAD Suite) | 5.043 | standard host |
+| Directed simulation (SV + VHDL, FPGA leaves) | Vivado xsim | 2023.2 | standard host |
+| Lint (VHDL) | GHDL | 6.0.0-dev | standard host |
+| FPGA synthesis | Vivado / Quartus Prime Lite | 2023.2 / 23.1std.1 | standard host |
+| Open-source synthesis | Yosys (slang and ghdl plugins) | 0.60 | standard host |
+| Firmware cross build | arm-none-eabi-gcc / riscv-none-elf-gcc (xPack) | 13.2.1 / 15.2.0 | standard host |
 
 ## Known Limitations
 
 - SKY130 OpenRAM macros ship liberty for the typical corner only (except the
   older `sram_1rw1r_32_256_8`), so SS/FF timing of the macros is limited.
-  _[TBD — Step 10]_
+  *[Step 10]* DC links the TT macro library with the SS standard cells, and
+  PrimeTime uses the TT macro timing at SS and FF too, so the SKY130 SS / FF
+  results are approximate for the macro paths (`synthesis/known_issues.md`).
 - No VHDL lint on csun.edu (SpyGlass has no working VHDL-2008 path).
 - *[Step 3c]* Dual port with `COMMON_CLK = 0`:
   - same-word accesses in overlapping cycles are undefined;
   - port B's clock must keep running while the core changes power modes or
     runs the clear / BIST engines (it waits for port B to acknowledge);
   - not available with `TECH_SAED14`.
-  - The XPM / altsyncram dual-clock leaves have not been elaborated yet (no
-    Vivado / Quartus on csun.edu).
+  - The XPM / altsyncram dual-clock leaves are verified on the standard host
+    (2026-11-25): Vivado xsim directed tests (XILINX with SV tops, ALTERA with SV
+    and VHDL tops) and Vivado / Quartus synthesis. With `COMMON_CLK = 1` the
+    altsyncram leaf clocks both ports on either chip select, so each port's write
+    enable is gated with its own chip select.
+- *[Step 10]* SAED90 does not meet 100 MHz (2/24 netlists; -0.20 to -1.4 ns,
+  about 98 to 88 MHz), accepted (user decision 2026-11-25). Its gate-level
+  simulation with SDF has 8 known failures that pass without SDF.
+- *[Step 12]* SAED32 macro power cannot be estimated: the vendor SRAMLP liberty
+  has negative input-pin internal power, so only logic power is reported. The
+  macro clocks are free-running, which makes the macros over 95 % of the power.
+- *[Step 10]* Vendor simulation-model bugs (SAED14 / SKY130 macros, SAED90
+  set/reset flip-flops, SKY130 OpenRAM read delay) are fixed in generated copies
+  under `IP/common/verification/tools/`; the vendor files are not edited.
+- *[Step 11]* Standard-host simulation limits: Verilator runs the GENERIC
+  technology only (the PDK models are on csun.edu). Vivado xsim has no VPI and
+  cannot write or force into VHDL, so it skips the backdoor checks, the
+  stuck-bit faults with a VHDL top, and XILINX with a VHDL top (synthesized in
+  Vivado instead). Quartus Prime Lite reads SystemVerilog-2005 only, so it
+  synthesizes generated copies of the SV (`synthesis/quartus/quartus_sv.py`).
+- Formal (VC Formal) and UVM run only on csun.edu; there is no SymbiYosys or
+  xsim UVM flow.
+
+## Planned Improvements
+
+None committed. Candidates, not requested:
+- per-bank macro clock gating (the free-running macro clocks dominate power);
+- deeper AW / W / AR slots in `claude_axi4l_mem_if`, so AXI4-Lite streams of
+  one kind (writes only or reads only) pipeline too (`IP/common`);
+- SymbiYosys formal and UVM on xsim, so the standard host covers every flow.

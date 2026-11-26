@@ -21,44 +21,44 @@ instead of the `claude_*_if` register bridges.
 | 3 — RTL SV + VHDL, all options | **Done.** Scratch smoke tests PASS on GENERIC + all 4 PDKs, both languages |
 | 3b — macro tiling rework (§11) | **Done 2026-10-17** (D11 = A); uncommitted |
 | 3c — asymmetric / dual-clock DP (§12) | **Done 2026-10-17**, uncommitted (§12.9) |
-| 4 — directed tests | **Done 2026-10-18**, uncommitted (§13.7): one SV bench, 12 tests, SV and VHDL tops (mixed language), 4 buses × 5 techs × VCS/Xcelium, 80/80 PASS; coverage ≥ 90 per module per run (SV min 92.95, VHDL min 93.00) |
+| 4 — directed tests | **Done 2026-10-18**, uncommitted (§13.7): one SV bench, 12 tests, SV and VHDL tops (mixed language), 4 buses × 5 techs × VCS/Xcelium, 80/80 PASS; coverage ≥ 90 per module per run (SV min 92.95, VHDL min 93.00). Standard host 2026-11-25 (§20): Verilator 4/4, xsim 20/20 (+4 SKIP) incl. XILINX / ALTERA |
 | 5 — formal (§ in handoff) | **Done 2026-11-15**: VC Formal 26/26 SV + VHDL (re-run 2026-11-25) |
 | 6 — UVM (§14) | **Done 2026-11-23**: 1440/1440, mutants 9/9 (re-run on the Step 10 RTL) |
-| 7 — regression (§15) | **Done 2026-11-23** (`regression_sram.py`; `--collect` not regenerated after Step 10) |
-| 8 — lint (§16) | **Done 2026-11-23**: SpyGlass 20 lint + 4 CDC, 24/24 (re-run 2026-11-25) |
-| 9 — firmware (§17) | **Done 2026-11-23**: host 124/124, mutants 22/22; cross build pending (no compilers on csun) |
-| 10 — synthesis (§18) | **Done 2026-11-25 on csun.edu**: DC 96 netlists, STA, gate-level 24/24, UPF / VC LP 12/12; Vivado / Quartus / Yosys pending (standard host). Committed 7ba3fa7 |
-| 11 — cleanup / release tag | Open |
+| 7 — regression (§15) | **Done 2026-11-23** (`regression_sram.py`; `--collect` not regenerated after Step 10). Standard-host steps added 2026-11-25 (§20, `report_standard_host.md`) |
+| 8 — lint (§16) | **Done 2026-11-23**: SpyGlass 20 lint + 4 CDC, 24/24 (re-run 2026-11-25). Standard host 2026-11-25: Verilator 20/20, GHDL 40/40 (§20) |
+| 9 — firmware (§17) | **Done 2026-11-23**: host 124/124, mutants 22/22. Standard host 2026-11-25: host 152/152, mutants 22/22, ARM / RV32 cross build PASS (text 2000 / 2228 B) |
+| 10 — synthesis (§18) | **Done 2026-11-25 on csun.edu**: DC 96 netlists, STA, gate-level 24/24, UPF / VC LP 12/12. Committed 7ba3fa7. Standard host 2026-11-25 (§20): Vivado 24/24 (100 MHz met), Quartus 24/24, Yosys 24/24 |
+| 11 — cleanup / release tag | **Done on the standard host 2026-11-25** (§21): cleanup.sh + clean regression 513/513, spec finalized. Left: user commit + `v1.0.0` tag; csun.edu clean regression (`report.md`) |
 | 12 — power (§19) | **Done 2026-11-25**: PrimePower 36/36 (SAED90 skipped; SAED32 macro power not valid) |
 
 Status table updated 2026-11-25 (the paragraphs below are the history from Step 4; the step
 sections hold the details). Step 0 results: `IP/common/verification/mem_if/results.log`.
 
-**Open items carried forward:**
-- XILINX/ALTERA leaves are written but never elaborated (no Vivado/Quartus on csun). Verify
-  on the standard host, including the 3c dual-clock modes (XPM `independent_clock`,
-  altsyncram clock1/clocken1) and altsyncram `byte_size` with one lane.
-- 3b/3c scratch benches (`macro/`, `smoke/tb_dp2.sv`, generators) live in session
-  scratchpad b804bca1 and must become Step 4 deliverables.
-- Default synthesized configs (§4) predate 3c: decide whether the dual-port netlist should
-  use different widths and separate clocks (two-clock STA and CDC constraints).
-- No iverilog/ghdl/Verilator/SymbiYosys on csun; VCS + Xcelium are used instead.
-  Open-source flows need a standard host.
-- AHB, AXI4-Lite and WB tops are only elaborated (Xcelium, both languages); functional tests
-  come in Step 4.
-- Power entry/wake cycle counts (`sram_pkg::pwr_*_cycles`) are conservative placeholders.
-  Check them against the SAED32-LP liberty / databook at Step 10.
-- SKY130 OpenRAM liberty exists only at TT for the named macros, which limits SS/FF STA.
-  Decide at Step 10.
-- UPF files for SAED90/SAED14/SKY130 power gating (`design/upf/`) are due at Step 10.
-- The scratch smoke testbenches (session scratchpad, not in the repo) must be rebuilt as
-  Step 4 deliverables.
-- Two lc_shell scratch files are untracked in `IP/common/synthesis/designcompiler/sky130_lib/`
-  (`compile_lib.tcl`, `lc_output.txt`). They could go in .gitignore.
-- The old `/tmp/pet43490/PDK` tree (and `sky130_fd_sc_hd.damaged_2026-10-14`) is unused.
-  The user has not yet said whether to delete it.
-- The timer's setup.sh still adds duplicate PATH entries when re-sourced. sram's does not.
-  The timer was left as it is.
+**Open items (pruned 2026-11-25):**
+- Step 11 is done on the standard host (§21); left: the user's commit and `git tag -a v1.0.0`.
+- csun.edu: regenerate `regression_sram.py --collect` (report.md predates the Step 10 RTL;
+  every flow was re-run on it individually). Optional re-runs after §20: VCS + Xcelium
+  directed sims (bench edits), SpyGlass apb_xilinx / apb_altera (leaf edits).
+- csun.edu housekeeping, user to decide: two untracked lc_shell scratch files in
+  `IP/common/synthesis/designcompiler/sky130_lib/` (`compile_lib.tcl`, `lc_output.txt`;
+  .gitignore?); the old `/tmp/pet43490/PDK` tree (and `sky130_fd_sc_hd.damaged_2026-10-14`).
+- Not requested: per-bank macro clock gating (power, §19); SymbiYosys formal and UVM on xsim
+  (standard host, §20.5).
+- Outside the sram: the timer's setup.sh adds duplicate PATH entries when re-sourced.
+
+**Resolved (where):**
+- 3b/3c scratch benches and smoke testbenches -> the Step 4 system bench (§13; dp configs in
+  `test_dp`), nothing left in a scratchpad.
+- AHB / AXI4-Lite / WB tops only elaborated -> functional in Step 4 (80/80).
+- Default synthesized configs vs 3c -> Step 10 synthesizes base / opts / dp (dp = opts +
+  WIDTH_B 8, COMMON_CLK 0; two-clock STA, §18).
+- Power entry / wake counts -> checked against the SAED32-LP databook in Step 10 (README
+  "Power Management").
+- SKY130 TT-only macro liberty -> Step 10: TT macros with SS / TT / FF cells, results
+  approximate for macro paths (`synthesis/known_issues.md`, spec Known Limitations).
+- UPF for SAED90 / SAED14 / SKY130 -> Step 10, VC LP 12/12.
+- XILINX / ALTERA leaves never elaborated -> §20 (xsim + Vivado / Quartus, four leaf fixes).
+- No open-source tools on csun.edu -> §20 runs them on the standard host.
 
 ## 1. PDK macro facts (verified 2026-10-15, csun.edu)
 
@@ -1188,3 +1188,104 @@ RL2 register), axi4l_dp -46 (WLM 70000 + DELLN cells), dp VHDL built after the V
   0.12-0.46 / 0.70-1.05 / 0.95-1.48 mW (base / opts / dp). Macros > 95 % (clock energy on every
   edge, free-running macro clocks: OpenRAM 13.8 pJ per clk0 rise in every state). Follow-up
   candidate: per-bank macro clock gating.
+
+## 20. Standard host: open-source / free-tool flows (2026-11-25)
+
+User request: "Finish the SRAM IP for the free/open source tools on this PC. Try not to make
+changes that need to be re-verified on the *.csun.edu domain machines." Host: OSS CAD Suite
+(Verilator 5.043, GHDL 6.0-dev, Yosys 0.60 + slang + ghdl plugins, SymbiYosys), Vivado
+2023.2 (xsim), Quartus Prime Lite 23.1std.1, ModelSim ASE, arm-none-eabi-gcc 13.2.1,
+riscv-none-elf-gcc 15.2.0.
+
+### 20.1 Results
+- Firmware (`fw_sram.py`): host 152/152 (gcc 13.3 with ASan/UBSan), mutants 22/22, compile 3/3,
+  cross ARM Cortex-M33 + RV32 PASS; `libsram.a` text 2000 B (ARM) / 2228 B (RV32), data/bss 0.
+- Lint (`lint_sram.py`): Verilator 20/20, GHDL 40/40. Waivers outside the RTL:
+  `verification/lint/verilator_waivers.vlt` (file + rule + signal, W1-W5 classes) and
+  `_GHDL_WAIVERS` (`-frelaxed` for the shared-variable RAM W5; `-Whide` W7). Negative check
+  done (planted unused signal FAILs; beware Verilator's default `--unused-regexp *unused*`).
+- Directed sims: Verilator SV GENERIC 4/4; new `run_xsim` in `sim_sram.py`: SV + VHDL (mixed)
+  x GENERIC / XILINX (XPM, `-L xpm`) / ALTERA (altera_mf.v for SV, altera_mf.vhd into library
+  altera_mf for VHDL) x 4 buses = 20/20 PASS + 4 SKIP (XILINX with a VHDL top: XPM forces its
+  read data, XSIM 43-4289). `--sim all` on a standard host = verilator + xsim; Verilator runs
+  queue one at a time in their own pool (xsim keeps --jobs).
+- Synthesis (`run_vendor_synth.py --vivado/--quartus/--yosys`, now with --jobs and
+  --cfg/--proto/--lang filters): Vivado 24/24 (BRAM, WNS +0.57..+4.63), Quartus 24/24 (M10K),
+  Yosys 24/24 (memories).
+- Regression: standard-host steps sim (verilator + xsim), lint, firmware, synth; report
+  `verification/regression/report_standard_host.md` (csun keeps report.md; csun code path,
+  STEPS and entry order unchanged).
+- **Final standard-host regression 2026-11-25: 513/513 PASS** (sim 288/288 = Verilator 4 x 12 +
+  xsim 20 x 12, lint, firmware 152/152, synth 72/72; uvm / mutants / formal SKIP, csun only).
+  The full run's Verilator AXI4-Lite build was OOM-killed at the 8 GB cap (desktop also out of
+  memory); re-run alone it passed (13 min build), then `regression_sram.py --collect`.
+  Verilator per-run counts (121,109-121,977) match VCS GENERIC again; the README's Nov-13
+  counts predated the test_ecc growth of 4467ddf / 5f39b32. Source setup.sh first: Debian's
+  /usr/bin/verilator 5.020 rejects the macro models' X fill (BLKLOOPINIT).
+
+### 20.2 RTL changes (FPGA leaves only; no csun.edu flow elaborates them)
+1. `sram_macro[_dp]_xilinx` SV + VHDL: `MEMORY_PRIMITIVE "auto"` -> `"block"` (XPM DRC 40-42:
+   sleep pin needs block / ultra).
+2. `sram_macro_dp_altera` SV + VHDL: `wren_a/b` gated with `a_cs_i` / `b_cs_i` (COMMON_CLK
+   clocks both ports on either chip select; the array's shared we_i wrote the other bank).
+3. `sram_macro[_dp]_altera` SV + VHDL: NLANES = 1 -> byteena tied high, lane enable gates wren
+   (Quartus 272006 for a driven byteena at width 39 / 13).
+4. `sram_macro_altera.vhd`: component declares width_b / widthad_b / numwords_b (Quartus 287087).
+SpyGlass black-boxes the vendor cells; apb_xilinx / apb_altera (sp + dp) lint configs would
+see only the small wrapper logic change (2, 3) — optional SpyGlass re-run on csun.
+
+### 20.3 Bench changes (directed bench only; semantics unchanged on VCS / Xcelium)
+- `sram_tb_body.svh`: `XILINX_SIMULATOR` BF_BODY (one permanent masked force of arr_rdata from
+  `u_array.a_bank_rdata[...]`: xsim rejects bit-select force on a variable and keeps a
+  released variable's forced value until its driver changes); xsim + VHDL_DUT: no fault
+  injection, `BF_OK = 0` (1 elsewhere).
+- `test_ecc.sv`, `test_bist.sv`: stuck-bit sections under `if (BF_OK)` (else a SKIPPED row).
+- `test_dp.sv`: the two concurrent A/B forks moved into `dp_both_busy()` (xsim kernel fault on
+  a second fork in one task frame whose branches declare automatics).
+- `test_reset_busy.sv`: stalled reads forked as plain calls (`stalled_read()`), `wait fork`
+  removed. Finding: the old `wait fork` was a no-op (reads were grandchildren), and a reset
+  drops a read the AXI4-Lite adapter has accepted, so that BFM thread waits forever unseen.
+  Equivalent behaviour kept; optional csun re-run of `sim_sram.py` VCS + Xcelium to confirm.
+
+### 20.4 Tool work-arounds outside the RTL
+- Quartus Lite: SV-2005 only -> `synthesis/quartus/quartus_sv.py` writes copies with explicit
+  generate regions (per outermost `g_*` construct; whole-body wrapping breaks localparam
+  resolution), hoisted genvars, header localparam -> parameter. `synth.tcl` deletes the
+  project dir first (`project_new -overwrite` kept the old .qsf file list). ALMs from the map
+  report's estimate (summary says N/A before the Fitter).
+- Yosys: SV via `read_slang` (built-in frontend fails on `r++`); VHDL dp skips the memory
+  pass and writes RTLIL (memory_collect / write_verilog assert on the ghdl plugin's dual-clock
+  RAM).
+
+### 20.5 Not done on this host
+- Open-source formal (SymbiYosys): the formal flow is VC Formal (csun.edu, 26/26); the SVA
+  checkers were not ported.
+- UVM in xsim: the UVM matrix is VCS / Xcelium (csun.edu, 1440/1440); not ported.
+- SKY130 / SAED macro models: not installed here, so Verilator / xsim do not run the PDK techs.
+- ModelSim ASE / Icarus / GHDL simulation: the bench is SV with VHDL tops; xsim covers the
+  free mixed-language path.
+
+## 21. Step 11 — cleanup and release (2026-11-25, standard host)
+
+User: "do step 11 cleanup and I will manage commit" (no commit / tag by the agent).
+- `cleanup.sh` now also removes `verification/firmware/` (holds only `fw_results.log`, which
+  `fw_sram.py` recreates). After it, `git status --ignored` in `IP/system/sram` is empty and no
+  tracked or new source changed.
+- `.gitignore`: `*.wdb`, `*.jou`, `*.pb`, `.Xil/`, `xsim.dir/`, `webtalk*`. No tracked file ignored.
+- README: no TBD, links resolve. `doc/spec.md` final: Register Map (none, D2), Timing (bus
+  latencies, achieved clock per target), Resource Utilization (DC per PDK, FPGA, Yosys), Tools
+  and Versions (DC / PrimeTime versions not recorded in the reports), Known Limitations,
+  Planned Improvements (none committed).
+- Clean regression 20:15-21:19: 501/513 — only the AXI4-Lite Verilator build, OOM-killed at
+  the 8 GB cap. Root cause: 191 MB of generated C++ in 64 files (largest 40 MB); one g++ on
+  such a file takes up to ~3.7 GB, so two at once reach the cap (killed with 4 jobs 2 of 3
+  builds, with 2 jobs once; the one pass with 4 jobs was scheduling luck). Fix (user chose
+  option 1): `sim_sram.py` `VERILATOR_BUILD_JOBS_PROTO = {"axi4l": 1}` passed as Verilator
+  `--build-jobs` (Verilator's `-j 4` kept for conversion); build-failure message now names
+  the memory cap when make's jobs were Terminated / Killed. Re-run: PASS, peak 4.8 GB,
+  ~17 min conversion + ~32 min compile. `--collect`: **513/513 PASS**. Standard-host only;
+  nothing csun.edu runs changed.
+- Then `cleanup.sh` again: the tree holds only sources and committed reports.
+- Left for the user: commit, `git tag -a v1.0.0 -m "Initial verified release of sram"`.
+  Left for csun.edu: clean regression there so `verification/regression/report.md` is
+  current (predates the Step 10 RTL).

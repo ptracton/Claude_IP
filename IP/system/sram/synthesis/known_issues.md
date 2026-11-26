@@ -224,8 +224,64 @@ model by name from the typical library (as STA does).
 
 ## Vivado / Quartus / Yosys (standard host)
 
-`run_vendor_synth.py --vivado / --quartus / --yosys` synthesize the same 24
-variants (TECH = XILINX / ALTERA / GENERIC). They have not been run yet:
-none of these tools is installed on csun. A variant fails unless the array
-maps to block RAM (Vivado: Block RAM Tile > 0; Quartus: block memory bits
-> 0; Yosys: a `$mem` cell).
+`run_vendor_synth.py --vivado / --quartus / --yosys [--jobs N]` synthesize the same 24
+variants (base / opts / dp x 4 buses x SV / VHDL; TECH = XILINX / ALTERA / GENERIC). First
+run 2026-11-25 on a standard host (Vivado 2023.2, Quartus Prime Lite 23.1std.1, Yosys 0.60
+from the OSS CAD Suite): **Vivado 24/24, Quartus 24/24, Yosys 24/24**. A variant fails
+unless the array maps to memory (Vivado: Block RAM Tile > 0 and WNS >= 0 at 100 MHz;
+Quartus: block memory bits > 0; Yosys: memories inferred).
+
+### RTL: XILINX leaves used an XPM setting XPM rejects (fixed 2026-11-25)
+
+`sram_macro_xilinx` / `sram_macro_dp_xilinx` (SV and VHDL) set `MEMORY_PRIMITIVE = "auto"`
+with `WAKEUP_TIME = "use_sleep_pin"`. XPM accepts the sleep pin only on block RAM or
+UltraRAM (DRC XPM_MEMORY 40-42, raised by the XPM simulation model in xsim). Now
+`MEMORY_PRIMITIVE = "block"` (the Zynq-7010 has no UltraRAM). Only the XILINX leaves
+changed; no csun.edu flow elaborates them (SpyGlass black-boxes the XPM cell).
+
+### RTL: ALTERA leaves (fixed 2026-11-25)
+
+- `sram_macro_dp_altera` (SV and VHDL), COMMON_CLK = 1: `clocken0 = a_cs_i | b_cs_i`
+  clocks both ports when either is selected, but `wren_a` / `wren_b` were the array's
+  shared `we_i`. A port-A write to one bank while port B read another bank also wrote
+  port A's address in the other bank (found by the xsim ALTERA run, test_dp, dp2:
+  X / mismatches on both ports). Each write enable is now gated with its own chip select.
+- One lane (`NLANES = 1`: a 39-bit ECC word, a 13-bit dual-port ECC slice): a driven
+  `byteena` needs `width / byte_size = 1` with a legal byte size, which Quartus rejects for
+  these widths (error 272006). With one lane `byteena` is tied high and the lane enable
+  gates the write enable instead (the same write).
+- `sram_macro_altera.vhd`: the local `altsyncram` component had no port-B generics, and
+  Quartus then sized `data_b` / `q_b` from 0 (error 287087). `width_b`, `widthad_b`,
+  `numwords_b` are declared with default 1.
+
+Only the ALTERA leaves changed; no csun.edu flow elaborates them.
+
+### Quartus Lite: SystemVerilog-2005 copies of the SV RTL
+
+Quartus Prime Lite / Standard reads SystemVerilog-2005 only (`SYSTEMVERILOG_2009` is a Pro
+value) and rejects three constructs of the SV RTL: generate constructs outside an explicit
+`generate` region, `for (genvar i = ...)`, and `localparam` in the parameter port list.
+Rather than change the signed-off RTL, `synthesis/quartus/quartus_sv.py` writes a copy of
+each SV file into `synthesis/quartus/work/<netlist>_src/` with those three rewritten
+(each outermost `g_*` generate construct wrapped in `generate` / `endgenerate`, genvars
+declared per module, header `localparam` -> `parameter`; nothing can override a header
+localparam, and every instantiation names its parameters). Wrapping a whole module body in
+one region is not an option: Quartus then fails to resolve body localparams. `synth.tcl`
+starts from an empty project directory (`project_new -overwrite` keeps an existing `.qsf`'s
+file list, so a re-run compiled both file sets).
+
+Quartus reports only an ALM estimate after Analysis & Synthesis (the summary says N/A
+before the Fitter); the report column is the map report's "Estimate of Logic utilization".
+
+### Yosys: SV through yosys-slang, VHDL dual port without the memory pass
+
+The built-in Yosys Verilog frontend cannot parse the SV RTL (`r++` in `sram_pkg`'s
+constant functions); SV is read with the yosys-slang plugin (`read_slang -G ...`), VHDL
+with the ghdl plugin (`-frelaxed`: the shared-variable dual-clock RAM, waivers.md W5).
+For the four VHDL dual-port netlists, Yosys 0.60's `memory_collect` and `write_verilog`
+abort on the ghdl plugin's dual-clock RAM (`kernel/mem.cc` assert `port.clk ==
+wport.clk`). Those netlists keep their memories as unmerged `$memrd` / `$memwr` (counted
+from `stat`'s "memories" line: 8 memories, 53 248 bits = 2 banks x 4 slices x 512 x 13)
+and are written as RTLIL (`.il`). The SV dual port (`always` per port) is unaffected.
+The VHDL base netlists show 4 memories (one per byte lane, from the VHDL leaf's lane
+writes) where SV shows 1; both are memories, not flip-flops.

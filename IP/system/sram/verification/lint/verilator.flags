@@ -1,6 +1,7 @@
 // verilator.flags — options of the sram SV lint on standard hosts (lint_sram.py passes them
 // with -f; the top, the -G parameter overrides and the file list are added per configuration,
-// see `lint_sram.py --list`). Waivers are verilator lint_off pragmas in the RTL (waivers.md).
+// see `lint_sram.py --list`). Waivers: verilator_waivers.vlt (passed after this file, so the
+// RTL is not touched) and the few existing lint_off pragmas in the leaves (waivers.md).
 --lint-only
 -Wall
 -Wno-DECLFILENAME

@@ -3,7 +3,8 @@
 -- VHDL-2008 twin of sram_macro_xilinx.sv: one xpm_memory_spram of W x D (not
 -- tiled: Vivado cascades block RAMs) with one cycle of read latency and lane
 -- writes (BYTE_WRITE_WIDTH_A = W / NLANES); sleep = ls_i or ds_i or sd_i with
--- WAKEUP_TIME = "use_sleep_pin".
+-- WAKEUP_TIME = "use_sleep_pin", so MEMORY_PRIMITIVE is "block" (XPM DRC
+-- 40-42 rejects the sleep pin with "auto").
 -- The component is declared here rather than through "library xpm", so the
 -- file analyses on any host; it is only elaborated (and bound to Vivado's
 -- XPM) when TECH = TECH_XILINX.
@@ -100,7 +101,7 @@ begin
       MEMORY_INIT_FILE    => init_name(INIT_FILE),
       MEMORY_INIT_PARAM   => "0",
       MEMORY_OPTIMIZATION => "true",
-      MEMORY_PRIMITIVE    => "auto",
+      MEMORY_PRIMITIVE    => "block",
       MEMORY_SIZE         => W * D,
       MESSAGE_CONTROL     => 0,
       READ_DATA_WIDTH_A   => W,

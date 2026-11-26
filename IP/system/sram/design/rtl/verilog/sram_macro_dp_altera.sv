@@ -7,8 +7,13 @@
 // Lane enables (byte_size = W / NLANES) on both ports, unregistered outputs
 // (one cycle of read latency).
 // Clock enables: clocken0 = a_cs_i | b_cs_i with COMMON_CLK, else a_cs_i /
-// b_cs_i on clocken0 / clocken1. No sleep pins on M10K. Only elaborated on a
-// host with Quartus/ModelSim (altera_mf).
+// b_cs_i on clocken0 / clocken1. With COMMON_CLK both ports are clocked when
+// either is selected, so each write enable is gated with its own chip select
+// (the array drives one we_i to every bank and slice). One lane (NLANES = 1,
+// e.g. a 13-bit ECC slice): byteena tied high and the lane enable gates the
+// write enable (Quartus rejects a driven byteena unless W / byte_size = 1 with a
+// legal byte size). No sleep pins on M10K.
+// Only elaborated on a host with Quartus/ModelSim (altera_mf).
 
 module sram_macro_dp_altera #(
   parameter int unsigned W          = 32,   // word width
@@ -89,13 +94,13 @@ module sram_macro_dp_altera #(
     .clocken1 (COMMON_CLK ? 1'b1 : b_cs_i),
     .address_a(a_addr_i),
     .data_a   (a_wdata_i),
-    .wren_a   (a_we_i),
-    .byteena_a(a_lane_we_i),
+    .wren_a   (a_we_i && a_cs_i && ((NLANES > 1) || a_lane_we_i[0])),
+    .byteena_a((NLANES > 1) ? a_lane_we_i : {NLANES{1'b1}}),
     .q_a      (a_rdata_o),
     .address_b(b_addr_i),
     .data_b   (b_wdata_i),
-    .wren_b   (b_we_i),
-    .byteena_b(b_lane_we_i),
+    .wren_b   (b_we_i && b_cs_i && ((NLANES > 1) || b_lane_we_i[0])),
+    .byteena_b((NLANES > 1) ? b_lane_we_i : {NLANES{1'b1}}),
     .q_b      (b_rdata_o)
   );
 

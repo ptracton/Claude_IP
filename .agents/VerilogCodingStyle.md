@@ -1075,6 +1075,13 @@ module modname #(
 endmodule
 ```
 
+> **Tool note (Claude_IP, 2026-11-25):** Quartus Prime Lite / Standard reads only
+> SystemVerilog-2005 and rejects `localparam` in the parameter port list, `for (genvar ...)`
+> and generate constructs without `generate` / `endgenerate`. Keep this style anyway: every
+> other tool in the flow accepts it, and the Quartus flow gets generated SV-2005 copies
+> (`synthesis/quartus/quartus_sv.py` in the sram IP, `.agents/synthesis.md`). That generator
+> relies on every generate block being labelled `g_*` (see Generate Constructs).
+
 `` `define`` and `defparam` should never be used to parameterize a module.
 
 Use [package parameters](#constants) to transmit global constants through a

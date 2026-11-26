@@ -158,7 +158,9 @@ binary strings, MSB first. Use it to preload, peek and poke memory arrays.
   accepts it, but the testbench must run on both.
 - Compile flags: VCS `-debug_access+r+w` plus the `.c` file; Xcelium `-access +rw` plus the
   `.c` file.
-- Untested on Questa and xsim. Icarus has no DPI-C, so backdoor tests must be skipped there.
+- Untested on Questa. Icarus has no DPI-C, so backdoor tests must be skipped there. Vivado
+  xsim has no VPI: the sram bench compiles with `+define+TB_NO_BACKDOOR` there and logs the
+  backdoor checks SKIPPED (2026-11-25). Verilator needs the target arrays public (`.vlt`).
 - First user: the sram ECC test (`IP/system/sram/verification/tests/test_ecc.sv`).
 
 `IP_COMMON_PATH` is set by `setup.sh` and points to this directory.
@@ -258,6 +260,22 @@ later step.
 
 Why: in sram Step 4 a new bench was run from a scratch script while `sim_sram.py` was still
 the Step 1 skeleton, so the user could not reproduce the reported results.
+
+---
+
+## Signed-Off Code Rule (mandatory for all sub-agents)
+
+**RULE (user, 2026-11-25) — On a standard host, avoid changes that force a re-run on
+csun.edu.** VCS, Xcelium, VC Formal, SpyGlass, Design Compiler and PrimeTime exist only on
+csun.edu, and re-running their matrices takes hours on another machine. When a free tool
+on the standard host needs something:
+- put waivers in tool configuration files (e.g. a Verilator `.vlt`), not RTL pragmas;
+- put tool quirks in runner scripts or generated copies (e.g. Quartus SV-2005 copies made by
+  `synthesis/quartus/quartus_sv.py`);
+- put simulator-only bench code under that simulator's `ifdef` (e.g. `XILINX_SIMULATOR`);
+- edit RTL only where no csun.edu flow elaborates it (the XILINX / ALTERA leaves).
+List every change to shared RTL or bench code in the README / handoff and say whether a
+csun.edu re-run is recommended. First applied: sram plan §20.
 
 ---
 
@@ -693,12 +711,12 @@ A sub-agent **must not** mark its step complete until all of the following are s
 |------|---------------|---------|
 | Icarus Verilog | 11.0+ (via OSS CAD Suite) | SV directed simulation |
 | GHDL | 3.0+ (via OSS CAD Suite) | VHDL directed simulation |
-| Verilator | 5.0+ (via OSS CAD Suite) | SV linting |
-| Yosys | 0.36+ (via OSS CAD Suite) | Open-source synthesis |
+| Verilator | 5.043 (via OSS CAD Suite; must precede a distribution `/usr/bin/verilator` in PATH, see `setup.md`) | SV linting; SV directed simulation (`--binary --timing --vpi`, GENERIC tech; sram) |
+| Yosys | 0.60 (via OSS CAD Suite, with the `slang` and `ghdl` plugins) | Open-source synthesis (SV read with `read_slang`, VHDL with the ghdl plugin) |
 | OSS CAD Suite | `/opt/oss-cad-suite/bin` | Open-source EDA toolchain |
 | ModelSim ASE | `/opt/intelFPGA_pro/21.1/modelsim_ase/bin` | Mixed-language simulation |
-| Vivado | `/opt/Xilinx/Vivado/2023.2/settings64.sh` | UVM simulation + synthesis (target: Zynq-7010) |
-| Quartus Prime Lite | `/opt/intelFPGA_lite/23.1std/quartus/bin` | Intel synthesis (target: Cyclone V SE 5CSEMA4U23C6) |
+| Vivado | `/opt/Xilinx/Vivado/2023.2/settings64.sh` | xsim: UVM and mixed-language directed simulation incl. the XILINX (XPM) and ALTERA (`altera_mf`) leaves; synthesis (target: Zynq-7010) |
+| Quartus Prime Lite | `/opt/intelFPGA_lite/23.1std/quartus/bin` | Intel synthesis (target: Cyclone V SE 5CSEMA4U23C6); reads SystemVerilog-2005 only, so SV goes through generated copies (`synthesis.md`); its `eda/sim_lib/altera_mf.{v,vhd}` models are used by xsim |
 | arm-none-eabi-gcc | system package (`apt install gcc-arm-none-eabi`) | ARM Cortex-M33 firmware cross-compiler |
 | riscv-none-elf-gcc | xPack 15.2.0 at `/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin` | RISC-V 32-bit firmware cross-compiler |
 | PeakRDL | 2.0+ (Python venv) | SystemRDL compilation |

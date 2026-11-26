@@ -3,7 +3,9 @@
 -- VHDL-2008 twin of sram_macro_dp_xilinx.sv: one xpm_memory_tdpram of W x D
 -- (not tiled), CLOCKING_MODE "common_clock" with COMMON_CLK, else
 -- "independent_clock" (a_clk / b_clk); one cycle of read latency, lane
--- writes (W / NLANES bits) on both ports; sleep = ls_i or ds_i or sd_i. The component is declared here (no "library xpm") so
+-- writes (W / NLANES bits) on both ports; sleep = ls_i or ds_i or sd_i with
+-- WAKEUP_TIME = "use_sleep_pin", so MEMORY_PRIMITIVE is "block" (XPM DRC
+-- 40-42 rejects the sleep pin with "auto"). The component is declared here (no "library xpm") so
 -- the file analyses on any host; it is only elaborated with TECH_XILINX.
 
 library ieee;
@@ -141,7 +143,7 @@ begin
       MEMORY_INIT_FILE    => init_name(INIT_FILE),
       MEMORY_INIT_PARAM   => "0",
       MEMORY_OPTIMIZATION => "true",
-      MEMORY_PRIMITIVE    => "auto",
+      MEMORY_PRIMITIVE    => "block",
       MEMORY_SIZE         => W * D,
       MESSAGE_CONTROL     => 0,
       READ_DATA_WIDTH_A   => W,

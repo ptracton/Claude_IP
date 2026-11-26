@@ -1,5 +1,21 @@
 # Handoff — SRAM, updated 2026-11-25 (Steps 10 + 12 done on csun.edu; Step 10 committed 7ba3fa7)
 
+## Step 11 cleanup (2026-11-25 late, uncommitted) — read first
+Plan §21. cleanup.sh (+ `verification/firmware/`), `.gitignore` (xsim / Vivado scratch),
+spec finalized, clean regression 513/513 on the standard host after one flow fix: the
+AXI4-Lite Verilator build compiles with `--build-jobs 1` (it was OOM-killed at the 8 GB cap;
+peak now 4.8 GB, build ~50 min). Tree cleaned again. **User commits and tags `v1.0.0`.**
+csun.edu still needs a clean regression for `report.md`.
+
+## Standard-host free/open-source flows (2026-11-25 evening, uncommitted) — read first
+Full log: `project_sram_plan.md` §20. Regression (standard host) **513/513 PASS**:
+Verilator 4/4, xsim 20/20 (+4 SKIP), Verilator + GHDL lint, firmware 152/152 + cross builds,
+Vivado / Quartus / Yosys 24/24 each. RTL edits only in the XILINX / ALTERA leaves (§20.2);
+bench edits for xsim (§20.3). Optional csun re-runs: VCS + Xcelium directed sims (bench
+edits), SpyGlass apb_xilinx / apb_altera (leaf edits). Not ported: SymbiYosys formal, UVM in xsim.
+**What is left for the SRAM:** the single list in `project_sram_plan.md` "Open items (pruned
+2026-11-25)"; older "Open:" lines below are struck through where resolved.
+
 ## Step 12 power (2026-11-25, uncommitted) — read first
 - `sim_sram.py --power` (run_power / run_power_one / power_libs) + SAIF capture in
   `sram_tb_postsyn_body.svh` (`+saif`, VCS toggle tasks per netlist). Typical-corner libs incl.
@@ -31,7 +47,7 @@ Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
   (`pdk_sram_models.py gate_level=True`).
 - **UPF** `design/upf/` + `verification/tools/lp_sram.py` (VC LP): 12/12 PASS.
 - **Power cycle counts** checked vs SAED32-LP databook: valid to 180 MHz; kept (user).
-- Open: Vivado / Quartus / Yosys flows (scripts written, standard host); timer and bus_matrix
+- ~~Open: Vivado / Quartus / Yosys flows~~ (done 2026-11-25, plan §20). Still open: timer and bus_matrix
   postsyn still compile the vendor SAED90 `saed90nm.v` (SSR-flop bug not checked there); Step 11
   cleanup / tag open (Step 12 power done since, see the top of this file). /tmp aging deleted 14 bus_matrix files again
   (restored from HEAD 2026-11-25).
@@ -42,7 +58,7 @@ Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
 - Runner `verification/tools/fw_sram.py` -> `verification/firmware/fw_results.log`: host 124/124,
   mutants 22/22 killed, compile 3/3, cross SKIP x2 (no compilers). Regression step `firmware`
   added; `--collect` 2749/2749. README "Firmware" written.
-- Open: cross build + code size — csun `/tmp/pet43490/CrossCompilers` is gone (/tmp aging); either
+- ~~Open: cross build + code size~~ (done 2026-11-25 on the standard host: ARM 2000 B / RV32 2228 B text). Was: csun `/tmp/pet43490/CrossCompilers` is gone (/tmp aging); either
   reinstall outside /tmp (setup.sh points at /tmp) or run `fw_sram.py` on a standard host.
   Next plan step: **Step 10 synthesis**.
 
@@ -55,7 +71,7 @@ Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
 - CDC filter tightened 20:4x: only the reviewed info rules in `_CDC_INFO_RULES` (lint_sram.py) are
   dropped (was every CDC info row); waivers.md "CDC report filter". Full re-run 20:45: 24/24 PASS,
   0 findings, same filtered counts; structural CDC checks (Ac_unsync/conv/glitch, Ar_*) all 0.
-- Open: standard-host lint (Verilator/GHDL) written but not run. Next plan step: **Step 9 firmware**.
+- ~~Open: standard-host lint (Verilator/GHDL) written but not run.~~ Done 2026-11-25: Verilator 20/20, GHDL 40/40 (plan §20). Next plan step: **Step 9 firmware**.
 
 
 ## Step 7 (2026-11-23, uncommitted)
@@ -117,7 +133,7 @@ Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
   host; uses the native per-bit force).
 - **Final Step 4 regression 2026-11-21: 80/80 PASS**, weakest module SV 92.95 / VHDL 92.99,
   `sram_ecc_dec` SV >= 94.32 in every run; README tables regenerated.
-- **UVM open:** `claude_wb_mem_if` code coverage 89.89 / 89.93 in the WB SV dp / base UVM builds
+- ~~**UVM open:**~~ (closed: WB driver drives stray STB/WE/ADR, see 2026-11-23 section; matrix 1440/1440) `claude_wb_mem_if` code coverage 89.89 / 89.93 in the WB SV dp / base UVM builds
   (target 90). Full 240-build UVM matrix running (`--jobs 1`), README UVM section has GENERIC
   results only; update when it finishes.
 - **Committed by the user: 5f39b32 "SRAM UVM work"** (includes the scoreboard irq-edge fix:
@@ -149,9 +165,13 @@ Step 4 is **done** for both languages:
   95.84 (`coverage/summary.txt`), VHDL 98.04 (`coverage/vhdl/summary.txt`, toggle = best run).
 
 ## Git state
-HEAD `b6b2e17` ("SRAM VHDL testing and verification framework") has the SV bench, the VHDL
-flow and the coverage work. The 2026-11-07 follow-ups below are **uncommitted**. Commit only
-when asked.
+HEAD `f2c925a` ("SRAM Step 12: PrimePower power analysis", 2026-11-25). Uncommitted on top of
+it: the standard-host free/open-source work (plan §20) — FPGA-leaf RTL (8 files), xsim bench
+edits (`sram_tb_body.svh`, 4 tests), `sim_sram.py` / `lint_sram.py` / `regression_sram.py` /
+`run_vendor_synth.py`, `quartus/synth.tcl`, new `quartus/quartus_sv.py`,
+`lint/verilator_waivers.vlt`, the three `synthesis/*/report.txt`,
+`regression/report_standard_host.md`, and the docs (README, spec, known_issues, waivers,
+`.agents/*`). Only the user commits. (The older sections below are historical.)
 
 ## Step 5 — formal (VC Formal), DONE 2026-11-15 (uncommitted on top of 289e342)
 Runner: `formal_sram.py [--job <j>|all] [--lang sv|vhdl|all] [--jobs N<=3] [--trace] [--max-time T]`
@@ -172,7 +192,7 @@ Changes in this step (all uncommitted):
   `fml_enable_assume_proof`), report row regex fix (`inconclusive(depth=N)`), puts-line skip.
 - **Waivers:** bounded inconclusive data/err (user decision "accept bounded"), dp_sync RMW
   covers uncoverable, c_rvalid_wait.
-Open: csun re-runs after the RTL edits (VCS/Xcelium regression + coverage, SpyGlass, DC);
+~~Open: csun re-runs after the RTL edits~~ (done with the Step 10 re-verification, 2026-11-24/25) (VCS/Xcelium regression + coverage, SpyGlass, DC);
 timer/bus_matrix formal could be re-run once to confirm the shared-driver regex change (it only
 affects inconclusive rows). Commit when the user asks.
 
@@ -255,8 +275,11 @@ coverage `verification/work/coverage/`. `cleanup.sh` removes all of it.
 
 ## Open items
 1. Xcelium coverage needs IMC (not on csun.edu) — not needed (user, 2026-11-07).
-2. XILINX / ALTERA leaves are not simulated here; FPGA tools are on another PC (user,
-   2026-11-07). Re-run Yosys/Vivado/Quartus for bus_matrix AHB there too.
+2. ~~XILINX / ALTERA leaves are not simulated here~~ — done 2026-11-25 on the standard host
+   (xsim 20/20, Vivado / Quartus / Yosys 24/24 each; four FPGA-leaf fixes; plan §20).
+   Still open: re-run Yosys/Vivado/Quartus for bus_matrix AHB there too.
 3. Optional: deeper AW/W/AR slots in `claude_axi4l_mem_if` would let same-type AXI streams
    pipeline (not requested).
 4. ~~Next plan step: Step 6 (UVM)~~ — superseded; current state at the top of this file.
+5. Current SRAM open items (2026-11-25): see `project_sram_plan.md` "Open items (pruned
+   2026-11-25)" — Step 11 + commit, csun `--collect` and optional re-runs, csun housekeeping.

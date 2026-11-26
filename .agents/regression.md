@@ -86,6 +86,17 @@ When `ON_CSUN` is `True`:
         one entry per PASS/FAIL row of `verification/firmware/fw_results.log`; SKIP rows
         (missing cross compiler) are not counted ← skip if `--skip-firmware`
         (added 2026-11-23 with sram Step 9, see `.agents/firmware.md`)
+- **Standard-host variant used by the sram IP (2026-11-25, `regression_sram.py`):** the steps
+  are `sim` (`sim_sram.py --sim all` = Verilator SV GENERIC + xsim SV/VHDL x GENERIC /
+  XILINX / ALTERA), `lint` (Verilator + GHDL), `firmware`, and `synth`
+  (`run_vendor_synth.py`: Vivado, Quartus, Yosys; one entry per netlist from the three
+  `synthesis/*/report.txt`). uvm / mutants / formal are SKIP there (csun.edu flows). The
+  standard-host report is written to `verification/regression/report_standard_host.md` so
+  the csun.edu `report.md` is not overwritten; the csun.edu code path is unchanged.
+- `--collect` rebuilds the table from the existing per-run logs without running anything.
+  Use it after re-running one failed run on its own (e.g. a Verilator build OOM-killed at its
+  memory cap while the desktop was short of memory) instead of repeating the whole
+  regression (~80 min for sram on the standard host).
 - Collects exit codes and reads `results.log` files.
 - Writes `verification/work/regression_results.log` with a complete pass/fail table.
 - Exits non-zero if **any** test is `FAIL`. `SKIP` (tool not installed) is neutral — not a failure.

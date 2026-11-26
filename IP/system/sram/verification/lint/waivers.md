@@ -2,8 +2,10 @@
 
 Every waiver is a SpyGlass pragma in the SV RTL (`//spyglass disable_block <rule>` …
 `//spyglass enable_block <rule>`) around the lines named below; line numbers are those of the
-`disable_block` line. The VHDL RTL has no SpyGlass path on csun.edu (`.agents/reference_spyglass_lint.md`);
-the existing `verilator lint_off UNUSEDSIGNAL` pragmas cover the same unused pins for Verilator.
+`disable_block` line. The VHDL RTL has no SpyGlass path on csun.edu (`.agents/reference_spyglass_lint.md`).
+On a standard host Verilator and GHDL lint the same code; their waivers are listed in
+"Standard host: Verilator and GHDL" below (the Verilator ones live in
+`verification/lint/verilator_waivers.vlt`, not in the RTL).
 
 Configurations linted (`verification/tools/lint_sram.py --list`): every top with every option on
 (ECC, BANK_PG x2, BIST, READ_LATENCY 2; dual port: WIDTH_B 8, separate clocks), plus single and dual
@@ -138,6 +140,35 @@ is reviewed and added here.
 The structural checks (Ac_unsync01/02, Ac_conv01–04, Ac_glitch03, Ac_sync01, Ar_sync01,
 Ar_unsync01, Clock_sync05/06) report 0 in every run; the Ac_conv rows are 0 because of the W6
 pragmas.
+
+## Standard host: Verilator and GHDL (2026-11-25)
+
+`lint_sram.py` on a standard host lints the same 20 SV configurations with Verilator
+`--lint-only -Wall` and analyses every VHDL file with `ghdl -a --std=08`. The SpyGlass pragmas
+above are not read by Verilator, so its waivers are kept **outside the RTL**, in
+`verification/lint/verilator_waivers.vlt` (passed after `verilator.flags`): the RTL signed off
+on csun.edu is not touched. Each entry names the file, the rule and the signal (`-match` on
+the message), so a new finding on another signal is still reported. Result: 20/20 SV
+configurations clean, 41/41 VHDL files clean (CDC is SpyGlass-only, SKIPPED).
+
+| Class | Verilator rule | Items (all in `design/rtl/verilog/` unless noted) |
+|---|---|---|
+| stubs | all | the port-only vendor-cell stubs (`verification/lint/stubs/`, `verification/work/lint_stubs/`): black boxes, not linted |
+| W1 | UNUSEDSIGNAL, PINCONNECTEMPTY | `sram_core` port B inputs / `rst_b_n` and the `g_no_port_b` constants (`b_busy`, `b_stall`, `b_ecc_corr`, `b_ecc_uncorr`, `b_irq`, `b_rdata`, `b_dom_awake`, `b_dom_err`); `sram_array` `b_wdata_i`, `b_lane_we_i`, `b_saddr`, `b_bank_cs`; the four single-port tops' open `mem_b_*` outputs |
+| W2 | UNUSEDSIGNAL | `sram_core` `b_quiet`, `b_wake_a`, `b_idle`, `b_acc`, `dom_want`, `clr_busy`; `sram_array` `a_rd_slice_q` and its port-B twin `b_rd_slice_q` (read only when port B is the narrower port); `sram_macro_dp_saed14` `b_clk`; `sram_port` `mem_addr_i[1:0]` (byte address bits: words are addressed, lanes come from `mem_be_i`; SpyGlass does not report part-selects); `IP/common/.../claude_ahb_mem_if.sv` `HTRANS[0]` (SEQ / NONSEQ need no distinction: every beat is one memory request) |
+| W4 | PINCONNECTEMPTY, PINMISSING | XPM `sbiterr*` / `dbiterr*`, SKY130 `dout1`, `altsyncram` `q_b` in SINGLE_PORT mode |
+| W5 | WIDTHEXPAND, MULTIDRIVEN | the untyped `INIT_FILE` `"" -> "none" / "UNUSED"` substitution in the XPM / altsyncram leaves (string literals of different lengths); the dual-clock RAM template's two writing processes (`sram_macro_dp_generic` `mem`) |
+
+GHDL waivers (`_GHDL_WAIVERS` in `lint_sram.py`; only the matching diagnostic is dropped):
+
+| Class | File | Diagnostic | Justification |
+|---|---|---|---|
+| W5 | `sram_macro_dp_generic.vhd` | `type of a shared variable must be a protected type` (analysed with `-frelaxed`, which makes the VHDL-2008 error a warning) | the dual-clock RAM template is a plain shared variable, the documented deviation above (Vivado / Quartus infer block RAM from it; a protected type would not be inferred). Yosys' ghdl plugin needs the same `-frelaxed` (`run_vendor_synth.py --yosys`). |
+| W7 | `sram_macro_altera.vhd`, `sram_macro_dp_altera.vhd` | `declaration of "w" / "nlanes" hides generic` (`-Whide`) | `byte_size_of(w, nlanes)` is only called with the generics of the same name |
+
+Negative check (2026-11-25): an unread `logic` added to `sram_core.sv` and to `sram_array.sv`
+in a copy of the tree is reported (`UNUSEDSIGNAL`, configuration FAIL). Note that Verilator
+ignores signals whose name matches its default `--unused-regexp` (`*unused*`).
 
 ## Testbench waivers (verification/)
 

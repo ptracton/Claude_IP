@@ -68,6 +68,14 @@ verification/lint/spyglass/*/*
 *.ghw
 *.vpd
 *.fsdb
+*.wdb
+
+# Vivado / xsim scratch when a tool is run by hand outside the work directories
+*.jou
+*.pb
+.Xil/
+xsim.dir/
+webtalk*
 
 # Python cache
 __pycache__/

@@ -123,6 +123,10 @@ architecture rtl of sram_macro_dp_altera is
 
   signal clken  : std_logic;
   signal clkenb : std_logic;
+  signal wrena  : std_logic;
+  signal wrenb  : std_logic;
+  signal bea    : std_logic_vector(NLANES - 1 downto 0);
+  signal beb    : std_logic_vector(NLANES - 1 downto 0);
   signal qa    : std_logic_vector(W - 1 downto 0);
   signal qb    : std_logic_vector(W - 1 downto 0);
 
@@ -130,6 +134,15 @@ begin
 
   clken  <= (a_cs_i or b_cs_i) when COMMON_CLK /= 0 else a_cs_i;
   clkenb <= '1' when COMMON_CLK /= 0 else b_cs_i;
+  -- With COMMON_CLK both ports are clocked when either is selected: each write
+  -- enable is gated with its own chip select (one we_i drives every slice).
+  -- One lane (NLANES = 1, e.g. a 13-bit ECC slice): byteena tied high and the
+  -- lane enable gates the write enable (Quartus rejects a driven byteena unless
+  -- W / byte_size = 1 with a legal byte size).
+  wrena  <= a_we_i and a_cs_i and a_lane_we_i(0) when NLANES = 1 else a_we_i and a_cs_i;
+  wrenb  <= b_we_i and b_cs_i and b_lane_we_i(0) when NLANES = 1 else b_we_i and b_cs_i;
+  bea    <= (others => '1') when NLANES = 1 else std_logic_vector(a_lane_we_i);
+  beb    <= (others => '1') when NLANES = 1 else std_logic_vector(b_lane_we_i);
 
   u_altsyncram : altsyncram
     generic map (
@@ -171,13 +184,13 @@ begin
       clocken1  => clkenb,
       address_a => std_logic_vector(a_addr_i),
       data_a    => std_logic_vector(a_wdata_i),
-      wren_a    => a_we_i,
-      byteena_a => std_logic_vector(a_lane_we_i),
+      wren_a    => wrena,
+      byteena_a => bea,
       q_a       => qa,
       address_b => std_logic_vector(b_addr_i),
       data_b    => std_logic_vector(b_wdata_i),
-      wren_b    => b_we_i,
-      byteena_b => std_logic_vector(b_lane_we_i),
+      wren_b    => wrenb,
+      byteena_b => beb,
       q_b       => qb
     );
 

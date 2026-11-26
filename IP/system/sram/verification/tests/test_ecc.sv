@@ -188,33 +188,38 @@ task automatic test_ecc();
       row($sformatf("%-6s backdoor: %0d double-bit patterns (adjacent and far) detected",
                     slv[s].name, 2 * mw));
     end
-    // ---- read-path stuck bit (every technology)
-    mw = slv[s].w + ((slv[s].w == 64) ? 8 : (slv[s].w == 32) ? 7 : 6);
-    wr(s, idx, rnd(s));
-    stuck_sweep(s, idx, mw, slv[s].name);
-    row($sformatf("%-6s stuck bit: each of the %0d stored bits at 0 / 1 corrected once",
-                  slv[s].name, mw));
-    inject(sb, 2'b01);
-    wr(s, idx, rnd(s));                          // stored bit 0 flipped
-    for (int k = 1; k < slv[s].w; k++) begin
-      int ne;
-      ne = 0;
-      c0 = n_corr[sb]; u0 = n_uncorr[sb]; i0 = n_irq[sb];
-      for (int v = 0; v < 2; v++) begin
-        stuck(sb, 1'b1, idx, k, v[0], 1'b1);
-        rd_raw(s, idx, rd, er);
-        if (er === 1'b1) ne++;
-        else cmp_lanes(s, idx, rd, all_lanes(s), $sformatf("%s 1-bit + stuck %0d", slv[s].name, k));
-        stuck(sb, 1'b0, idx, k, v[0], 1'b1);
+    // ---- read-path stuck bit (every technology; bench RD_FAULT, BF_OK)
+    if (!BF_OK) begin
+      row($sformatf("%-6s stuck-bit faults SKIPPED (no forces into the DUT on this simulator)",
+                    slv[s].name));
+    end else begin
+      mw = slv[s].w + ((slv[s].w == 64) ? 8 : (slv[s].w == 32) ? 7 : 6);
+      wr(s, idx, rnd(s));
+      stuck_sweep(s, idx, mw, slv[s].name);
+      row($sformatf("%-6s stuck bit: each of the %0d stored bits at 0 / 1 corrected once",
+                    slv[s].name, mw));
+      inject(sb, 2'b01);
+      wr(s, idx, rnd(s));                          // stored bit 0 flipped
+      for (int k = 1; k < slv[s].w; k++) begin
+        int ne;
+        ne = 0;
+        c0 = n_corr[sb]; u0 = n_uncorr[sb]; i0 = n_irq[sb];
+        for (int v = 0; v < 2; v++) begin
+          stuck(sb, 1'b1, idx, k, v[0], 1'b1);
+          rd_raw(s, idx, rd, er);
+          if (er === 1'b1) ne++;
+          else cmp_lanes(s, idx, rd, all_lanes(s), $sformatf("%s 1-bit + stuck %0d", slv[s].name, k));
+          stuck(sb, 1'b0, idx, k, v[0], 1'b1);
+        end
+        chk(ne == 1, $sformatf("%s 1-bit + stuck bit %0d: %0d of 2 reads ERROR, expected 1",
+                               slv[s].name, k, ne));
+        ecc_deltas(sb, c0, u0, i0, 1, 1, 2, $sformatf("%s 1-bit + stuck bit %0d", slv[s].name, k));
       end
-      chk(ne == 1, $sformatf("%s 1-bit + stuck bit %0d: %0d of 2 reads ERROR, expected 1",
-                             slv[s].name, k, ne));
-      ecc_deltas(sb, c0, u0, i0, 1, 1, 2, $sformatf("%s 1-bit + stuck bit %0d", slv[s].name, k));
+      wr(s, idx, rnd(s));
+      rd_chk(s, idx, 0, "stuck sweep healed");
+      row($sformatf("%-6s injected 1-bit + stuck data bit: one ERROR, one correction (x%0d bits)",
+                    slv[s].name, slv[s].w - 1));
     end
-    wr(s, idx, rnd(s));
-    rd_chk(s, idx, 0, "stuck sweep healed");
-    row($sformatf("%-6s injected 1-bit + stuck data bit: one ERROR, one correction (x%0d bits)",
-                  slv[s].name, slv[s].w - 1));
   end
   // ---- dual port dp0
   sb  = SB_DP0;
@@ -257,9 +262,13 @@ task automatic test_ecc();
   ecc_deltas(sb, c0, u0, i0, 0, 0, 0, "dp0 injection used up by a lane-3 write");
   chk(n_busy[sb] == b0, "dp0 byte writes need no RMW");
   row("dp0    injection taken by a write not storing codeword 0: no error; no RMW");
-  wr(SL_DP0A, idx, rnd(SL_DP0A));
-  stuck_sweep(SL_DP0A, idx, 52, "dp0");
-  row("dp0    stuck bit: each of the 52 stored bits (4 codewords) at 0 / 1 corrected once");
+  if (!BF_OK) begin
+    row("dp0    stuck-bit faults SKIPPED (no forces into the DUT on this simulator)");
+  end else begin
+    wr(SL_DP0A, idx, rnd(SL_DP0A));
+    stuck_sweep(SL_DP0A, idx, 52, "dp0");
+    row("dp0    stuck bit: each of the 52 stored bits (4 codewords) at 0 / 1 corrected once");
+  end
   // ---- dp2 (32/32, common clock, 2 banks) through port A
   sb = SB_DP2;
   for (int k = 1; k <= 2; k++) begin

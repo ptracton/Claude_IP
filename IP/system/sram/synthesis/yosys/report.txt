@@ -1,0 +1,40 @@
+==============================================================================
+Yosys Synthesis Report — sram IP (generic cells, TECH = GENERIC)
+Run date : 2026-11-25
+==============================================================================
+
+STATUS: PASS — 24/24 variants
+
+Netlist               Cells  FFs  Memories  Result
+--------------------  -----  ---  --------  ------
+sram_apb              308    34   1         PASS  
+sram_ahb              380    70   1         PASS  
+sram_axi4l            524    172  1         PASS  
+sram_wb               284    31   1         PASS  
+sram_apb_vhdl         312    33   4         PASS  
+sram_ahb_vhdl         389    69   4         PASS  
+sram_axi4l_vhdl       529    171  4         PASS  
+sram_wb_vhdl          288    31   4         PASS  
+sram_apb_opts         1435   217  2         PASS  
+sram_ahb_opts         1531   253  2         PASS  
+sram_axi4l_opts       1631   355  2         PASS  
+sram_wb_opts          1396   215  2         PASS  
+sram_apb_opts_vhdl    1461   217  2         PASS  
+sram_ahb_opts_vhdl    1521   253  2         PASS  
+sram_axi4l_opts_vhdl  1676   355  2         PASS  
+sram_wb_opts_vhdl     1427   215  2         PASS  
+sram_apb_dp           2050   317  13        PASS  
+sram_ahb_dp           2178   388  13        PASS  
+sram_axi4l_dp         2451   546  13        PASS  
+sram_wb_dp            1604   176  13        PASS  
+sram_apb_dp_vhdl      2573   549  8         PASS  
+sram_ahb_dp_vhdl      2701   620  8         PASS  
+sram_axi4l_dp_vhdl    2980   778  8         PASS  
+sram_wb_dp_vhdl       2093   406  8         PASS  
+
+Configurations: base = WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE; opts = base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2; dp = opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+(dp on FPGA: COMMON_CLK 0 on every variant.)
+Memories = $mem cells, plus unmerged memories ($memrd / $memwr) for the VHDL dual-port
+netlists: Yosys 0.60 memory_collect / write_verilog assert on the ghdl plugin's dual-clock RAM
+(kernel/mem.cc port.clk == wport.clk), so those skip the memory pass and are written as RTLIL (.il).
+==============================================================================

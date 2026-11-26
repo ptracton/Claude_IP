@@ -237,6 +237,14 @@ On csun.edu also run Design Compiler's `analyze` / `elaborate` on every top
 `VerilogCodingStyle.md` "`string` parameters"). The sram found this only at
 Step 10 and had to rewrite and re-verify its VHDL.
 
+FPGA technology leaves (vendor memory wrappers) need the same early check: elaborate them
+in Vivado xsim (`-L xpm`, Quartus `altera_mf`) and run Vivado / Quartus synthesis on them
+before Step 4. The sram simulated them only at the end (2026-11-25) and found four leaf bugs
+there (XPM `MEMORY_PRIMITIVE "auto"` with a sleep pin, altsyncram dual-port write enables
+not gated by chip select, a driven `byteena` on a single 39-bit lane, a VHDL `altsyncram`
+component without port-B generics; rules in `synthesis.md`). Quartus Lite reads only
+SystemVerilog-2005, so it needs generated copies of the SV (`synthesis.md`, Quartus).
+
 ### 7. Update `README.md`
 
 Replace the `[TBD]` placeholders in these two sections:

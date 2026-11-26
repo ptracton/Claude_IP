@@ -7,7 +7,9 @@
 # The project lives in $SRAM_OUT_DIR/$SRAM_NAME/.
 #
 # The array must map to M10K blocks (altsyncram); the runner fails a variant
-# whose map report shows no block memory bits.
+# whose map report shows no block memory bits. SV variants are read from the
+# SystemVerilog-2005 copies written by quartus_sv.py (Quartus Lite rejects
+# implicit generate regions, genvar in for headers and header localparams).
 
 package require ::quartus::project
 package require ::quartus::flow
@@ -19,6 +21,9 @@ set LANG     $::env(SRAM_LANG)
 set CLK_A    $::env(SRAM_CLK_A)
 set CLK_B    $::env(SRAM_CLK_B)
 set WORK_DIR "$::env(SRAM_OUT_DIR)/$NAME"
+# A fresh project every run: project_new -overwrite keeps the assignments of an
+# existing .qsf, so a re-run would also compile the previous file list.
+file delete -force $WORK_DIR
 file mkdir $WORK_DIR
 
 project_new -overwrite -part $DEVICE $WORK_DIR/$NAME

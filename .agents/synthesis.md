@@ -357,6 +357,16 @@ Write one `.ys` script per bus-interface variant for both SV and VHDL:
 - `ghdl --std=08 <interface.vhd> <common.vhd> ... <variant.vhd> -e IP_NAME_<proto>`.
 - `synth -top IP_NAME_<proto> -flatten`, `stat`, `write_verilog -noattr work/IP_NAME_<proto>_vhdl_synth.v`.
 
+**Lessons from the sram IP (Yosys 0.60, 2026-11-25):**
+- The built-in SV frontend fails on ordinary SV (e.g. `r++` in a constant function). Read SV
+  with the **yosys-slang** plugin instead (`plugin -i slang; read_slang <files> --top X -G ...`),
+  which accepts everything VCS / Design Compiler accept; keep `read_verilog -sv` only where
+  the plugin is missing.
+- GHDL needs `-frelaxed` for a shared variable (the dual-clock true dual-port RAM template).
+- On the ghdl plugin's dual-clock RAM, Yosys 0.60 `memory_collect` / `write_verilog` assert
+  (`kernel/mem.cc` `port.clk == wport.clk`): skip the `memory` pass for those netlists, write
+  RTLIL (`write_rtlil`), and count memories from `stat`'s "memories" line.
+
 Write `synthesis/yosys/run_synth.py`:
 - Invokes Yosys on each SV and VHDL variant script.
 - Parses `stat` output for total cells and flip-flop count.
@@ -383,6 +393,9 @@ Zybo-Z7-10 board).
    - Writes timing summary to `synthesis/vivado/timing_summary.rpt`.
 2. Run via `synthesis/run_vendor_synth.py --vivado`.
 3. Verify WNS ≥ 0 at 100 MHz.
+4. RTL rule for XPM memories (sram 2026-11-25): an `xpm_memory_*` with
+   `WAKEUP_TIME "use_sleep_pin"` needs `MEMORY_PRIMITIVE "block"` (or `"ultra"`); `"auto"` is
+   rejected by DRC 40-42. Check every vendor leaf in xsim (`-L xpm`) as well as in synthesis.
 
 ### Quartus (`synthesis/quartus/`)
 
@@ -400,12 +413,30 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
    - Writes an SDC file if it does not exist; adds it with `SDC_FILE` assignment.
    - Runs `execute_module -tool map`.
    - Calls `project_close` before exiting.
+   - **Deletes the project directory before `project_new`**: `project_new -overwrite` keeps
+     the old `.qsf` file list, so a stale source list survives a re-run.
 2. Run via `synthesis/run_vendor_synth.py --quartus`.
+3. **Quartus Prime Lite / Standard reads SystemVerilog-2005 only** (`SYSTEMVERILOG_2009` is a
+   Pro-edition value). It rejects three constructs that VCS, Xcelium, Verilator, xsim, DC,
+   SpyGlass, VC Formal and Vivado accept: generate constructs without an explicit
+   `generate` / `endgenerate` region, `for (genvar i = ...)`, and `localparam` in the
+   parameter port list. Do not change signed-off RTL for this: give Quartus generated
+   SV-2005 copies instead (sram: `synthesis/quartus/quartus_sv.py` wraps each outermost
+   `g_*`-labelled generate construct, hoists genvars to one declaration per module, turns
+   header `localparam` into `parameter`; copies under `work/<variant>_src/`). This depends on
+   the coding-style rule that every generate block is labelled `g_*`.
+4. altsyncram rules (sram 2026-11-25): with a single byte lane whose width is not a multiple
+   of 8/9 (e.g. a 39-bit ECC word), do not drive `byteena` (error 272006) — tie it high and
+   gate `wren` with the lane enable; a VHDL `altsyncram` component must declare the port-B
+   generics (`width_b`, `widthad_b`, `numwords_b`) even in single-port mode (error 287087); in
+   a common-clock true dual-port RAM gate each `wren_a/b` with that port's chip select.
+5. Report ALMs from the map report's estimate; the flow summary shows N/A before the Fitter.
 
 ### `synthesis/run_vendor_synth.py` — Common
 
-- Accepts `--vivado`, `--quartus` (standard hosts); `--dc`, `--dc90`, `--dc32`, `--dc14`, `--dcsky130` (csun.edu).
-- Default on standard hosts: run Vivado + Quartus.
+- Accepts `--vivado`, `--quartus`, `--yosys` (standard hosts); `--dc`, `--dc90`, `--dc32`, `--dc14`, `--dcsky130` (csun.edu).
+- Default on standard hosts: run Vivado + Quartus + Yosys. Accept `--jobs N` (Vivado needs
+  ~2-3 GB per job) and the `--cfg` / `--proto` / `--lang` filters so one netlist can be re-run.
 - Default on csun.edu: run DC with all four PDKs (`--dc` behavior).
 - Locates tools with `shutil.which`.
 - Invokes each TCL script via `subprocess.run` with `stdout=PIPE, stderr=STDOUT`.

@@ -47,6 +47,11 @@ architecture rtl of sram_macro_altera is
       widthad_a                     : natural := 1;
       numwords_a                    : natural := 0;
       width_byteena_a               : natural := 1;
+      -- Port B is unused in SINGLE_PORT mode; declared so its widths have a
+      -- legal value (Quartus otherwise sizes altsyncram's data_b / q_b from 0).
+      width_b                       : natural := 1;
+      widthad_b                     : natural := 1;
+      numwords_b                    : natural := 1;
       byte_size                     : natural := 8;
       outdata_reg_a                 : string  := "UNREGISTERED";
       outdata_aclr_a                : string  := "NONE";
@@ -84,9 +89,17 @@ architecture rtl of sram_macro_altera is
     return 8;
   end function byte_size_of;
 
-  signal q : std_logic_vector(W - 1 downto 0);
+  signal q    : std_logic_vector(W - 1 downto 0);
+  signal wren : std_logic;
+  signal be   : std_logic_vector(NLANES - 1 downto 0);
 
 begin
+
+  -- One lane (NLANES = 1, e.g. an ECC word): no byte enables. Quartus accepts a
+  -- driven byteena_a only if W / byte_size = 1 with a legal byte size; be is
+  -- tied high and the lane enable gates wren instead (the same write).
+  wren <= we_i and lane_we_i(0) when NLANES = 1 else we_i;
+  be   <= (others => '1') when NLANES = 1 else std_logic_vector(lane_we_i);
 
   u_altsyncram : altsyncram
     generic map (
@@ -112,8 +125,8 @@ begin
       clocken0  => cs_i,
       address_a => std_logic_vector(addr_i),
       data_a    => std_logic_vector(wdata_i),
-      wren_a    => we_i,
-      byteena_a => std_logic_vector(lane_we_i),
+      wren_a    => wren,
+      byteena_a => be,
       q_a       => q
     );
 

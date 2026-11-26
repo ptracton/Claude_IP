@@ -1,8 +1,9 @@
 // sram_macro_xilinx.sv — Xilinx XPM single-port RAM wrapper (TECH_XILINX).
 //
-// Wraps one xpm_memory_spram (Vivado XPM library) of W x D: Vivado picks and
-// cascades block RAM / UltraRAM itself (MEMORY_PRIMITIVE = "auto"), so the
-// wrapper is not tiled. One-cycle read latency, lane writes
+// Wraps one xpm_memory_spram (Vivado XPM library) of W x D: Vivado cascades
+// the block RAMs itself, so the wrapper is not tiled. MEMORY_PRIMITIVE is
+// "block": XPM accepts the sleep pin only on block RAM / UltraRAM (DRC
+// XPM_MEMORY 40-42 rejects "auto" with WAKEUP_TIME = "use_sleep_pin"). One-cycle read latency, lane writes
 // (BYTE_WRITE_WIDTH_A = W / NLANES: 8 with byte enables, else W).
 //   ena  = cs_i, wea = we_i ? lane_we_i : 0, addra, dina, douta.
 //   sleep = ls_i | ds_i | sd_i with WAKEUP_TIME = "use_sleep_pin": the
@@ -47,7 +48,7 @@ module sram_macro_xilinx #(
     .MEMORY_INIT_FILE   (InitFile),
     .MEMORY_INIT_PARAM  ("0"),
     .MEMORY_OPTIMIZATION("true"),
-    .MEMORY_PRIMITIVE   ("auto"),
+    .MEMORY_PRIMITIVE   ("block"),
     .MEMORY_SIZE        (W * D),
     .MESSAGE_CONTROL    (0),
     .READ_DATA_WIDTH_A  (W),

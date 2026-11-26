@@ -1,0 +1,39 @@
+==============================================================================
+Quartus Synthesis Report — sram IP (5CSEMA4U23C6, TECH = ALTERA)
+Run date : 2026-11-25
+==============================================================================
+
+STATUS: PASS — 24/24 variants
+
+Netlist               ALMs (est.)  Registers  Block mem bits  Result
+--------------------  -----------  ---------  --------------  ------
+sram_apb              103          32         32768           PASS  
+sram_ahb              113          70         32768           PASS  
+sram_axi4l            133          170        32768           PASS  
+sram_wb               104          32         32768           PASS  
+sram_apb_vhdl         100          32         32768           PASS  
+sram_ahb_vhdl         108          70         32768           PASS  
+sram_axi4l_vhdl       130          170        32768           PASS  
+sram_wb_vhdl          101          32         32768           PASS  
+sram_apb_opts         336          222        39936           PASS  
+sram_ahb_opts         354          260        39936           PASS  
+sram_axi4l_opts       398          360        39936           PASS  
+sram_wb_opts          333          222        39936           PASS  
+sram_apb_opts_vhdl    355          222        39936           PASS  
+sram_ahb_opts_vhdl    369          260        39936           PASS  
+sram_axi4l_opts_vhdl  373          360        39936           PASS  
+sram_wb_opts_vhdl     354          222        39936           PASS  
+sram_apb_dp           445          205        53248           PASS  
+sram_ahb_dp           422          280        53248           PASS  
+sram_axi4l_dp         471          434        53248           PASS  
+sram_wb_dp            442          205        53248           PASS  
+sram_apb_dp_vhdl      439          205        53248           PASS  
+sram_ahb_dp_vhdl      448          280        53248           PASS  
+sram_axi4l_dp_vhdl    484          434        53248           PASS  
+sram_wb_dp_vhdl       436          205        53248           PASS  
+
+Configurations: base = WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE; opts = base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2; dp = opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+(dp on FPGA: COMMON_CLK 0 on every variant.)
+SV netlists are synthesized from the SystemVerilog-2005 copies written by synthesis/quartus/quartus_sv.py
+(work/<netlist>_src/; Quartus Lite needs explicit generate regions, no genvar in for headers, no header localparams).
+==============================================================================
