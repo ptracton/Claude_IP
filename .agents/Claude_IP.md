@@ -279,6 +279,66 @@ csun.edu re-run is recommended. First applied: sram plan §20.
 
 ---
 
+## Design-for-Test Rule (mandatory for all sub-agents)
+
+**RULE (user, 2026-11-26) — Every IP is scan-ready.** Synthesizing any SoC built from
+this library must give scan flops, scan chains and a JTAG / boundary-scan chain with no
+change to any IP's RTL. Full background: `.agents/IP_PLAN.md` §3.9 (decision D7).
+
+**Scope.** The rule applies to every new IP from its first RTL (Step 3). The timer, sram
+and bus_matrix predate it and do not have the ports yet. They are retrofitted in a
+planned revision that includes the csun.edu re-runs; do not retrofit them as a side
+effect of other work (Signed-Off Code Rule). **This is an exception to "the timer wins":
+for DFT ports and rules, this section and `rtl.md` §4c win over the timer.**
+
+**Ports, on every top-level of every IP (every protocol variant, SV and VHDL):**
+
+| Port | Dir | Width | Meaning |
+|---|---|---|---|
+| `test_mode_i` | in | 1 | 1 = chip in scan / ATPG test mode; static for the whole test |
+| `scan_en_i` | in | 1 | 1 = scan shift, 0 = capture; only meaningful while `test_mode_i` = 1 |
+
+- Active high, and not affected by the reset-polarity parameter.
+- Tied to 0 in functional use, on FPGA, and in every directed and UVM testbench, unless a
+  test is specifically about DFT behavior. Synthesis then removes the logic.
+- Scan-chain data ports (`scan_in` / `scan_out`) are **not** RTL ports. DFT Compiler creates
+  and stitches them at SoC level.
+- An IP with no clock cell, internal reset, self-timed logic, memory or secret (most simple
+  peripherals) still has both ports, so the SoC generator can wire every IP the same way
+  and the port list never changes when such logic is added later. Consume them with the
+  style guide's unused-signal idiom (SV `logic unused_test; assign unused_test = ^{test_mode_i, scan_en_i};`,
+  the VHDL equivalent), and give the waiver its standard class (DFT0) in `waivers.md`.
+
+**The seven RTL rules:**
+
+1. **Clocks are controllable from the test clock.** Clock logic exists only inside the
+   shared `claude_clk_*` cells (the clock-crossing rule above already forbids it elsewhere).
+   In test mode, clock gates are forced on (`TE = scan_en_i | test_mode_i`), clock muxes
+   select the test clock and dividers bypass to their source clock.
+2. **Resets are controllable in test mode.** Any reset generated inside the chip (watchdog,
+   soft-reset bits, debug `ndmreset`, reset-synchronizer outputs) is forced inactive, or
+   replaced by the top-level reset pin, while `test_mode_i` = 1.
+3. **No combinational loops, no latches outside the clock-gate cells, and no flops clocked
+   by data signals.**
+4. **Self-timed logic stops in test mode** (TRNG ring oscillators, any other oscillator).
+5. **Memories are tested by MBIST, not scan.** In test mode, memory macros and inferred RAMs
+   get a bypass or observation flops (`test_mode_i`) so the logic around them stays
+   ATPG-testable.
+6. **CDC synchronizers stay ordinary flops** and are scanned like the rest (`claude_sync`,
+   `claude_pulse_sync` need no change). During shift every clock is the test clock.
+7. **Scan must not leak secrets.** Key registers (key store, AES key and state, HMAC key)
+   are cleared when `test_mode_i` rises. The lifecycle controller can forbid test mode in
+   production.
+
+Every deviation is a documented exception at the line where it occurs (Coding Standards,
+"no undocumented deviations") and is listed in the IP's README under Known Limitations.
+
+**How it is checked:** `rtl.md` §4c (design and quality gate), `lint.md` (DFT checks),
+`synthesis.md` (Design Compiler `dft_drc` per IP; functional STA with the test ports held
+at 0), and at SoC level the scan insertion and ATPG flow in `.agents/IP_PLAN.md` §3.9.
+
+---
+
 ## Coding Standards (mandatory for all sub-agents)
 
 All generated RTL and testbench code **must** conform to the project coding style guides:

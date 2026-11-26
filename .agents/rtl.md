@@ -199,6 +199,32 @@ LOAD register description: "LOAD=0 is treated as 1 in repeat mode."
 This also affects testbench COUNT read-only tests — see `directed_tests.md` for the
 read-before/write/read-after pattern that avoids hardcoded expected values.
 
+### 4c. Design-for-test (DFT) ports and rules (mandatory, user 2026-11-26)
+
+The full rule is in `Claude_IP.md`, "Design-for-Test Rule". In this step:
+
+- **Ports.** Add `test_mode_i` and `scan_en_i` (1 bit each, active high) to every top-level
+  (`IP_NAME_<proto>`) in SV and VHDL, and to `IP_NAME_core`. The top-level passes them
+  straight to the core (named connections, no logic, as for every other port). The
+  regfile and the `claude_<proto>_if` bridges do not take them.
+- **Port order.** Place them last in the port list, after the IP-specific ports, under a
+  `// DFT` comment, so every IP's top-level has the same tail.
+- **Unused.** If the core has nothing that the rules below act on, consume both with the
+  unused-signal idiom and a one-line comment naming the DFT rule (waiver class DFT0).
+- **Rule checklist for the core (record the answer for each in the README "Design
+  Architecture" section, one line each):**
+  1. Clocks: any gating, muxing or division? Only through `claude_clk_*` cells, with
+     their test inputs driven from `test_mode_i` / `scan_en_i`.
+  2. Resets: any reset generated inside the IP (soft reset, watchdog, timeout)? Gate it
+     with `test_mode_i` so it is inactive in test mode.
+  3. No combinational loops, no latches, no flops clocked by data signals.
+  4. Oscillators or other self-timed logic: stopped when `test_mode_i` = 1.
+  5. Memories: bypass or observation flops in test mode; MBIST covers the array.
+  6. Synchronizers: ordinary flops, nothing to do.
+  7. Secrets: cleared on the rising edge of `test_mode_i`.
+- **Behavioral model** (`design/behavioral/IP_NAME_model.sv`): models functional mode only
+  (`test_mode_i` = 0).
+
 ### 5. Style and documentation requirements
 
 - Every port in every module/entity is documented with an inline comment.
@@ -289,3 +315,7 @@ Replace the `[TBD]` placeholders in these two sections:
 - No bus protocol signals reach `IP_NAME_core` — they are fully absorbed by `claude_<proto>_if`.
 - No hardcoded widths; all widths are driven from parameters/generics.
 - All style-guide rules followed (no tabs, correct naming, explicit widths, etc.).
+- **DFT:** every top-level and `IP_NAME_core` has `test_mode_i` and `scan_en_i` (last, under
+  `// DFT`), identical in SV and VHDL. The README answers the seven-rule checklist of §4c.
+  No clock gating, muxing or division outside `claude_clk_*` cells; no latches; no
+  internally generated reset that is not gated by `test_mode_i`.

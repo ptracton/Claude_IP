@@ -116,6 +116,23 @@ Key requirements:
 - Create output directories with `file mkdir` before the synthesis loop.
 - Timing constraint: 100 MHz (`create_clock -period 10 <clk_port>`).
 - Compile: `compile -map_effort low`.
+- **DFT (mandatory, user 2026-11-26; rule in `Claude_IP.md`, "Design-for-Test Rule"):**
+  - Functional constraints hold the test ports at 0: `set_case_analysis 0 [get_ports
+    {test_mode_i scan_en_i}]`. These go in the SDC written for PrimeTime, so STA is
+    functional-mode STA.
+  - **Scan-readiness check per variant:** after `compile`, define
+    `set_dft_signal -view existing_dft -type Constant -port test_mode_i -active_state 1`,
+    `set_dft_signal -view spec -type ScanEnable -port scan_en_i -active_state 1` and the
+    clock port as the test clock (`-type ScanClock`), run `create_test_protocol` and
+    `dft_drc`, and write `reports/$PDK_TARGET/<variant>[_vhdl]_dft_drc.rpt`. **Gate: zero
+    DRC violations** (no uncontrollable clocks or resets, no latches outside clock gates).
+    A violation that a rule allows (for example a memory macro's black box, rule 5) is
+    listed in `synthesis/known_issues.md`.
+  - **Do not insert scan at IP level.** The IP netlists stay non-scan so gate-level
+    simulation and power match the functional design. Scan insertion, compression, ATPG
+    (TestMAX) and pattern simulation run on the SoC (`.agents/IP_PLAN.md` §3.9).
+  - If DFT Compiler is not licensed, log `DFT DRC: SKIPPED (no license)`; the SpyGlass DFT
+    goal (lint step) then has to pass.
 
 #### `synthesis/run_vendor_synth.py` — Design Compiler section
 
@@ -450,6 +467,10 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
 - Any synthesis warning from RTL sources must be resolved or documented in
   `synthesis/known_issues.md` (warning text, tool, line, root cause, disposition).
 - Update `README.md` — **Synthesis Results** section with actual numbers and dates.
+- DFT ports in the FPGA / Yosys flows: the IP-level (out-of-context) runs leave
+  `test_mode_i` / `scan_en_i` as free inputs, so the reported area includes the small DFT
+  logic (for example test-mode reset gating). Report that as is. SoC tops tie both ports
+  to 0, and the logic disappears there.
 
 ## IPs with SRAM macros, power domains or several configurations (sram, 2026-11-25)
 

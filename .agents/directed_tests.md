@@ -116,6 +116,10 @@ Each SV testbench:
   `${IP_COMMON_PATH}/verification/tasks/`.
 - Calls the shared test tasks from `verification/tests/`.
 - Calls `$finish(1)` on any assertion failure.
+- Ties the DFT ports to 0 (`test_mode_i = 1'b0`, `scan_en_i = 1'b0`) from time 0. The VHDL
+  benches do the same. Only a test that checks DFT behavior (for example test-mode reset
+  gating or key clearing, `Claude_IP.md` "Design-for-Test Rule") may drive them, and it
+  returns them to 0 before the next test.
 - **Starts with `` `timescale 1ns / 1ps ``** — every SV testbench-side file (TB
   top, BFM wrappers, memory models), not just the top. `-timescale=` on the
   command line only covers files compiled *before* the first `` `timescale ``

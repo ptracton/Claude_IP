@@ -248,7 +248,8 @@ UVM_MACROS_INC = <vivado_root>/data/xsim/system_verilog/uvm_include
 
 Use `` `timescale 1ns/1ps `` at the top of the testbench. Provide clock (10 ns period)
 and active-low reset (8-cycle de-assertion). Set the VIF in `uvm_config_db` before
-`run_test()`.
+`run_test()`. Tie the DFT ports `test_mode_i` and `scan_en_i` to 0 in the testbench top
+(`Claude_IP.md`, "Design-for-Test Rule"); the UVM environment models functional mode only.
 
 **The driver must drive every master output idle from time 0** (blocking
 assignments to the VIF at the start of `run_phase`, before waiting for

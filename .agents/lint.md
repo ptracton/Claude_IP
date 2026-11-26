@@ -79,6 +79,23 @@ resolved without extra configuration in each IP.
      (VHDL on csun.edu) does not count as a failure.
 6. Coordinate with the `regression` sub-agent (Step 8): `lint_IP_NAME.py` exit code
    must be propagated correctly by `regression_IP_NAME.py`.
+7. **DFT checks (mandatory, user 2026-11-26; rule in `Claude_IP.md`, "Design-for-Test
+   Rule").** `lint_IP_NAME.py` runs them on every host and reports them as their own
+   result line (`DFT: PASS / FAIL`):
+   - **Port check (Python, all hosts):** every SV and VHDL top-level and `IP_NAME_core`
+     declares `test_mode_i` and `scan_en_i` as 1-bit inputs. Parse the port lists; a
+     missing or misnamed port is a FAIL.
+   - **Latches and loops (Verilator, GHDL):** `LATCH`, `NOLATCH`-less `always_latch`,
+     `UNOPTFLAT` (combinational loop) and GHDL's latch inference warnings are never waived
+     in RTL. The only latch allowed is inside the `claude_clk_gate` cell, waived once in
+     `IP/common`.
+   - **Unused DFT ports:** the DFT0 waiver class (unused-signal idiom) is the only accepted
+     waiver for `test_mode_i` / `scan_en_i`.
+   - **SpyGlass DFT (csun.edu):** run the `dft/dft_scan_ready` goal on every SV top-level
+     with `test_mode_i` = 1 and `scan_en_i` as the scan enable (SGDC: `test_mode`,
+     `scan_enable`, `clock -testclock`). Same parsing and noise-filter rules as the lint goal.
+     If the DFT goal is not licensed, log `DFT (SpyGlass): SKIPPED (no license)`; the
+     Design Compiler `dft_drc` check in Step 10 then has to pass.
 
 ### SpyGlass (csun.edu only, SV lint)
 
@@ -202,6 +219,8 @@ out of the RTL (first used by the sram IP, 2026-11-25):
   (`reference_spyglass_lint.md`, CDC; sram `lint_sram.py` `_CDC_INFO_RULES`).
 
 **All hosts:**
+- The DFT checks (item 7) pass: port check PASS on every top-level and the core, no
+  latches or combinational loops in RTL, and no waiver on the DFT ports other than DFT0.
 - Every RTL waiver in `verification/lint/waivers.md` has a corresponding
   suppression — a pragma at that exact line in the source, or (Verilator / GHDL on
   signed-off RTL) a file + rule + signal entry in `verilator_waivers.vlt` / the GHDL
