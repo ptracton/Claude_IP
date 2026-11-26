@@ -1,0 +1,55 @@
+========================================================================================================
+PrimeTime STA Report — sram IP
+Target        : SKY130 (130nm) — standard cells ff_n40C_1v95 (best case)
+SRAM macros   : OpenRAM sky130_sram_* at TT 1.8 V 25 C at every corner (only corner shipped)
+Constraints   : DC's .sdc per netlist (100 MHz, 3.0 ns I/O delay; dp port B on clk_b);
+                ideal clocks; DC's wire-load model per netlist (no parasitics)
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-11-25
+========================================================================================================
+
+STATUS: PASS — 24/24 netlists meet setup and hold.
+        Approximate: macro timing is TT at this corner (synthesis/known_issues.md).
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb                  Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+  sram_ahb                  Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+  sram_axi4l                Small        -     +3.687      0.000     0    +0.296     0.000     0  MET
+  sram_wb                   Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+  sram_apb_vhdl             Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+  sram_ahb_vhdl             Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+  sram_axi4l_vhdl           Small        -     +3.674      0.000     0    +0.296     0.000     0  MET
+  sram_wb_vhdl              Small        -     +1.424      0.000     0    +0.299     0.000     0  MET
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_opts             Small        -     +3.346      0.000     0    +0.290     0.000     0  MET
+  sram_ahb_opts             Small        -     +3.346      0.000     0    +0.292     0.000     0  MET
+  sram_axi4l_opts           Small        -     +3.346      0.000     0    +0.292     0.000     0  MET
+  sram_wb_opts              Small        -     +3.346      0.000     0    +0.292     0.000     0  MET
+  sram_apb_opts_vhdl        Small        -     +3.346      0.000     0    +0.290     0.000     0  MET
+  sram_ahb_opts_vhdl        Small        -     +3.346      0.000     0    +0.290     0.000     0  MET
+  sram_axi4l_opts_vhdl      Small        -     +3.346      0.000     0    +0.290     0.000     0  MET
+  sram_wb_opts_vhdl         Small        -     +3.346      0.000     0    +0.290     0.000     0  MET
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_dp               Small        -     +3.365      0.000     0    +0.283     0.000     0  MET
+  sram_ahb_dp               Small        -     +3.365      0.000     0    +0.279     0.000     0  MET
+  sram_axi4l_dp             Small        -     +3.365      0.000     0    +0.283     0.000     0  MET
+  sram_wb_dp                Small        -     +3.365      0.000     0    +0.279     0.000     0  MET
+  sram_apb_dp_vhdl          Small        -     +3.365      0.000     0    +0.279     0.000     0  MET
+  sram_ahb_dp_vhdl          Small        -     +3.365      0.000     0    +0.283     0.000     0  MET
+  sram_axi4l_dp_vhdl        Small        -     +3.365      0.000     0    +0.279     0.000     0  MET
+  sram_wb_dp_vhdl           Small        -     +3.365      0.000     0    +0.283     0.000     0  MET
+
+WNS / TNS in ns; NVP = violating endpoints. DC WNS = Design Compiler's worst slack for the
+same netlist (synthesis corner only), for correlation.
+
+Per-netlist reports : synthesis/primetime/reports/ff_n40C_1v95/
+Full log            : synthesis/primetime/pt_ff_n40C_1v95_run.log
+========================================================================================================

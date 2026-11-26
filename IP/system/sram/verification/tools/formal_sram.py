@@ -60,7 +60,8 @@ COMMON_RTL = ["claude_sync", "claude_pulse_sync"]
 
 VCF_DIR = "verification/formal/vcf"
 WAIVERS = f"{VCF_DIR}/sram_fv_waivers.txt"
-CHECKERS = ["sram_core_fv.sv", "sram_array_fv.sv", "sram_pwr_fv.sv", "sram_leaf_fv.sv"]
+CHECKERS = ["sram_core_fv.sv", "sram_array_fv.sv", "sram_pwr_fv.sv", "sram_leaf_fv.sv",
+            "sram_port_fv.sv"]
 
 # TECH_GENERIC power timing (sram_pkg::pwr_enter_cycles / pwr_wake_cycles)
 GENERIC_TIMING = {"ENTER_CYC": 2, "WAKE_LS": 2, "WAKE_DS": 4, "WAKE_SD": 8}
@@ -137,8 +138,11 @@ def leaf_geometry(p):
         lanes, mw = width // cw, (width // cw) * (cw + ecc_check_bits(cw))
     else:
         lanes, mw = (width // 8 if p["BYTE_EN"] else 1), width
+    leaf_ecc = 1 if ecc and not p["DUAL_PORT"] else 0
+    # a_word_ok (sram_leaf_fv): one leaf, one power domain, no BIST.
+    leaf_clr = 1 if leaf_ecc and p["NUM_BANKS"] == 1 and not p["BIST_EN"] else 0
     return {"LEAF_W": mw, "LEAF_NLANES": lanes, "LEAF_D": p["DEPTH"] // p["NUM_BANKS"],
-            "LEAF_ECC": 1 if ecc and not p["DUAL_PORT"] else 0}
+            "LEAF_ECC": leaf_ecc, "LEAF_CLR": leaf_clr}
 
 
 def write_cfg(path, name, p):
@@ -164,6 +168,8 @@ def write_cfg(path, name, p):
     lines += [f"`define SRAM_FV_{k} {v}" for k, v in vals.items()]
     if not p["DUAL_PORT"]:             # sram_macro_generic exists (see the binds)
         lines.append("`define SRAM_FV_LEAF_BIND")
+    if vals["LEAF_CLR"]:               # the leaf bind reads sram_clr's state
+        lines.append("`define SRAM_FV_LEAF_CLR_BIND")
     lines += ["`endif", ""]
     os.makedirs(path, exist_ok=True)
     with open(os.path.join(path, "sram_fv_cfg.svh"), "w") as fh:

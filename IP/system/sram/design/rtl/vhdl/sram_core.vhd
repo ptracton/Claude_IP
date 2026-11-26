@@ -37,10 +37,10 @@ entity sram_core is
     NUM_BANKS        : positive := 1;              -- banks (power of two)
     BIST_EN          : natural  := 0;              -- March C- engine (0 / 1)
     DUAL_PORT        : natural  := 0;              -- second bus port mem_b_* (0 / 1)
-    WIDTH_B          : positive := WIDTH;          -- port B data width (multiple of 8)
-    BYTE_EN_B        : natural  := BYTE_EN;        -- port B byte-lane writes
-    PARTIAL_WR_ERR_B : natural  := PARTIAL_WR_ERR; -- port B partial-write error
-    READ_LATENCY_B   : positive := READ_LATENCY;   -- port B: 1 or 2
+    WIDTH_B          : natural := 0;             -- port B data width (multiple of 8); 0 = WIDTH
+    BYTE_EN_B        : natural := 2;             -- port B byte-lane writes; 2 = BYTE_EN
+    PARTIAL_WR_ERR_B : natural := 2;             -- port B partial-write error; 2 = PARTIAL_WR_ERR
+    READ_LATENCY_B   : natural := 0;             -- port B: 1 or 2; 0 = READ_LATENCY
     COMMON_CLK       : natural  := 1;              -- 1: clk_b is clk; 0: separate
     INIT_FILE        : string   := ""              -- preload (GENERIC/FPGA)
   );
@@ -66,10 +66,10 @@ entity sram_core is
     mem_b_gnt_o      : out std_ulogic;                                -- request accepted
     mem_b_we_i       : in  std_ulogic;                                -- 1 = write
     mem_b_addr_i     : in  std_ulogic_vector(ADDR_W - 1 downto 0);    -- byte address
-    mem_b_be_i       : in  std_ulogic_vector(WIDTH_B / 8 - 1 downto 0); -- byte enables
-    mem_b_wdata_i    : in  std_ulogic_vector(WIDTH_B - 1 downto 0);   -- write data
+    mem_b_be_i       : in  std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) / 8 - 1 downto 0); -- byte enables
+    mem_b_wdata_i    : in  std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) - 1 downto 0);   -- write data
     mem_b_rvalid_o   : out std_ulogic;                                -- response
-    mem_b_rdata_o    : out std_ulogic_vector(WIDTH_B - 1 downto 0);   -- read data
+    mem_b_rdata_o    : out std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) - 1 downto 0);   -- read data
     mem_b_err_o      : out std_ulogic;                                -- response is an error
 
     -- Power
@@ -99,15 +99,23 @@ end entity sram_core;
 
 architecture rtl of sram_core is
 
+  -- Port B options with the generics' "same as port A" defaults resolved
+  -- (VHDL-93 form: Design Compiler does not accept a generic default that
+  -- refers to another generic).
+  constant WIDTH_B_C          : positive := pick(WIDTH_B, 0, WIDTH);
+  constant BYTE_EN_B_C        : natural  := pick(BYTE_EN_B, 2, BYTE_EN);
+  constant PARTIAL_WR_ERR_B_C : natural  := pick(PARTIAL_WR_ERR_B, 2, PARTIAL_WR_ERR);
+  constant READ_LATENCY_B_C   : positive := pick(READ_LATENCY_B, 0, READ_LATENCY);
+
   constant NPD_C           : positive := num_domains(BANK_PG, NUM_BANKS);
   constant IDX_W_C         : positive := clog2(DEPTH);
-  constant DEPTH_B_C       : positive := WIDTH * DEPTH / WIDTH_B;
+  constant DEPTH_B_C       : positive := WIDTH * DEPTH / WIDTH_B_C;
   constant IDX_W_B_C       : positive := clog2(DEPTH_B_C);
-  constant CW_C            : positive := ecc_cw(WIDTH, WIDTH_B, DUAL_PORT);
+  constant CW_C            : positive := ecc_cw(WIDTH, WIDTH_B_C, DUAL_PORT);
   constant MW_C            : positive := stored_width(WIDTH, CW_C, ECC_EN);
-  constant MW_B_C          : positive := stored_width(WIDTH_B, CW_C, ECC_EN);
+  constant MW_B_C          : positive := stored_width(WIDTH_B_C, CW_C, ECC_EN);
   constant NLANES_C        : positive := stored_lanes(WIDTH, CW_C, BYTE_EN, ECC_EN);
-  constant NLANES_B_C      : positive := stored_lanes(WIDTH_B, CW_C, BYTE_EN_B, ECC_EN);
+  constant NLANES_B_C      : positive := stored_lanes(WIDTH_B_C, CW_C, BYTE_EN_B_C, ECC_EN);
   constant BANKS_PER_DOM_C : positive := NUM_BANKS / NPD_C;
   constant ASYNC_C         : boolean  := DUAL_PORT /= 0 and COMMON_CLK = 0;
 
@@ -120,8 +128,8 @@ architecture rtl of sram_core is
     return 0;
   end function shift_of;
 
-  constant SH_A_C : natural := shift_of(WIDTH, WIDTH_B);
-  constant SH_B_C : natural := shift_of(WIDTH_B, WIDTH);
+  constant SH_A_C : natural := shift_of(WIDTH, WIDTH_B_C);
+  constant SH_B_C : natural := shift_of(WIDTH_B_C, WIDTH);
 
   function wide_idx(idx : std_ulogic_vector; sh : natural) return unsigned is
   begin
@@ -242,16 +250,16 @@ begin
   assert_bankpg_a : assert BANK_PG = 0 or PWR_GATE /= 0
       report "sram_core: BANK_PG needs PWR_GATE" severity failure;
   assert_width_b_a : assert DUAL_PORT = 0 or
-                            (WIDTH_B mod 8 = 0 and WIDTH_B >= 8 and WIDTH_B <= 128 and
-                             (2 ** clog2(WIDTH / WIDTH_B) = WIDTH / WIDTH_B or
-                              2 ** clog2(WIDTH_B / WIDTH) = WIDTH_B / WIDTH) and
-                             (WIDTH mod WIDTH_B = 0 or WIDTH_B mod WIDTH = 0))
-      report "sram_core: WIDTH_B must be a multiple of 8 in 8..128, WIDTH / WIDTH_B a " &
+                            (WIDTH_B_C mod 8 = 0 and WIDTH_B_C >= 8 and WIDTH_B_C <= 128 and
+                             (2 ** clog2(WIDTH / WIDTH_B_C) = WIDTH / WIDTH_B_C or
+                              2 ** clog2(WIDTH_B_C / WIDTH) = WIDTH_B_C / WIDTH) and
+                             (WIDTH mod WIDTH_B_C = 0 or WIDTH_B_C mod WIDTH = 0))
+      report "sram_core: WIDTH_B_C must be a multiple of 8 in 8..128, WIDTH / WIDTH_B_C a " &
              "power of two" severity failure;
   assert_depth_b_a : assert DUAL_PORT = 0 or (DEPTH_B_C >= 2 and NUM_BANKS <= DEPTH_B_C / 2)
       report "sram_core: DEPTH_B must be >= 2 and >= 2 * NUM_BANKS" severity failure;
-  assert_rl_b_a : assert DUAL_PORT = 0 or READ_LATENCY_B = 1 or READ_LATENCY_B = 2
-      report "sram_core: READ_LATENCY_B must be 1 or 2" severity failure;
+  assert_rl_b_a : assert DUAL_PORT = 0 or READ_LATENCY_B_C = 1 or READ_LATENCY_B_C = 2
+      report "sram_core: READ_LATENCY_B_C must be 1 or 2" severity failure;
   -- SAED14 SRAM2RW: CE1 clocks both ports' writes, CE2 both ports' reads.
   assert_saed14_a : assert not ASYNC_C or TECH /= TECH_SAED14_C
       report "sram_core: TECH_SAED14 two-port macros need COMMON_CLK = 1" severity failure;
@@ -372,7 +380,8 @@ begin
           b_uncorr_i   => b_ecc_uncorr,
           b_irq_i      => b_irq
         );
-    else generate
+    end generate gen_clk_b;
+    gen_clk_b_n : if not ASYNC_C generate
       -- B waits when A accesses the same word this cycle and either writes,
       -- or while A's read-modify-write of that word is pending.
       b_dom_awake <= dom_awake;
@@ -390,16 +399,16 @@ begin
       b_corr_a    <= b_ecc_corr;
       b_uncorr_a  <= b_ecc_uncorr;
       b_irq_a     <= b_irq;
-    end generate gen_clk_b;
+    end generate gen_clk_b_n;
 
     u_port_b : entity work.sram_port(rtl)
       generic map (
         ADDR_W         => ADDR_W,
-        WIDTH          => WIDTH_B,
+        WIDTH          => WIDTH_B_C,
         DEPTH          => DEPTH_B_C,
-        BYTE_EN        => BYTE_EN_B,
-        PARTIAL_WR_ERR => PARTIAL_WR_ERR_B,
-        READ_LATENCY   => READ_LATENCY_B,
+        BYTE_EN        => BYTE_EN_B_C,
+        PARTIAL_WR_ERR => PARTIAL_WR_ERR_B_C,
+        READ_LATENCY   => READ_LATENCY_B_C,
         ECC_EN         => ECC_EN,
         NPD            => NPD_C,
         READ_ONLY      => boolean'pos(TECH = TECH_SKY130_C),
@@ -440,7 +449,8 @@ begin
         err_irq_o     => b_irq,
         busy_o        => b_busy
       );
-  else generate
+  end generate gen_port_b;
+  gen_port_b_n : if not (DUAL_PORT /= 0) generate
     b_dom_awake    <= (others => '0');
     b_dom_err      <= (others => '0');
     b_quiet        <= (others => '1');
@@ -471,7 +481,7 @@ begin
     b_ecc_uncorr   <= '0';
     b_irq          <= '0';
     b_busy         <= '0';
-  end generate gen_port_b;
+  end generate gen_port_b_n;
 
   -- With COMMON_CLK, port B's signals are used directly. With separate
   -- clocks, a domain is busy for port B until B is out of it (b_quiet), and
@@ -481,11 +491,12 @@ begin
     port_wake <= a_wake or (b_wake_a and dom_wakeable);
     dom_busy  <= a_dom_busy or not b_quiet;
     port_idle <= '1' when a_idle = '1' and b_quiet = (b_quiet'range => '1') else '0';
-  else generate
+  end generate gen_b_view;
+  gen_b_view_n : if not ASYNC_C generate
     port_wake <= a_wake or b_wake;
     dom_busy  <= a_dom_busy or b_dom_busy;
     port_idle <= a_idle and b_idle;
-  end generate gen_b_view;
+  end generate gen_b_view_n;
   port_busy    <= a_busy or b_busy_a;
   ecc_corr_o   <= a_ecc_corr or b_corr_a;
   ecc_uncorr_o <= a_ecc_uncorr or b_uncorr_a;
@@ -604,7 +615,8 @@ begin
         wdata_o     => bist_wdata,
         rdata_i     => arr_rdata
       );
-  else generate
+  end generate gen_bist;
+  gen_bist_n : if not (BIST_EN /= 0) generate
     bist_all_ok      <= '0';
     bist_pending     <= '0';
     bist_force       <= '0';
@@ -617,7 +629,7 @@ begin
     bist_we          <= '0';
     bist_idx         <= (others => '0');
     bist_wdata       <= (others => '0');
-  end generate gen_bist;
+  end generate gen_bist_n;
 
   --------------------------------------------------------
   -- Array ownership: BIST, then clear engine, then port --

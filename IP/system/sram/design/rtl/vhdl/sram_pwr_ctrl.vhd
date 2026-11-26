@@ -153,7 +153,8 @@ begin
     busy_o      <= '1' when state_q = StEnter or state_q = StWake or state_q = StClear else '0';
     ack_o       <= ack_q;
 
-  else generate
+  end generate gen_pwr;
+  gen_pwr_n : if not (PWR_GATE /= 0) generate
 
     -- Power modes disabled: always running.
     ls_o        <= '0';
@@ -165,6 +166,6 @@ begin
     busy_o      <= '0';
     ack_o       <= PWR_RUN_C;
 
-  end generate gen_pwr;
+  end generate gen_pwr_n;
 
 end architecture rtl;

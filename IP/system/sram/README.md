@@ -70,10 +70,14 @@ stages:
    - it is a write on SKY130's read-only port B.
 
    Otherwise it accesses the array. An ECC partial write reads the word first.
-2. **Next cycle.** The response is formed: corrected read data, or a
-   read-modify-write write-back.
-3. **Response.** It is returned in the next cycle with `READ_LATENCY = 1`, or
-   one cycle later with `READ_LATENCY = 2`.
+2. **Next cycle (s1).** With `READ_LATENCY = 1` the word read is decoded and
+   the response returned. With `READ_LATENCY = 2`, and for every ECC partial
+   write, the raw word is registered at the array output instead.
+3. **s2** (`READ_LATENCY = 2`, ECC partial writes). The registered word is
+   decoded and the response returned; a read-modify-write merges the strobed
+   bytes, encodes and writes back in this cycle, so with `READ_LATENCY = 1` it
+   answers one cycle later than other accesses. The macro access and the
+   SECDED decode / encode never share a cycle (Step 10 timing closure).
 
 **Array ownership.** Self-test has priority over the clear engine, and the
 clear engine over the bus port(s). A pending engine stops new grants, and
@@ -162,7 +166,7 @@ SKY130 uses 2 rows x 1 column of `32x512`.
 | `DEPTH` | power of two >= 2 | 1024 | words |
 | `BYTE_EN` | 0/1 | 1 | byte-lane writes |
 | `PARTIAL_WR_ERR` | 0/1 | 1 | `BYTE_EN = 0`: a partial write is a bus error (1) or writes the whole word (0) |
-| `READ_LATENCY` | 1/2 | 1 | 2 adds an output register |
+| `READ_LATENCY` | 1/2 | 1 | 2 adds a read pipeline register ahead of the ECC decoder |
 | `PWR_GATE` | 0/1 | 1 | power modes |
 | `ECC_EN` | 0/1 | 0 | SECDED; the array is cleared after reset |
 | `BANK_PG` | 0/1 | 0 | one power domain per bank (needs `PWR_GATE`) |
@@ -244,15 +248,49 @@ changes only once a transition is complete.
 | Mode | Contents | Bus access | SAED32-LP pins | Other ASIC PDKs | FPGA |
 |---|---|---|---|---|---|
 | RUN | kept | normal | none | none | none |
-| LIGHT_SLEEP | kept | wakes automatically (wait states), then re-enters LS | LS | chip select held off; UPF retention | XPM `sleep` / clock enable |
-| DEEP_SLEEP | kept | bus error | DS | chip select held off; periphery off (UPF) | XPM `sleep` / clock enable |
+| LIGHT_SLEEP | kept | wakes automatically (wait states), then re-enters LS | LS | chip select held off; supply on, outputs isolated (UPF) | XPM `sleep` / clock enable |
+| DEEP_SLEEP | kept | bus error | DS | chip select held off; supply on, outputs isolated (UPF) | XPM `sleep` / clock enable |
 | SHUTDOWN | lost; zeroed by the clear engine before RUN is acknowledged | bus error | SD | power switched (UPF), isolation | contents X in simulation |
 
 Entry and wake times come from `sram_pkg::pwr_enter_cycles` /
-`pwr_wake_cycles`. They default to 2/2/4/8 cycles (SAED32: 4/2/8/16) and are to
-be checked against the liberty timing at synthesis. While BIST runs, every
-domain is held in RUN. UPF files for SAED90, SAED14 and SKY130 belong in
-`design/upf/` (Step 10).
+`pwr_wake_cycles`. They default to 2/2/4/8 cycles (SAED32: 4/2/8/16).
+*[Step 10]* The SAED32 values were checked against the SAED32-LP databook
+(Table 1.10; each count holds its state for count + 1 cycles):
+
+| Requirement | Needed | Count | At 100 MHz | Valid up to |
+|---|---|---|---|---|
+| pin active to low-leakage state (tLSI 1.8, tDSI / tSDI 2.5 ns) | 2.5 ns | enter 4 | 50 ns | > 333 MHz |
+| LS release to next access (tLSFCRS) | 1.8 ns | wake 2 | 30 ns | > 333 MHz |
+| DS release to next access (tDSFCRS) | 50 ns | wake 8 | 90 ns | **180 MHz** |
+| SD release to next access (tSDFCRS) | 50 ns | wake 16 (then the clear) | 170 ns | 340 MHz |
+
+The IP is specified at 100 MHz (the macro allows 333 MHz); above 180 MHz the
+deep-sleep wake count must grow. The liberty has no arcs on SD / LS / DS (see
+`synthesis/known_issues.md`), so STA does not check these times; the counts
+are the guarantee. The other PDKs' counts are placeholders (no sleep pins; no
+power-switch ramp data for the UPF switch). While BIST runs, every
+domain is held in RUN.
+
+### Power intent (UPF, Step 10)
+
+`design/upf/sram_<pdk>.upf` (IEEE 1801) sets the PDK's voltage and loads the
+shared `sram_power.upf` at the scope of a bus top-level, after the caller sets
+`SRAM_NPD` and `SRAM_NUM_BANKS` for the configuration:
+
+| PDK | Power intent |
+|---|---|
+| SAED90, SAED14, SKY130 | the macros have no sleep pins: always-on `PD_TOP` (bus interfaces, core control, bank multiplexers) and one switched domain `PD_MEM<d>` per power domain (its macro wrappers). Switch `SW_MEM<d>` on while `u_core/dom_sd[d]` is low (SHUTDOWN only); isolation `ISO_MEM<d>` clamps the domain's outputs to 0 while `u_core/dom_awake[d]` is low (any mode but RUN: it brackets the switch-off). SAED14 connects the single-rail macros' VDD/VSS explicitly |
+| SAED32-LP | one always-on domain: the SRAMLP macros take SD / LS / DS from `sram_pwr_ctrl` |
+
+LIGHT_SLEEP and DEEP_SLEEP keep the supply on (these macros have one supply,
+so "periphery off" cannot be expressed); the core never accesses a domain
+outside RUN. Checked with VC LP by `verification/tools/lp_sram.py` (UPF and
+design stages, 4 PDKs x base / opts / dp): 12/12 PASS, 0 errors; the only
+findings are the isolation cells synthesis has not inserted yet (expected at
+RTL, listed in `verification/lp/lp_results.log`). A copy without the
+isolation strategy fails with 78 `ISO_STRATEGY_MISSING` errors. The DC / STA
+/ post-synthesis netlists are synthesized without the UPF (no isolation or
+switch cells; user decision 2026-11-25).
 
 ## Simulation Results
 
@@ -346,7 +384,9 @@ The same for both languages (identical comparison counts for SV and VHDL):
 
 80/80 runs pass. SKY130 runs make fewer comparisons because port B of its
 dual-port macro is read-only (B writes are checked to get ERROR); only GENERIC
-runs the backdoor checks.
+runs the backdoor checks. Re-run 2026-11-24 on the Step 10 RTL (registered
+ECC read-modify-write, VHDL rewritten to the Design Compiler subset): 80/80
+PASS.
 
 Throughput, 32-bit SRAM at READ_LATENCY 1, attached directly: AHB 16-beat
 INCR burst 33 cycles (2 per beat); APB 32 and Wishbone 32 cycles for 16
@@ -626,6 +666,9 @@ SECDED code, in **both SystemVerilog and VHDL-2008**. The same SVA checkers
 are bound into both languages. For the jobs, the properties, waivers and the
 bugs found, see
 [verification/formal/vcf/README.md](verification/formal/vcf/README.md).
+Re-run 2026-11-25 on the Step 10 RTL: 26/26 jobs PASS; new proven lemmas
+(`sram_leaf_fv a_word_ok`, `sram_port_fv`) make `core_ecc a_err_rule` a full
+proof again.
 
 ```
 python3 verification/tools/formal_sram.py --jobs 3
@@ -709,7 +752,7 @@ python3 verification/tools/uvm_mutants.py        # every mutant must make a test
 
 Results (`verification/work/uvm/results.log`), full matrix 2026-11-23: 4 buses x
 SV/VHDL x 5 technologies x 3 configs x VCS/Xcelium = 240 builds, **1440/1440 test
-runs PASS** (seed 1).
+runs PASS** (seed 1). Re-run 2026-11-24 on the Step 10 RTL: 1440/1440 PASS.
 
 Functional coverage (VCS, covergroups per instance, coverpoints of a feature
 the config lacks have weight 0), merged per configuration over its 40 VCS
@@ -725,7 +768,8 @@ Mutation check (`verification/work/uvm/mutants/results.log`): **9/9 mutants
 killed** — no out-of-range error, a dropped address bit, byte lane 0 always
 written, no err_irq on failed writes, deep sleep accepting accesses, an
 uncorrectable ECC error answering OKAY, no ecc_corr pulse, BIST never failing,
-port B rejecting writes.
+port B rejecting writes. Re-run 2026-11-25 on the Step 10 RTL (registered read-modify-write): 9/9
+killed.
 
 Found while building it: the class scoreboard needs `sram_model`'s port-B
 power-error rule relaxed for separate clocks (the requested mode reaches port B
@@ -775,7 +819,9 @@ python3 $CLAUDE_SRAM_PATH/verification/tools/regression_sram.py --collect  # rep
 The report lists each source file's timestamp, so stale results are visible in `--collect`
 mode. Last report (2026-11-23, `--collect` on csun.edu): **2599/2599 entries pass** — sim
 960/960, UVM 1440/1440, mutants 9/9, formal 26/26, lint 1/1 (24 SpyGlass configurations),
-coverage 163/163.
+coverage 163/163. The Step 10 RTL was re-verified run by run (directed 80/80,
+UVM 1440/1440, mutants 9/9, formal 26/26, lint 24/24, 2026-11-24/25); the
+regression report was not regenerated after it.
 
 ## Lint Results
 
@@ -813,12 +859,14 @@ is waived with the formal proof of the `sram_cdc` handshake (VC Formal `dp_async
 CDC reports its crossings and constraint checks as info rows. Only seven reviewed info
 rules are filtered out (`waivers.md`, "CDC report filter"); any other CDC row counts as a
 finding. This was re-run with that filter on 2026-11-23 20:45: 24/24 PASS.
+Re-run 2026-11-25 (Step 10 RTL: registered read-modify-write, untyped `INIT_FILE`): SV 24/24
+PASS, 0 findings.
 
 Fixed while linting: `sram_ecc_dec.sv` had a dead `stored_overall` net (SV only; no
 functional change — directed sims of all four buses on VCS and Xcelium re-run PASS with
 identical comparison counts). Everything else is configuration-dependent (single-port tops
 carry the core's port B; leaves share one interface; SKY130 port B read-only, SAED14 one
-write clock) or a documented style deviation (`INIT_FILE` string, `$readmemh` preload, the
+write clock) or a documented style deviation (`INIT_FILE` file name, untyped since Step 10, `$readmemh` preload, the
 dual-clock RAM template, `sram_clr` default-then-override).
 
 ```bash
@@ -940,9 +988,23 @@ the next `get_status` sees `busy_o`.
 
 ## Synthesis Results
 
-> Populated by Step 10 (synthesis)
+Step 10, csun.edu, 2026-11-25. Details: `synthesis/known_issues.md` and the
+per-target reports.
 
-[TBD]
+| Flow | Runner | Result |
+|---|---|---|
+| Design Compiler (24 netlists per PDK: base / opts / dp x 4 buses x SV / VHDL, SRAM macros, 0.2 ns setup margin) | `synthesis/run_vendor_synth.py --dc` | SAED32, SAED14, SKY130 24/24 met; SAED90 2/24 (accepted known failure) |
+| PrimeTime STA (setup and hold; SKY130 at SS / TT / FF with TT macros) | `synthesis/run_primetime_sta.py` | SAED32, SAED14, SKY130 SS / TT / FF 24/24; worst setup +3.53 / +0.42 / +0.18 / +1.28 / +1.42 ns; SAED90 accepted |
+| Gate-level simulation (3 netlists per bus, SDF, 2448 checks per run) | `verification/tools/sim_sram.py --postsyn` | 24/24 PASS (SAED32, SAED14, SKY130 x 4 buses x SV / VHDL netlists); SAED90 8 known (pass with `--no-sdf`) |
+| UPF (VC LP) | `verification/tools/lp_sram.py` | 12/12 PASS |
+| Vivado / Quartus / Yosys | `synthesis/run_vendor_synth.py --vivado / --quartus / --yosys` | not run yet (standard host) |
+
+SAED90 misses 100 MHz by -0.20 ns (base, read latency 1) to -1.4 ns (options,
+dual port), and -35 / -42 ns on the AXI4-Lite dual port (wire-load model
+artefact); accepted (user decision 2026-11-25). Gate-level simulation found
+two vendor model bugs, fixed in generated copies: SAED90 SSR flip-flop
+priority (`IP/common/verification/tools/pdk_cell_models.py`) and the SKY130
+OpenRAM read delay (`pdk_sram_models.py`, gate level).
 
 ## Power Analysis
 
@@ -958,17 +1020,20 @@ sram/
 ├── design/
 │   ├── behavioral/             reference model
 │   ├── rtl/verilog, rtl/vhdl   RTL (SV and VHDL-2008)
-│   └── upf/                    power intent for the PDKs without native sleep pins
+│   └── upf/                    power intent (UPF): sram_power.upf + sram_<pdk>.upf
 ├── doc/                        specification
 ├── firmware/                   memory-test and power-mode helpers (C99)
-├── synthesis/                  Yosys, Vivado, Quartus, Design Compiler, PrimeTime
+├── synthesis/                  run_vendor_synth.py (DC, Vivado, Quartus, Yosys), run_primetime_sta.py,
+│                               known_issues.md, report_<pdk>.txt, primetime/report_sta_*.txt
 └── verification/
     ├── testbench/              SV system bench (tb_sram_<proto>.sv + shared body), BFMs
     ├── tests/                  directed tests and helpers (shared by SV and VHDL tops)
     ├── tasks/uvm/              UVM bench (agents, env, sequences, tests, tb_sram_uvm.sv)
     ├── tools/sim_sram.py       simulation and coverage runner
     ├── tools/uvm_sram.py       UVM runner; uvm_mutants.py proves the UVM tests can fail
-    ├── formal/ lint/ regression/ modelsim/ vivado/   later steps
+    ├── tools/formal_sram.py, lint_sram.py, lp_sram.py (VC LP), fw_sram.py, regression_sram.py
+    ├── testbench/sram_tb_postsyn_body.svh  gate-level bench (sim_sram.py --postsyn)
+    ├── formal/ lint/ lp/ regression/ modelsim/ vivado/   per-step configuration and results
     └── work/                   run outputs (results, logs, coverage); removed by cleanup.sh
 ```
 
@@ -1001,3 +1066,12 @@ Options: `--sim vcs|xcelium|verilator|all`, `--proto ahb|apb|axi4l|wb|all`,
 `--lang sv|vhdl|all`, `--tech generic|saed90|saed32|saed14|sky130|all`,
 `--test <name>` (see Tests), `--waves`, `--coverage`, `--jobs N`. Results and
 coverage files are listed under Simulation Results.
+
+Synthesis, STA, gate-level simulation and UPF checks (csun.edu, Step 10):
+
+```bash
+python3 $CLAUDE_SRAM_PATH/synthesis/run_vendor_synth.py --dc --jobs 3     # 96 netlists, ~1 h
+python3 $CLAUDE_SRAM_PATH/synthesis/run_primetime_sta.py                  # 6 targets, ~1 min
+python3 $CLAUDE_SRAM_PATH/verification/tools/sim_sram.py --postsyn --proto all --lang all --pdk all --jobs 3
+python3 $CLAUDE_SRAM_PATH/verification/tools/lp_sram.py                   # VC LP, 12 runs
+```

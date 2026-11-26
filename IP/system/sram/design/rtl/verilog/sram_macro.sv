@@ -15,7 +15,7 @@ module sram_macro #(
   parameter int unsigned D         = 1024,                   // words (power of two)
   parameter int unsigned NLANES    = 4,                      // write lanes of W / NLANES bits
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE = ""                      // preload (GENERIC/FPGA)
+  parameter              INIT_FILE = ""                      // preload (GENERIC/FPGA)
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock

@@ -16,7 +16,9 @@ Fixes:
   SKY130 OpenRAM (libs.ref/sky130_sram_macros/verilog/*.v)
     The memory array `mem` is used in an always block before it is
     declared, which VCS rejects (Error-[IND]). The fix moves the
-    declaration above the first use.
+    declaration above the first use. Gate level only (gate_level=True):
+    the read delay DELAY = 3 ns ("arbitrary" in the model) becomes the
+    liberty's clk0->dout0 delay (SKY130_GL_DELAY), see below.
   SAED90, SAED32 low-power: used as shipped (no fixes needed).
 
 Usage:
@@ -97,8 +99,31 @@ def fix_sky130(text: str) -> str:
     return text[:anchor.end()] + "\n" + note + "  " + decl + text[anchor.end():]
 
 
-def model_files(pdk: str, work_dir: str) -> List[str]:
-    """Verilog files to compile for the SRAM macros of *pdk*."""
+# SKY130 OpenRAM read delay for gate-level simulation. The vendor model drives
+# dout DELAY = 3 ns after the falling clock edge ("FIXME: This delay is
+# arbitrary"), so read data is valid only 2 ns before the next rising edge at
+# 100 MHz; with SDF-annotated logic behind it (gate level), a long path from
+# dout (the BIST compare) then samples X. The liberty times dout0 from the
+# falling edge of clk0 with 0.36-0.51 ns (TT 1.8 V 25 C, the only corner).
+SKY130_GL_DELAY = 0.6
+
+
+def fix_sky130_gl_delay(text: str) -> str:
+    """Gate level: the read delay of the liberty instead of the arbitrary 3 ns."""
+    text, n = re.subn(r"^(\s*parameter\s+DELAY\s*=\s*)3\s*;",
+                      rf"\g<1>{SKY130_GL_DELAY} ; // [pdk_sram_models.py] liberty clk0->dout0 (gate level)",
+                      text, count=1, flags=re.M)
+    if n != 1:
+        raise ValueError("sky130 SRAM model: 'parameter DELAY = 3' not found (model changed?)")
+    return text
+
+
+def model_files(pdk: str, work_dir: str, gate_level: bool = False) -> List[str]:
+    """Verilog files to compile for the SRAM macros of *pdk*.
+
+    gate_level: post-synthesis simulation (SDF on the logic around the
+    macros). SKY130 then uses the liberty's read delay (SKY130_GL_DELAY);
+    RTL simulation keeps the model as shipped apart from the bug fixes."""
     os.makedirs(work_dir, exist_ok=True)
     if pdk == "saed90":
         return sorted(os.path.join(SAED90_MEM, f) for f in os.listdir(SAED90_MEM)
@@ -118,6 +143,8 @@ def model_files(pdk: str, work_dir: str) -> List[str]:
         for name in SKY130_SRAM_MACROS:
             with open(os.path.join(src_dir, f"{name}.v")) as fh:
                 fixed = fix_sky130(fh.read())
+            if gate_level:
+                fixed = fix_sky130_gl_delay(fixed)
             dst = os.path.join(work_dir, f"{name}_fixed.v")
             with open(dst, "w") as fh:
                 fh.write(fixed)

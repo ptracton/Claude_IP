@@ -74,9 +74,10 @@ begin
 
   gen_dom : if NPD > 1 generate
     dom <= to_integer(shift_right(idx_q(IDX_W_C - 1 downto 0), DOM_SH_C));
-  else generate
-    dom <= 0;
   end generate gen_dom;
+  gen_dom_n : if not (NPD > 1) generate
+    dom <= 0;
+  end generate gen_dom_n;
 
   -- Work in the current domain: write, wait for a wake-up, or skip it.
   p_step : process (all) is
@@ -114,10 +115,11 @@ begin
 
   gen_dom_end : if DOM_SH_C > 0 generate
     -- unary and on std_ulogic_vector: Xcelium numeric_std has no reduction on unsigned
-    dom_end <= and std_ulogic_vector(idx_q(DOM_SH_C - 1 downto 0));
-  else generate
-    dom_end <= '1';
+    dom_end <= red_and(std_ulogic_vector(idx_q(DOM_SH_C - 1 downto 0)));
   end generate gen_dom_end;
+  gen_dom_end_n : if not (DOM_SH_C > 0) generate
+    dom_end <= '1';
+  end generate gen_dom_end_n;
 
   -- A domain is initialised once a pass writes its last word.
   p_init : process (all) is

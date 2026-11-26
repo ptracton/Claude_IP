@@ -1,0 +1,59 @@
+================================================================================================
+Design Compiler Synthesis Report — sram IP
+Target PDK    : SAED90 (90nm)
+SRAM macros   : SRAM<w>x<d>_1rw / SRAM<w>x<d> (_max .db per macro)
+Constraints   : 100 MHz bus clock(s); 3.0 ns input and output delay on every port;
+                dp: port B pins on clk_b, asynchronous to clk_a (SAED14: one clock)
+                compiled with a 0.2 ns setup margin (clock uncertainty, not in the .sdc):
+                WNS below includes it; synthesis/primetime/report_sta_*.txt has the real slack
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-11-25
+================================================================================================
+
+STATUS: FAIL — 2/24 netlists meet timing with SRAM macros.
+        Accepted known failure: 100 MHz not met on SAED90 (user decision 2026-11-25), see synthesis/known_issues.md
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb                     325     30      4 580567.500000 583364.555998     -0.40  VIOLATED
+  sram_ahb                     440     66      4 580567.500000 584961.688777     -0.40  VIOLATED
+  sram_axi4l                   743    168      4 580567.500000 589423.154334     +0.00  MET
+  sram_wb                      334     30      4 580567.500000 583408.792797     -0.40  VIOLATED
+  sram_apb_vhdl                329     30      4 580567.500000 583370.085599     -0.40  VIOLATED
+  sram_ahb_vhdl                443     66      4 580567.500000 584962.610378     -0.40  VIOLATED
+  sram_axi4l_vhdl              760    168      4 580567.500000 589510.706335     +0.01  MET
+  sram_wb_vhdl                 328     30      4 580567.500000 583350.732000     -0.40  VIOLATED
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_opts               1585    214     10 813625.312500 831020.512510     -1.47  VIOLATED
+  sram_ahb_opts               1671    250     10 813625.312500 832511.661280     -1.53  VIOLATED
+  sram_axi4l_opts             2005    352     10 813625.312500 837219.194046     -1.46  VIOLATED
+  sram_wb_opts                1610    214     10 813625.312500 831227.872501     -0.99  VIOLATED
+  sram_apb_opts_vhdl          1573    214     10 813625.312500 830915.450105     -1.53  VIOLATED
+  sram_ahb_opts_vhdl          1708    250     10 813625.312500 832694.138084     -1.24  VIOLATED
+  sram_axi4l_opts_vhdl        2031    352     10 813625.312500 837169.427646     -1.17  VIOLATED
+  sram_wb_opts_vhdl           1622    214     10 813625.312500 831135.712518     -1.26  VIOLATED
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_dp                 2995    228     64 2032957.250000 2060960.987866     -1.41  VIOLATED
+  sram_ahb_dp                 3153    299     64 2032957.250000 2063916.559028     -1.10  VIOLATED
+  sram_axi4l_dp               3965    457     64 2032957.250000 2074338.011784    -42.61  VIOLATED
+  sram_wb_dp                  2973    228     64 2032957.250000 2060914.907872     -1.43  VIOLATED
+  sram_apb_dp_vhdl            2524    228     64 2032957.250000 2059712.219864     -1.60  VIOLATED
+  sram_ahb_dp_vhdl            2746    299     64 2032957.250000 2062607.887045     -1.50  VIOLATED
+  sram_axi4l_dp_vhdl          3664    457     64 2032957.250000 2074420.955764    -35.20  VIOLATED
+  sram_wb_dp_vhdl             2530    228     64 2032957.250000 2059542.645469     -1.52  VIOLATED
+
+Area is in the library's units (um^2 for SAED32/14 and SKY130). Total area includes the macros.
+Macros = SRAM macro instances counted in the netlist; 0 would mean the array was not mapped to macros.
+WNS is the worst slack among the 10 paths in each <netlist>_timing.rpt.
+
+Per-netlist reports : synthesis/designcompiler/reports/saed90/
+Netlists, SDF, SDC  : synthesis/designcompiler/netlists/saed90/
+Full logs           : synthesis/designcompiler/dc_saed90_<cfg>_run.log
+================================================================================================

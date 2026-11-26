@@ -95,7 +95,13 @@ IP/common/
 │   │   └── claude_backdoor.c # claude_bd_get/put (VPI), claude_bd_vget/vput (VHPI): read / deposit by path
 │   └── tools/            # Python base class and shared utilities for all tool scripts
 │       ├── ip_tool_base.py
-│       └── claude_vcf.py     # VC Formal driver (jobs, report parsing, waivers)
+│       ├── claude_vcf.py     # VC Formal driver (jobs, report parsing, waivers)
+│       ├── pdk_sram_models.py # vendor SRAM-macro simulation models, bugs fixed in copies
+│       │                      #  (SAED14, SKY130; gate_level=True: SKY130 liberty read delay)
+│       └── pdk_cell_models.py # vendor standard-cell models, bugs fixed in copies (SAED90 SSR flops)
+├── synthesis/designcompiler/   # shared library caches for DC / PrimeTime / PrimePower
+│   ├── build_sky130_libs.py       # SKY130 standard cells + OpenRAM SRAM .lib -> .db (sky130_lib/)
+│   └── build_saed32_sram_libs.py  # patched SAED32-LP SRAM liberty (saed32_lib/, not committed)
 ├── firmware/
 │   ├── include/          # platform.h MMIO stub, shared C types
 │   └── cmake/            # Shared CMake toolchain files (used directly by all IPs)
@@ -341,6 +347,8 @@ IP/
 │   ├── designcompiler/                     # Design Compiler scripts, reports, netlists (csun.edu only)
 │   ├── primetime/                          # PrimeTime STA script and reports (csun.edu only)
 │   └── known_issues.md                     # Documented synthesis warnings/findings (any host)
+│   (design/upf/IP_NAME_<pdk>.upf           # power intent, IPs with power domains; checked by
+│                                           #  verification/tools/lp_IP_NAME.py with VC LP)
 └── verification/
     ├── formal/                             # SymbiYosys formal scripts and results
     │   └── vcf/                            # VC Formal checkers, bind modules, waivers, results
@@ -385,7 +393,7 @@ deliverables exist before starting work.
 | 7  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
 | 8  | [.agents/lint.md](.agents/lint.md) | RTL linting (runs in parallel with Steps 4–6) |
 | 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8); register-less IPs: memory tests + hook-based side-band helpers, host unit tests + mutants (`fw_<ip>.py`) |
-| 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, Quartus; Design Compiler + PrimeTime + gate-level simulation on csun.edu |
+| 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, Quartus; Design Compiler + PrimeTime + gate-level simulation on csun.edu; UPF + VC LP for IPs with power domains |
 | 11 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag |
 | 12 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |
 
@@ -699,6 +707,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | Synopsys URG (`urg`) | Y-2026.03 (with VCS), csun.edu only | Merges and reports VCS code coverage (`sim_<ip>.py --coverage`; needs `-lca -flex_merge modules` for different designs) |
 | Cadence Xcelium (`xrun`) | 25.03, csun.edu only | SV/VHDL directed simulation (no coverage flow yet) |
 | Synopsys VC Formal (`vcf`) | Y-2026.03, csun.edu only | Formal property verification of SV and VHDL tops (replaces SymbiYosys there) |
+| Synopsys VC LP (`vc_static_shell`, `enable_lp base`) | Y-2026.03, csun.edu only | Static UPF / low-power checks (`lp_<ip>.py`; first user: sram, Step 10) |
 
 ---
 

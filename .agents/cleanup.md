@@ -43,9 +43,12 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
      - `bash synthesis/clean.sh` — Design Compiler outputs (`reports/`, `netlists/`,
        `ARCH/`, `ENTI/`, `PACK/`, `alib-*/` (compile_ultra's abstract-library
        cache — numeric suffix not stable, glob it), `dc_saed90_run.log`,
-       `dc_saed32_run.log`, `dc_saed14_run.log`, `dc_sky130_run.log`, etc.). **Never** delete
-       `IP/common/synthesis/designcompiler/sky130_lib/` — it is the shared,
-       cross-IP compiled sky130 `.db` cache, not a per-IP artifact.
+       `dc_saed32_run.log`, `dc_saed14_run.log`, `dc_sky130_run.log`, etc.; the sram's
+       `run_vendor_synth.py --clean` also removes `designcompiler/work/`). **Never** delete
+       `IP/common/synthesis/designcompiler/sky130_lib/` (the shared, committed SKY130
+       `.db` cache) or `IP/common/synthesis/designcompiler/saed32_lib/` (the shared
+       patched SAED32 SRAM liberty cache, gitignored, rebuilt on demand) — they are
+       cross-IP, not per-IP artifacts.
      - On csun.edu, also remove SpyGlass lint scratch output:
        `verification/lint/spyglass/vcst_rtdb`, `vcst_rtdb.bak`, `*.prj.tcl*`,
        `vcst_command.log`, `vcst_session.log*`, `.vcstPref`, `spyglass.out`,
@@ -62,6 +65,10 @@ All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
        `report_sky130.txt`, not per-IP scratch).
    - Vivado journal and log files (`.jou`, `.log`, `.pb`).
    - Quartus `db/` and `incremental_db/` directories.
+   - Before committing on csun.edu, check `git status` for **deleted tracked files** the
+     work did not touch: the repo lives in `/tmp`, where files untouched for 10 days are
+     removed (2026-11-21: 186 files; 2026-11-25: 14 bus_matrix files). Restore them with
+     `git restore -- <files>`; never commit those deletions.
 2. Update `.gitignore` (at the `IP_NAME/` root) to exclude:
    - All tool-generated scratch files and build artifacts.
    - Waveform databases (`.vcd`, `.fst`, `.wdb`).

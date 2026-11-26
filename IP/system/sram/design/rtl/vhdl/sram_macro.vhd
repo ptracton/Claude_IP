@@ -35,7 +35,7 @@ end entity sram_macro;
 architecture rtl of sram_macro is
 begin
 
-  gen_tech : if TECH = TECH_SAED90_C generate
+  gen_saed90 : if TECH = TECH_SAED90_C generate
     u_leaf : entity work.sram_macro_saed90(rtl)
       generic map (
         W      => W,
@@ -54,7 +54,8 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  elsif TECH = TECH_SAED32_C generate
+  end generate gen_saed90;
+  gen_saed32 : if TECH = TECH_SAED32_C generate
     u_leaf : entity work.sram_macro_saed32(rtl)
       generic map (
         W      => W,
@@ -73,7 +74,8 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  elsif TECH = TECH_SAED14_C generate
+  end generate gen_saed32;
+  gen_saed14 : if TECH = TECH_SAED14_C generate
     u_leaf : entity work.sram_macro_saed14(rtl)
       generic map (
         W      => W,
@@ -92,7 +94,8 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  elsif TECH = TECH_SKY130_C generate
+  end generate gen_saed14;
+  gen_sky130 : if TECH = TECH_SKY130_C generate
     u_leaf : entity work.sram_macro_sky130(rtl)
       generic map (
         W      => W,
@@ -111,7 +114,8 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  elsif TECH = TECH_XILINX_C generate
+  end generate gen_sky130;
+  gen_xilinx : if TECH = TECH_XILINX_C generate
     u_leaf : entity work.sram_macro_xilinx(rtl)
       generic map (
         W         => W,
@@ -131,7 +135,8 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  elsif TECH = TECH_ALTERA_C generate
+  end generate gen_xilinx;
+  gen_altera : if TECH = TECH_ALTERA_C generate
     u_leaf : entity work.sram_macro_altera(rtl)
       generic map (
         W         => W,
@@ -151,7 +156,14 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  else generate
+  end generate gen_altera;
+  -- Any other TECH (TECH_GENERIC_C): behavioral array
+  gen_generic : if TECH /= TECH_SAED90_C and
+      TECH /= TECH_SAED32_C and
+      TECH /= TECH_SAED14_C and
+      TECH /= TECH_SKY130_C and
+      TECH /= TECH_XILINX_C and
+      TECH /= TECH_ALTERA_C generate
     u_leaf : entity work.sram_macro_generic(rtl)
       generic map (
         W         => W,
@@ -171,6 +183,6 @@ begin
         sd_i      => sd_i,
         rdata_o   => rdata_o
       );
-  end generate gen_tech;
+  end generate gen_generic;
 
 end architecture rtl;

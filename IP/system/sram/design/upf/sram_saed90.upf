@@ -1,0 +1,12 @@
+# sram_saed90.upf — Power intent of the sram IP for saed90 (IEEE 1801 / UPF 2.1).
+#
+# SAED90: saed90nm cells 1.2 V nominal (max corner 1.08 V); SRAM<w>x<d>_1rw / SRAM<w>x<d> macros have no sleep pins.
+# Load at the scope of a bus top-level (sram_<proto> / sram_<proto>_dp)
+# after setting SRAM_NPD and SRAM_NUM_BANKS for its configuration, e.g.
+#   set SRAM_NPD 2; set SRAM_NUM_BANKS 2      ;# BANK_PG = 1, NUM_BANKS = 2
+#   load_upf design/upf/sram_saed90.upf
+# Checked by verification/tools/lp_sram.py (VC LP). Structure: sram_power.upf.
+
+set SRAM_VDD      1.2
+set SRAM_SWITCHED 1
+load_upf [file join [file dirname [info script]] sram_power.upf]

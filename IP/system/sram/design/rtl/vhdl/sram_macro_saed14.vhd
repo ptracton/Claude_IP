@@ -197,7 +197,7 @@ architecture rtl of sram_macro_saed14 is
   constant ROWS_C    : positive := tile_rows(D, PRIM_D_C);
   constant COLS_C    : positive := (W + PRIM_W_C - 1) / PRIM_W_C;
   constant PAD_W_C   : positive := COLS_C * PRIM_W_C;
-  constant ROW_W_C   : positive := maximum(1, clog2(ROWS_C));
+  constant ROW_W_C   : positive := max_nat(1, clog2(ROWS_C));
 
   type row_data_t is array (0 to ROWS_C - 1) of std_ulogic_vector(PAD_W_C - 1 downto 0);
 
@@ -249,10 +249,11 @@ begin
         end if;
       end if;
     end process p_rd_row;
-  else generate
+  end generate gen_rows;
+  gen_rows_n : if not (ROWS_C > 1) generate
     row      <= (others => '0');
     rd_row_q <= (others => '0');
-  end generate gen_rows;
+  end generate gen_rows_n;
 
   rdata_o <= row_rdata(to_integer(rd_row_q))(W - 1 downto 0);
 
@@ -286,8 +287,10 @@ begin
       end generate gen_8x16;
 
       gen_8x32 : if PRIM_W_C = 8 and PRIM_D_C = 32 generate
-        signal o : std_logic_vector(7 downto 0);
+        signal o   : std_logic_vector(7 downto 0);
+        signal i32 : std_logic_vector(31 downto 0); -- I is 32 bits wide (vendor quirk)
       begin
+        i32 <= std_logic_vector(resize(unsigned(wdata_pad(LO_C + 7 downto LO_C)), 32));
         u_prim : SRAM1RW32x8
           port map (
             A   => std_logic_vector(paddr),
@@ -295,7 +298,7 @@ begin
             WEB => col_web(c),
             OEB => '0',
             CSB => csb,
-            I   => std_logic_vector(resize(unsigned(wdata_pad(LO_C + 7 downto LO_C)), 32)),
+            I   => i32,
             O   => o
           );
         row_rdata(r)(LO_C + 7 downto LO_C) <= std_ulogic_vector(o);

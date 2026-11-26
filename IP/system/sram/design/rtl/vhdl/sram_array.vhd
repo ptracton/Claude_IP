@@ -108,8 +108,8 @@ architecture rtl of sram_array is
   constant BANK_AW_A_C : positive := clog2(DEPTH / NUM_BANKS);
   constant BANK_AW_B_C : positive := clog2(DEPTH_B / NUM_BANKS);
   constant SAW_C       : positive := clog2(SD_C);
-  constant BANK_W_C    : positive := maximum(1, clog2(NUM_BANKS));
-  constant SL_W_C      : positive := maximum(1, R_SH_C);
+  constant BANK_W_C    : positive := max_nat(1, clog2(NUM_BANKS));
+  constant SL_W_C      : positive := max_nat(1, R_SH_C);
   constant LPS_A_C     : positive := lanes_per_slice(NLANES, A_SLICED_C);
   constant LPS_B_C     : positive := lanes_per_slice(NLANES_B, B_SLICED_C);
 
@@ -118,7 +118,7 @@ architecture rtl of sram_array is
     if DUAL_PORT = 0 then
       return NLANES;
     end if;
-    return maximum(LPS_A_C, LPS_B_C);
+    return max_nat(LPS_A_C, LPS_B_C);
   end function slice_lanes_total;
 
   constant SL_C : positive := slice_lanes_total;
@@ -131,6 +131,10 @@ architecture rtl of sram_array is
     end if;
     return "";
   end function slice_init;
+
+  -- Evaluated once: Design Compiler Y-2026.03 hits an internal assertion
+  -- (VER-37) when the function call itself is the generic-map actual.
+  constant SLICE_INIT_C : string := slice_init;
 
   -- One port's lanes for slice s, expanded to the slice's SL_C lanes.
   function slice_lanes(lanes : std_ulogic_vector; nl : positive; sliced : boolean;
@@ -193,18 +197,20 @@ begin
   -----------------------------------------------
   gen_a_bank : if NUM_BANKS > 1 generate
     a_bank <= resize(shift_right(unsigned(idx_i), BANK_AW_A_C), BANK_W_C);
-  else generate
-    a_bank <= (others => '0');
   end generate gen_a_bank;
+  gen_a_bank_n : if not (NUM_BANKS > 1) generate
+    a_bank <= (others => '0');
+  end generate gen_a_bank_n;
 
   gen_a_slice : if A_SLICED_C generate
     a_slice <= resize(unsigned(idx_i(BANK_AW_A_C - 1 downto 0)), SL_W_C);
     a_saddr <= std_ulogic_vector(resize(shift_right(unsigned(idx_i(BANK_AW_A_C - 1 downto 0)),
                                                     R_SH_C), SAW_C));
-  else generate
+  end generate gen_a_slice;
+  gen_a_slice_n : if not A_SLICED_C generate
     a_slice <= (others => '0');
     a_saddr <= std_ulogic_vector(resize(unsigned(idx_i(BANK_AW_A_C - 1 downto 0)), SAW_C));
-  end generate gen_a_slice;
+  end generate gen_a_slice_n;
 
   p_a_rd_sel : process (clk) is
   begin
@@ -223,18 +229,20 @@ begin
   -------------------------------------------------
   gen_b_bank : if NUM_BANKS > 1 generate
     b_bank <= resize(shift_right(unsigned(b_idx_i), BANK_AW_B_C), BANK_W_C);
-  else generate
-    b_bank <= (others => '0');
   end generate gen_b_bank;
+  gen_b_bank_n : if not (NUM_BANKS > 1) generate
+    b_bank <= (others => '0');
+  end generate gen_b_bank_n;
 
   gen_b_slice : if B_SLICED_C generate
     b_slice <= resize(unsigned(b_idx_i(BANK_AW_B_C - 1 downto 0)), SL_W_C);
     b_saddr <= std_ulogic_vector(resize(shift_right(unsigned(b_idx_i(BANK_AW_B_C - 1 downto 0)),
                                                     R_SH_C), SAW_C));
-  else generate
+  end generate gen_b_slice;
+  gen_b_slice_n : if not B_SLICED_C generate
     b_slice <= (others => '0');
     b_saddr <= std_ulogic_vector(resize(unsigned(b_idx_i(BANK_AW_B_C - 1 downto 0)), SAW_C));
-  end generate gen_b_slice;
+  end generate gen_b_slice_n;
 
   p_b_rd_sel : process (b_clk) is
   begin
@@ -259,7 +267,7 @@ begin
     a_bank_cs <= '1' when cs_i = '1' and a_bank = to_unsigned(k, BANK_W_C) else '0';
     b_bank_cs <= '1' when b_cs_i = '1' and b_bank = to_unsigned(k, BANK_W_C) else '0';
 
-    gen_port : if DUAL_PORT /= 0 generate
+    gen_dp : if DUAL_PORT /= 0 generate
       type slice_data_t is array (0 to R_C - 1) of std_ulogic_vector(SW_C - 1 downto 0);
       signal a_slice_rdata : slice_data_t;
       signal b_slice_rdata : slice_data_t;
@@ -279,15 +287,17 @@ begin
 
         gen_a_wd : if A_SLICED_C generate
           a_wd <= std_ulogic_vector(resize(unsigned(wdata_i), SW_C));
-        else generate
-          a_wd <= wdata_i(s * SW_C + SW_C - 1 downto s * SW_C);
         end generate gen_a_wd;
+        gen_a_wd_n : if not A_SLICED_C generate
+          a_wd <= wdata_i(s * SW_C + SW_C - 1 downto s * SW_C);
+        end generate gen_a_wd_n;
 
         gen_b_wd : if B_SLICED_C generate
           b_wd <= std_ulogic_vector(resize(unsigned(b_wdata_i), SW_C));
-        else generate
-          b_wd <= b_wdata_i(s * SW_C + SW_C - 1 downto s * SW_C);
         end generate gen_b_wd;
+        gen_b_wd_n : if not B_SLICED_C generate
+          b_wd <= b_wdata_i(s * SW_C + SW_C - 1 downto s * SW_C);
+        end generate gen_b_wd_n;
 
         a_lw <= slice_lanes(lane_we_i, NLANES, A_SLICED_C, LPS_A_C, s);
         b_lw <= slice_lanes(b_lane_we_i, NLANES_B, B_SLICED_C, LPS_B_C, s);
@@ -299,7 +309,7 @@ begin
             D          => SD_C,
             NLANES     => SL_C,
             COMMON_CLK => COMMON_CLK,
-            INIT_FILE  => slice_init
+            INIT_FILE  => SLICE_INIT_C
           )
           port map (
             a_clk       => clk,
@@ -337,7 +347,8 @@ begin
       gen_b_mux : if B_SLICED_C generate
         b_bank_rdata(k) <= b_slice_rdata(to_integer(b_rd_slice_q));
       end generate gen_b_mux;
-    else generate
+    end generate gen_dp;
+    gen_sp : if not (DUAL_PORT /= 0) generate
       b_bank_rdata(k) <= (others => '0');
 
       u_macro : entity work.sram_macro(rtl)
@@ -360,7 +371,7 @@ begin
           sd_i      => sd_i(k),
           rdata_o   => a_bank_rdata(k)
         );
-    end generate gen_port;
+    end generate gen_sp;
   end generate gen_bank;
 
 end architecture rtl;

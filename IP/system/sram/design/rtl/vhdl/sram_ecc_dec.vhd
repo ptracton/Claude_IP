@@ -82,17 +82,20 @@ begin
 
   -- Syndrome and overall parity.
   g_syn : for i in 0 to R_C - 1 generate
-    syndrome(i) <= code_i(K + i) xor (xor (data and COVER_C(i)));
+    syndrome(i) <= code_i(K + i) xor red_xor(data and COVER_C(i));
   end generate g_syn;
-  parity <= xor code_i;
+  parity <= red_xor(code_i);
 
   -- Single-bit correction: flip the data bit whose position equals the
   -- syndrome (a flipped check or parity bit leaves the data intact).
   g_fix : for j in 0 to K - 1 generate
-    data_o(j) <= data(j) xor (parity and (syndrome ?= POS(j)));
+    signal hit : std_ulogic; -- syndrome points at data bit j
+  begin
+    hit       <= '1' when syndrome = POS(j) else '0';
+    data_o(j) <= data(j) xor (parity and hit);
   end generate g_fix;
 
   single_o <= parity;
-  double_o <= (not parity) and (or syndrome);
+  double_o <= (not parity) and red_or(syndrome);
 
 end architecture rtl;

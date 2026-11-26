@@ -6,10 +6,13 @@
 //   sram_core      sram_core_fv   (ports + internal signals, see that file)
 //   sram_array     sram_array_fv  (every port-A / port-B access)
 //   sram_pwr_ctrl  sram_pwr_fv    (each power domain)
-//   sram_macro_generic sram_leaf_fv (ECC lemma: written lanes hold valid codewords;
+//   sram_macro_generic sram_leaf_fv (ECC lemma: written lanes hold valid codewords,
+//                  and with SRAM_FV_LEAF_CLR every lane once the reset clear is done;
 //                  single-port configurations only: SRAM_FV_LEAF_BIND. A dual-port
 //                  core has no sram_macro_generic, and a bind with no target is an
 //                  elaboration error when the design is VHDL.)
+//   sram_port      sram_port_fv  (ECC lemma through s1 / s2: the decoded stored
+//                  word is a valid codeword; SRAM_FV_LEAF_CLR_BIND only)
 
 bind sram_core sram_core_fv #(
   .ADDR_W      (`SRAM_FV_ADDR_W),
@@ -117,7 +120,8 @@ bind sram_macro_generic sram_leaf_fv #(
   .W     (`SRAM_FV_LEAF_W),
   .D     (`SRAM_FV_LEAF_D),
   .NLANES(`SRAM_FV_LEAF_NLANES),
-  .ECC   (`SRAM_FV_LEAF_ECC)
+  .ECC   (`SRAM_FV_LEAF_ECC),
+  .CLR   (`SRAM_FV_LEAF_CLR)
 ) u_leaf_fv (
   .clk      (clk),
   .rst_n    (sram_core.rst_n),   // upward reference: the leaf has no reset
@@ -126,6 +130,40 @@ bind sram_macro_generic sram_leaf_fv #(
   .addr_i   (addr_i),
   .wdata_i  (wdata_i),
   .lane_we_i(lane_we_i),
-  .mem      (mem)
+  .mem      (mem),
+`ifdef SRAM_FV_LEAF_CLR_BIND        // the clear engine's state (a_word_ok)
+  .clr_init  (sram_core.u_clr.init_q),   // NPD = 1: the whole vector (VC Formal ignores a bit-select XMR into VHDL)
+  .clr_active(sram_core.u_clr.active_q),
+  .clr_idx   (sram_core.u_clr.idx_q)
+`else
+  .clr_init  (1'b1),
+  .clr_active(1'b0),
+  .clr_idx   ('0)
+`endif
 );
+
+// ECC lemma through the port pipeline (single port: the port's stored word is
+// the leaf's, LEAF_NLANES codewords). See sram_port_fv.sv. Bound only with
+// SRAM_FV_LEAF_CLR_BIND: the lemmas rest on a_word_ok (one bank, no BIST);
+// with BANK_PG + BIST (core_opts) they did not converge and are not used.
+`ifdef SRAM_FV_LEAF_CLR_BIND
+bind sram_port sram_port_fv #(
+  .MW (`SRAM_FV_LEAF_W),
+  .NCW(`SRAM_FV_LEAF_NLANES),
+  .ECC(`SRAM_FV_LEAF_ECC)
+) u_port_fv (
+  .clk        (clk),
+  .rst_n      (rst_n),
+  .s1_valid_q (s1_valid_q),
+  .s1_err_q   (s1_err_q),
+  .s1_we_q    (s1_we_q),
+  .s1_rmw_q   (s1_rmw_q),
+  .arr_rdata_i(arr_rdata_i),
+  .s2_valid_q (s2_valid_q),
+  .s2_err_q   (s2_err_q),
+  .s2_we_q    (s2_we_q),
+  .s2_rmw_q   (s2_rmw_q),
+  .rd_q       (rd_q)
+);
+`endif
 `endif

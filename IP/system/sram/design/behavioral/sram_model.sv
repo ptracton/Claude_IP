@@ -41,7 +41,9 @@
 //     response (a write that went through is applied, a write that errored
 //     makes its word unknown, read data of such an access is not compared).
 //   - response timing: every response of port A (B) comes READ_LATENCY
-//     (READ_LATENCY_B) cycles of its clock after its grant
+//     (READ_LATENCY_B) cycles of its clock after its grant; an ECC
+//     read-modify-write with READ_LATENCY 1 one cycle later (its write-back
+//     and response are in the port's s2 stage)
 // Word strides are powers of two (a 24-bit word takes 4 bytes of address).
 // Backdoor bit flips are reported with set_fault(unit, kind). A read-path
 // stuck bit (the testbench forces one stored data bit of one unit on every
@@ -149,12 +151,14 @@ module sram_model #(
     logic [WIDTH-1:0] kn;     // known bits of rdata
     logic             err;
     int unsigned      t;      // cycle of the grant
+    int unsigned      lat;    // expected cycles from grant to response
   } exp_a_t;
   typedef struct {
     logic [WB-1:0] rdata;
     logic [WB-1:0] kn;
     logic          err;
     int unsigned   t;
+    int unsigned   lat;
     bit            amb;      // mode request changed near the grant (B_MODE_GUARD)
     logic [2*NPD-1:0] req;   // requested modes at the grant
     logic          we;
@@ -164,6 +168,7 @@ module sram_model #(
   } exp_b_t;
   exp_a_t exp_a [$];
   exp_b_t exp_b [$];
+  bit     acc_rmw;   // the last access() was an ECC read-modify-write
   int unsigned cyc_a;          // clk cycles
   int unsigned cyc_b;          // clk_b cycles
 
@@ -207,6 +212,7 @@ module sram_model #(
     rdata = '0;
     rkn   = '0;
     err   = 1'b0;
+    acc_rmw = 1'b0;
     if (oor || (PWR_GATE && !ign_pwr && (dom_req(d) == 2'd2 || dom_req(d) == 2'd3)) ||
         (ro && we) || (!byte_en && pwe && we && !full)) begin
       err = 1'b1;
@@ -233,6 +239,7 @@ module sram_model #(
       if (touch && part) rmw = 1'b1;
     end
     rmw = ECC_EN && byte_en && rmw;
+    acc_rmw = rmw;
     if (rmw) begin
       for (int unsigned k = 0; k < r; k++) begin
         touch = 1'b0;
@@ -369,9 +376,9 @@ module sram_model #(
                      $time, mem_err, e.err, mem_rdata, e.rdata);
             mismatch_o = 1'b1;
           end
-          if (cyc_a - e.t != READ_LATENCY) begin
+          if (cyc_a - e.t != e.lat) begin
             $display("ERROR [sram_model] %m port A response %0d cycles after the grant, expected %0d (%0t)",
-                     cyc_a - e.t, READ_LATENCY, $time);
+                     cyc_a - e.t, e.lat, $time);
             mismatch_o = 1'b1;
           end
         end
@@ -388,6 +395,7 @@ module sram_model #(
         e.kn    = rk[WIDTH-1:0];
         e.err   = er;
         e.t     = cyc_a;
+        e.lat   = READ_LATENCY + ((acc_rmw && READ_LATENCY == 1) ? 1 : 0);
         exp_a.push_back(e);
       end
     end
@@ -445,9 +453,9 @@ module sram_model #(
                        $time, mem_b_err, e.err, mem_b_rdata, e.rdata);
               mismatch_b_o = 1'b1;
             end
-            if (cyc_b - e.t != READ_LATENCY_B) begin
+            if (cyc_b - e.t != e.lat) begin
               $display("ERROR [sram_model] %m port B response %0d cycles after the grant, expected %0d (%0t)",
-                       cyc_b - e.t, READ_LATENCY_B, $time);
+                       cyc_b - e.t, e.lat, $time);
               mismatch_b_o = 1'b1;
             end
           end
@@ -461,6 +469,7 @@ module sram_model #(
           e.kn    = rk[WB-1:0];
           e.err   = er;
           e.t     = cyc_b;
+          e.lat   = READ_LATENCY_B + ((acc_rmw && READ_LATENCY_B == 1) ? 1 : 0);
           e.amb   = 1'b0;
           for (int unsigned i = 0; i < B_MODE_GUARD; i++) begin
             if (req_hist[i] !== pwr_mode_req) e.amb = 1'b1;

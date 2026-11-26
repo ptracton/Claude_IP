@@ -418,6 +418,65 @@ Target device: **`5CSEMA4U23C6`** (Cyclone V SE A4 — DE0-Nano-SoC / Arrow SoCK
   `synthesis/known_issues.md` (warning text, tool, line, root cause, disposition).
 - Update `README.md` — **Synthesis Results** section with actual numbers and dates.
 
+## IPs with SRAM macros, power domains or several configurations (sram, 2026-11-25)
+
+Lessons from the sram's Step 10; follow them for the next IP of this kind.
+Reference implementation: `IP/system/sram/synthesis/` and
+`IP/system/sram/synthesis/known_issues.md`.
+
+- **RTL must parse in Design Compiler.** DC Y-2026.03 rejects SV `parameter
+  string` (VER-700: use an untyped parameter) and much of VHDL-2008 (see
+  `VHDL2008CodingStyle.md` "Design Compiler subset"). Elaborate every top in DC
+  early, not after verification.
+- **Netlist matrix.** A netlist cannot be re-parameterized: synthesize every
+  configuration the IP ships (sram: base / opts / dp x 4 buses x SV / VHDL =
+  24 per PDK), rename each top `<top>[_cfg][_vhdl]` after elaboration.
+- **Macros.** Link the macro `.db` files with the standard cells (SAED90 one
+  `.db` per macro, SAED14 one per corner, SKY130 compiled by
+  `build_sky130_libs.ensure_sky130_sram_dbs`). If a vendor liberty lacks pins
+  the model has, build a patched copy (`build_saed32_sram_libs.py`), never edit
+  vendor files, and do not commit licensed derivatives. Count macros in the
+  written netlist (a report_reference parse wraps long names).
+- **Wire-load model.** The SAED libraries pick the model from total cell area,
+  which macros dominate; choose it from the logic area instead (top mode, after
+  a first compile) and print it. PrimeTime must apply the same model per
+  netlist: it is not in the `.sdc` (written before the choice), so read it from
+  DC's timing report.
+- **Synthesis margin.** PrimeTime's delay calculation is slightly more
+  pessimistic than DC's (about 0.03 ns on SKY130). Compile with
+  `set_clock_uncertainty -setup <margin>` set **after** `write_sdc`, so STA and
+  gate-level simulation see the real constraint. A Tcl `proc` needs the margin
+  variable in its `global` list (a missing global silently produced no
+  netlists, DC still exited 0 — check the summary, not the exit code).
+- **Parallel DC jobs.** Clean only each job's own files (exact names, not a
+  glob that matches other configurations), turn a crashed job into a FAIL, run
+  long batches detached (`setsid nohup`) so they survive the editor session.
+- **Gate-level simulation.** When the system bench cannot drive netlists
+  (reference models probing internal nets, parameters not matching any netlist),
+  write a dedicated gate-level body with the same BFMs and a shadow memory.
+  Rename each netlist's sub-modules per instance before compiling several
+  netlists together (DC names sub-designs by parameters; different logic can
+  share a name). Provide `--no-sdf` with `+delay_mode_zero` (cell models carry
+  their own specify / `#` delays) to separate timing from function.
+- **Vendor simulation models can disagree with their liberty** — DC maps by the
+  liberty. Found: SAED90 DFFSSR/SDFFSSR set/reset priority, SKY130 OpenRAM
+  arbitrary 3 ns read delay. Fix in generated copies
+  (`IP/common/verification/tools/pdk_cell_models.py`, `pdk_sram_models.py`) and
+  document in `known_issues.md`.
+- **Power intent.** Write UPF for PDKs whose macros lack sleep pins (switched
+  domain per power domain, isolation on its outputs) and check it with VC LP
+  (`vc_static_shell`, `enable_lp base`, `check_lp -stage upf` and `design`).
+  Isolation must not share the switch's control (`PSW_ISO_SAME`): use a signal
+  that brackets the switch-off (sram: "domain awake"). At RTL,
+  `ISO_INST_MISSING` / `ISO_STRATEGY_UNUSED` are expected (no cells yet); count
+  every other error, and cross-check parsed tag counts against the report's
+  Management Summary (counts may carry a `*`). In the UPF interpreter
+  `find_objects` returns names (no `get_object_name`), generate scopes are part
+  of the instance name (`*u_prim`), and shell Tcl variables are visible.
+- **Accepted failures** (SAED90 here) are a user decision: the report still says
+  FAIL and prints a pointer (`DC_KNOWN_FAILURES`, `STA_KNOWN_FAILURES`,
+  `POSTSYN_KNOWN_FAILURES`).
+
 ## Outputs
 
 **On standard hosts:**

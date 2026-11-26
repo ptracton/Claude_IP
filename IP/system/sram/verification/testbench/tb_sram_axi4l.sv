@@ -125,6 +125,10 @@
 
 module tb_sram_axi4l;
 
+`ifdef SRAM_POSTSYN
+`include "sram_tb_postsyn_body.svh"   // gate level (sim_sram.py --postsyn)
+`else
 `include "sram_tb_body.svh"
+`endif
 
 endmodule : tb_sram_axi4l

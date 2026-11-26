@@ -257,7 +257,7 @@ architecture rtl of sram_macro_dp_saed32 is
   constant ROWS_C    : positive := tile_rows(D, PRIM_D_C);
   constant COLS_C    : positive := (W + PRIM_W_C - 1) / PRIM_W_C;
   constant PAD_W_C   : positive := COLS_C * PRIM_W_C;
-  constant ROW_W_C   : positive := maximum(1, clog2(ROWS_C));
+  constant ROW_W_C   : positive := max_nat(1, clog2(ROWS_C));
 
   type row_data_t is array (0 to ROWS_C - 1) of std_ulogic_vector(PAD_W_C - 1 downto 0);
 
@@ -323,12 +323,13 @@ begin
         end if;
       end if;
     end process p_b_rd_row;
-  else generate
+  end generate gen_rows;
+  gen_rows_n : if not (ROWS_C > 1) generate
     a_row      <= (others => '0');
     a_rd_row_q <= (others => '0');
     b_row      <= (others => '0');
     b_rd_row_q <= (others => '0');
-  end generate gen_rows;
+  end generate gen_rows_n;
 
   a_rdata_o <= a_row_rdata(to_integer(a_rd_row_q))(W - 1 downto 0);
   b_rdata_o <= b_row_rdata(to_integer(b_rd_row_q))(W - 1 downto 0);

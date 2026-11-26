@@ -148,7 +148,7 @@ architecture rtl of sram_macro_saed90 is
   constant ROWS_C    : positive := tile_rows(D, PRIM_D_C);
   constant COLS_C    : positive := (W + PRIM_W_C - 1) / PRIM_W_C;
   constant PAD_W_C   : positive := COLS_C * PRIM_W_C;
-  constant ROW_W_C   : positive := maximum(1, clog2(ROWS_C));
+  constant ROW_W_C   : positive := max_nat(1, clog2(ROWS_C));
 
   type row_data_t is array (0 to ROWS_C - 1) of std_ulogic_vector(PAD_W_C - 1 downto 0);
 
@@ -197,10 +197,11 @@ begin
         end if;
       end if;
     end process p_rd_row;
-  else generate
+  end generate gen_rows;
+  gen_rows_n : if not (ROWS_C > 1) generate
     row      <= (others => '0');
     rd_row_q <= (others => '0');
-  end generate gen_rows;
+  end generate gen_rows_n;
 
   rdata_o <= row_rdata(to_integer(rd_row_q))(W - 1 downto 0);
 

@@ -1,0 +1,12 @@
+# sram_sky130.upf — Power intent of the sram IP for sky130 (IEEE 1801 / UPF 2.1).
+#
+# SKY130: sky130_fd_sc_hd 1.8 V nominal (synthesis corner ss_100C_1v60); OpenRAM macros have no sleep pins.
+# Load at the scope of a bus top-level (sram_<proto> / sram_<proto>_dp)
+# after setting SRAM_NPD and SRAM_NUM_BANKS for its configuration, e.g.
+#   set SRAM_NPD 2; set SRAM_NUM_BANKS 2      ;# BANK_PG = 1, NUM_BANKS = 2
+#   load_upf design/upf/sram_sky130.upf
+# Checked by verification/tools/lp_sram.py (VC LP). Structure: sram_power.upf.
+
+set SRAM_VDD      1.8
+set SRAM_SWITCHED 1
+load_upf [file join [file dirname [info script]] sram_power.upf]

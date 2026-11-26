@@ -1007,3 +1007,164 @@ D2 holds); verification = **host unit tests on csun + timer-style cross build** 
 - Open: cross build + sizes (csun `/tmp/pet43490/CrossCompilers` deleted by /tmp aging; reinstall
   outside /tmp or run on a standard host); ASan/UBSan (csun gcc 11.5 lacks libasan/libubsan);
   CMakeLists never configured yet.
+
+## 18. Step 10 — synthesis (started 2026-11-24)
+
+### 18.1 Decisions (user, 2026-11-24)
+- DC matrix: **every config on every bus**: base / opts / dp x 4 buses x SV + VHDL = 24 netlists
+  per PDK, 96 DC runs. opts = ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2 (lint OPTS);
+  dp = opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: COMMON_CLK 1, its SRAM2RW needs it).
+- DP netlist: **asymmetric + two clocks** (clk_a / clk_b asynchronous clock groups; SAED14 one
+  clock on both pins).
+- SKY130: **TT macro .db at every stdcell corner** (OpenRAM ships only TT 1.8 V 25 C); flag SS/FF
+  macro timing as approximate in synthesis/known_issues.md.
+- Order: **DC -> STA -> postsyn**, UPF last.
+- RTL for DC (user-approved): SV `parameter string INIT_FILE` -> untyped `parameter INIT_FILE`
+  (DC VER-700), and untyped localparams in the XPM/altsyncram leaves.
+- VHDL rewritten to the DC Y-2026.03 subset (user-approved "rewrite to DC subset"): this DC rejects
+  unary reductions, else/elsif/case generate, maximum/minimum, `when` inside processes, reading out
+  ports, `?=` on vectors (boolean), 2008 textio hread, function calls in port-map actuals, generic
+  defaults referring to other generics. Changes: sram_pkg red_xor/red_or/red_and/max_nat/pick
+  (names chosen to avoid Xcelium's IEEE 2008 xor_reduce/or_reduce, which made them ambiguous);
+  if/elsif/else generate chains -> separate if-generates (tech chains gen_saed90..gen_generic,
+  sram_array gen_dp/gen_sp, else branches <label>_n); WIDTH_B/READ_LATENCY_B default 0 and
+  BYTE_EN_B/PARTIAL_WR_ERR_B default 2 = "same as port A" (resolved *_C constants; ports use
+  pick()); sram_ecc_dec `?=` -> per-bit hit signal; SAED14 SRAM1RW32x8 I via i32 signal; GENERIC
+  leaf INIT_FILE file loop in `-- pragma translate_off/on`. Bench VHDL backdoor path updated
+  (gen_sp / gen_generic). User asked: rewritten forms are VHDL-93 constructs, OK for GHDL/Vivado/
+  Quartus — must still be checked on the standard host.
+
+### 18.2 Flow
+- `synthesis/designcompiler/synth.tcl`: one dc_shell per PDK x cfg (env PDK_TARGET, SRAM_CFG),
+  work dir `designcompiler/work/<pdk>_<cfg>`, 100 MHz, 3 ns IO budget (B_* pins on clk_b), max
+  fanout 16, compile_ultra + incremental. Macro libs: SAED90 per-macro SRAM*_max.db, SAED32
+  saed32sramlp_ss0p95v125c_i0p95v, SAED14 saed14sram_ss0p72v125c, SKY130 OpenRAM TT .db compiled
+  by IP/common/.../build_sky130_libs.py `ensure_sky130_sram_dbs()` (new).
+- SAED wire-load: auto selection used total area incl. macros -> largest WLM ("1000000") and 12 ns
+  NAND2 nets (-9.3 ns). Now top mode, WLM chosen from logic area (total - macro) after pass 1.
+- `synthesis/run_vendor_synth.py`: --dc/--dc90/... --cfg --proto --lang --jobs (default 3)
+  --report; report_<pdk>.txt with macro instance count from the netlist (0 = FAIL).
+
+### 18.3 Findings
+- SAED90 base (READ_LATENCY 1): SRAM8x1024_1rw CE->O is 7.00 ns at max corner; with 3 ns output
+  budget PRDATA misses by 0.20 ns. Constraint decision for the user (pending full results).
+- SAED32: vendor sram_lp liberty lacks SD/LS/DS (LEF + Verilog have them) -> all 3 SAED32 DC jobs
+  failed at link. User approved a patched copy: IP/common/synthesis/designcompiler/
+  build_saed32_sram_libs.py (cache saed32_lib/): adds the pins (CSB cap, no arcs), drops the
+  inconsistent min_capacitance on O/O1/O2 and adds related_pin CE/CE1/CE2 to their internal_power
+  (current lc_shell rejects the unmodified vendor .lib: 106 errors). Diff-checked: no timing value
+  changed. Runner passes SAED32_SRAM_DB. Link check OK (SRAMLP1RW1024x8, SRAMLP2RW128x8);
+  SAED32 DC to re-run after the matrix.
+- SAED90 dp VHDL: DC internal assertion VER-37 at sram_array.vhd:301 (sram_macro_dp instance);
+  replay: elaborate sram_array -parameters {TECH=3,MW=52,DEPTH=1024,NUM_BANKS=2,NLANES=4,
+  DUAL_PORT=1,MW_B=13,DEPTH_B=4096,NLANES_B=1,COMMON_CLK=0}. Cause (replay A/B): the generic-map
+  actual `INIT_FILE => slice_init` (function returning an unconstrained string). Fixed with
+  `constant SLICE_INIT_C : string := slice_init;` (replay elaborates OK). Needs VHDL sim re-run
+  and SAED90 dp DC re-run.
+- SAED90 dp SV: -3.59 ns (not analysed yet).
+- VHDL re-verification after the rewrite: Step 4 VHDL 40/40 PASS (VCS 20 + Xcelium 20).
+- VHDL formal after the rewrite: 13/13 PASS; asserts/covers/waived identical to Step 5 on all 11
+  jobs in the vcf README table (ecc 15/15, top_wb 31/31 fully proven). Some later jobs may have
+  read sram_array.vhd before/after the SLICE_INIT_C edit (equivalent; INIT_FILE unused in formal).
+- SpyGlass SV lint after the untyped INIT_FILE edit (19:04): 24/24 PASS, 0 findings (20 lint + 4 CDC).
+  README "Lint Results" still lists the "INIT_FILE string" deviation -> update in docs.
+
+### 18.4 Full first DC matrix (2026-11-24 19:3x, before the RMW change)
+SAED14 24/24 MET (+0.2..+3.2); SAED32 (patched lib) 24/24 MET (+3.5..+3.7); SKY130 base/dp MET,
+opts 0/8 (-0.81..-0.95: ECC RMW macro->dec->merge->enc->macro in one cycle); SAED90 base 2/8
+(-0.20 macro 7 ns -> PRDATA), opts -6.5..-7.2 (RMW), dp SV -3.2..-3.6 (macro + ECC decode before the
+RL2 register), axi4l_dp -46 (WLM 70000 + DELLN cells), dp VHDL built after the VER-37 fix.
+
+### 18.5 RTL timing changes (user, 2026-11-24): "Register the RMW" + "RTL fixes only" for SAED90
+- sram_port (SV + VHDL): new s2 stage (HasS2 = READ_LATENCY 2 or ECC&&BYTE_EN): rd_q = raw word at
+  the array output + s2 copies of the request. Response stage x = s2 for RL2 and RMW, s1 otherwise.
+  RL2: decode in s2 (register now AHEAD of the decoder; mem_rdata_o combinational from rd_q).
+  RMW: decode/merge/encode/write-back in s2 for both latencies -> RL1 RMW responds 1 cycle later
+  (bus allows variable latency, mem_bus.md). Grant blocked while s2 RMW; busy_o/idle_o/rmw_pend_o/
+  rmw_idx_o/dom_busy_o cover s2. Status pulses stay "registered, one cycle after the response"
+  (RL2 reads: one cycle later than before).
+- sram_model: per-entry lat (READ_LATENCY, +1 for RMW with RL1) via acc_rmw from access().
+- uvm_mutants.py anchors irq_wr_err / ecc_no_uncorr updated (x_valid / x_err / x_we).
+- Smoke: VCS APB SV + VHDL GENERIC 12/12, comparison counts unchanged (121127 / 54396).
+- Running: full Step 4 (VCS + Xcelium, 80), formal SV+VHDL (26). Then: UVM matrix, SpyGlass, uvm
+  mutants, DC re-run all PDKs.
+- spec.md / README updated for the new pipeline and the VHDL sentinel defaults.
+- Re-verification of the RMW/RL2 change: Step 4 80/80 PASS (VCS + Xcelium, SV + VHDL, all techs);
+  UVM full matrix 1440/1440 PASS (2026-11-24 22:05). Formal (26, --jobs 1) in progress: core_ecc
+  SV/VHDL a_err_rule now inconclusive at depth 23 (no counterexample; Step 5 proved it there) ->
+  user chose "waive as bounded" (sram_fv_waivers.txt core_ecc a_err_rule); core_ecc to re-run.
+  core_opts SV 50/52 (2 waived, was 49/52 3 waived), VHDL 49/52; dp_sync 49/51 both langs.
+- 2026-11-25 06:5x: DC re-run all PDKs started (detached setsid, --jobs 2) on the new RTL.
+- 2026-11-25 07:0x: the 2026-11-24 formal run (--jobs 1) was killed at 22:54 with the previous
+  editor session (VC Formal "exit code 3, termination trapped", 12/26 done, parent was the old
+  Claude process). The first DC re-run lost saed90 base to a runner race: the base job's stale-report
+  glob `sram_apb_*.rpt` also matched opts/dp reports another thread was deleting
+  (FileNotFoundError), and the exception would have skipped every report. Fixed in
+  run_vendor_synth.py: exact report/netlist names (DC_REPORTS, missing_ok) and a crashed job
+  becomes a FAIL. Relaunched DETACHED (setsid nohup verification/work/step10_detached.sh):
+  formal all 26 --jobs 2 (step10_rmw_formal2.log) + DC all PDKs --jobs 1 (dc_rmw_run.log);
+  summary in verification/work/step10_detached.log.
+
+### 18.6 Results on the new RTL (2026-11-25)
+- DC (dc_rmw_run.log, 09:45): SAED32 24/24, SAED14 24/24, SKY130 24/24 MET (SKY130 opts -0.9 ->
+  +0.00..+0.08). SAED90 2/24: base -0.20 (RL1 macro read -> bus; axi4l meets), opts -1.07..-1.61,
+  dp APB/AHB/WB -1.03..-1.46, axi4l_dp -37.9 / -36.6 (logic area ~37k -> WLM "70000").
+  SAED90 violations are spread: BIST compare, RMW write-back (rd_q -> dec -> merge -> enc -> macro,
+  ~12 ns), pwr/clr -> macro controls, read data -> bus.
+  User 2026-11-25: "Accept + document" -> known_issues.md section; run_vendor_synth.py
+  DC_KNOWN_FAILURES prints the pointer under STATUS in report_saed90.txt (still FAIL).
+- Formal (step10_rmw_formal2.log, 09:56): 23/26; core_ecc_sv, core_opts_sv/vhdl FAIL on the
+  Step 10 helper lemmas sram_port_fv a_s1_rd_ok / a_s2_rd_ok (inconclusive 21-25).
+  Fix: sram_leaf_fv a_word_ok (CLR param; after the reset clear every lane ok_q set, during the
+  pass every word below idx_q) reading sram_core.u_clr.{init_q,active_q,idx_q} by upward XMR
+  (whole init_q vector: VCF ignores a bit-select XMR into VHDL, SM_IGN_CHX). formal_sram.py emits
+  SRAM_FV_LEAF_CLR / SRAM_FV_LEAF_CLR_BIND (leaf ECC, 1 bank, no BIST). core_ecc SV + VHDL: 43/44,
+  a_err_rule + a_s1/a_s2_rd_ok + a_word_ok PROVEN, only a_data bounded (2026-11-15 waiver) ->
+  the Step 10 core_ecc a_err_rule waiver was removed. sram_port_fv is now bound only with
+  SRAM_FV_LEAF_CLR_BIND; core_opts returns to its pre-Step-10 property set (re-run pending).
+- core_opts re-run with sram_port_fv unbound (12:31): SV + VHDL 49/52, 3 waived (2026-11-15 waivers)
+  -> formal 26/26 PASS on the Step 10 RTL. README results table updated (2026-11-25). The
+  c_rvalid_wait waiver text now says "without read-modify-write" (core_ecc / dp_sync_wide_b reach
+  it: the registered RMW responds a cycle later).
+- SpyGlass SV lint (lint_sram.py --lang sv, 12:01-12:4x): 24/24 PASS, 0 findings. waivers.md W5 /
+  README note INIT_FILE untyped.
+- Remaining Step 10: uvm_mutants.py; PrimeTime STA runner (SKY130 TT macro at SS/FF; SAED90 known
+  failure); post-syn sim (pdk_sram_models.py); UPF; FPGA/Yosys on the standard host.
+- PrimeTime STA (2026-11-25): new synthesis/run_primetime_sta.py + primetime/sta.tcl (24 netlists x
+  saed90/32/14 + sky130 ss/tt/ff; macro .db as synth; DC's per-netlist WLM parsed from its timing
+  report because synth.tcl picks it after write_sdc; setup + hold; STA_RESULT lines; DC WNS column).
+  First run: SKY130 SS 5 opts netlists -0.001..-0.027 (DC +0.00..+0.02, PT ~0.03 ns more pessimistic,
+  RMW write-back path). User: "Synthesis margin, re-run DC" -> synth.tcl SYN_MARGIN 0.2
+  (set_clock_uncertainty -setup after write_sdc; DC reports include it). First margin run failed:
+  SYN_MARGIN missing from synth_variant's global list (Tcl error, no netlists, DC exit 0) and the STA
+  summary re-read stale pt logs -> both fixed (global; run_sta deletes its log first).
+  Final (13:10): DC SAED32/14/SKY130 24/24, SAED90 2/24; STA SAED32, SAED14, SKY130 SS/TT/FF 24/24
+  setup+hold (worst setup +3.53/+0.42/+0.18/+1.28/+1.42, hold >= +0.06), SAED90 accepted.
+  DRC rows (macro-pin vendor limits) not part of PASS, documented in known_issues.md.
+- Post-syn sim (2026-11-25): sim_sram.py --postsyn (run_vcs_postsyn / run_postsyn, --no-sdf diagnostic
+  with +delay_mode_zero) + testbench/sram_tb_postsyn_body.svh (tb_sram_<proto> +define+SRAM_POSTSYN;
+  u_base/u_opts/u_dp netlists via +define+PS_*; direct masters; shadow-memory checks, 2448 per run).
+  Netlist sub-modules renamed __base/__opts/__dp (DC name clashes across netlists).
+  Findings: (1) SKY130 OpenRAM model DELAY=3 ns after negedge -> BIST compare samples X at gate level;
+  pdk_sram_models.model_files(gate_level=True) sets 0.6 ns (liberty 0.36-0.51). (2) SAED90 cell
+  models DFFSSRX1/2, SDFFSSRX1/2 reset-priority vs liberty set-priority -> sram_axi4l_dp_vhdl write
+  loop even at zero delay; new IP/common/verification/tools/pdk_cell_models.py fixed copy.
+  Final: 24/24 PASS (SAED32, SAED14, SKY130 x 4 buses x SV/VHDL netlists), SAED90 8 KNOWN with SDF,
+  8/8 PASS --no-sdf. Timer / bus_matrix SAED90 postsyn not re-checked for the SSR cell bug.
+- UPF (2026-11-25, user: "UPF + VC LP checks", no DC/STA with UPF): design/upf/sram_power.upf (shared,
+  Tcl-parameterized by SRAM_VDD/SWITCHED/NPD/NUM_BANKS[/MACRO_PG]) + sram_<pdk>.upf wrappers (load_upf
+  [info script] dir). PD_TOP always-on; PD_MEM<d> = u_macro wrappers of domain d (find_objects *u_macro,
+  bank match); SW_MEM<d> ctrl u_core/dom_sd[d] (on when low); ISO_MEM<d> clamp 0, signal
+  u_core/dom_awake[d] sense low (separate from switch control: VC LP PSW_ISO_SAME), location parent;
+  PST all-on + every off combination. SAED32: one always-on domain. SAED14: connect_supply_net on the
+  single-rail macros' VDD/VSS (UPF_CSN_SRM). Runner verification/tools/lp_sram.py (vc_static_shell,
+  enable_lp base, check_lp -stage upf + design; RTL-expected ISO_INST_MISSING / ISO_STRATEGY_UNUSED
+  filtered; tag counts cross-checked against the Management Summary after a "*"-suffix parse bug).
+  Result 12/12 PASS (4 PDKs x base/opts/dp). Negative check: no isolation -> 78 ISO_STRATEGY_MISSING.
+  README Power Management + Synthesis Results, spec power modes updated.
+- uvm_mutants.py (2026-11-25 16:02, vcs apb SV GENERIC, Step 10 RTL incl. updated irq_wr_err / ecc_no_uncorr anchors): 9/9 KILLED -> PASS.
+- Power cycle counts (2026-11-25): SAED32-LP databook Table 1.10 (lib/sram_lp/doc, Rev 1.0.2):
+  tLSI 1.8, tDSI/tSDI 2.5, tLSFCRS 1.8, tDSFCRS/tSDFCRS 50 ns (setups 0.4-1.3, holds 0.5). sram_pwr_ctrl
+  holds count+1 cycles: enter 4 (50 ns), LS 2 (30 ns), DS 8 (90 ns, valid <= 180 MHz), SD 16 (170 ns,
+  <= 340 MHz). User: "Keep, document limit" -> comments in sram_pkg (SV/VHDL), README table, spec note.
+  Open item from §0 closed. Step 10 left: Vivado/Quartus/Yosys on the standard host.

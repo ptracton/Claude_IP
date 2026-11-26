@@ -2,7 +2,8 @@
 //
 // Target side of the Claude memory bus (IP/common/design/rtl/mem_bus.md),
 // driving the array. Accepts one request at a time (the adapters never
-// issue more) and answers it READ_LATENCY cycles after the grant.
+// issue more) and answers it READ_LATENCY cycles after the grant (one cycle
+// later for an ECC read-modify-write).
 //
 // Request (cycle s0, mem_req_i high):
 //   stall_i (an engine is pending/running)       -> wait (no grant)
@@ -12,13 +13,20 @@
 //   domain not awake (LS, or waking)             -> wait, wake_o[domain]
 //   otherwise                                    -> grant, array access:
 //     read                    read the word
-//     write, ECC, partial     read (read-modify-write, finished in s1)
+//     write, ECC, partial     read (read-modify-write, finished in s2)
 //     write otherwise         write (ECC-encoded when ECC_EN; with BYTE_EN
 //                             and no ECC only the strobed lanes)
 // Response (cycle s1 for READ_LATENCY = 1, s2 for 2):
 //   read data (SECDED-corrected when ECC_EN); error on an uncorrectable
-//   word. A read-modify-write merges the strobed bytes into the corrected
-//   word and writes it back in s1 (no write if uncorrectable).
+//   word.
+// s2 stage (READ_LATENCY = 2, and every ECC read-modify-write): the word
+//   read in s0 is registered at the array output in s1 (rd_q) and decoded in
+//   s2, so the macro access and the SECDED decoder never share a cycle. A
+//   read-modify-write decodes rd_q, merges the strobed bytes into the
+//   corrected word, encodes and writes it back in s2 (no write if
+//   uncorrectable), and responds in s2 — READ_LATENCY = 1: one cycle later
+//   than other accesses; READ_LATENCY = 2: on time. The port takes no new
+//   request until the write-back is done.
 //
 // ECC codewords: the WIDTH-bit word is stored as WIDTH / CW SECDED
 // codewords of CW data bits (CW = WIDTH except on the wide port of a dual
@@ -107,6 +115,8 @@ module sram_port #(
   localparam int unsigned NCW    = WIDTH / CW;                          // codewords
   localparam int unsigned CWS    = ECC_EN ? MW / NCW : CW;              // stored codeword
   localparam int unsigned CWB    = CW / 8;                              // bytes per codeword
+  localparam bit          HasRmw = ECC_EN && BYTE_EN;                   // read-modify-write possible
+  localparam bit          HasS2  = (READ_LATENCY == 2) || HasRmw;       // s2 stage exists
 
   // -------------------------------------------------------------------------
   // Request decode (s0)
@@ -123,6 +133,8 @@ module sram_port #(
   logic            do_access;     // grant with an array access
 
   logic            s1_valid_q;
+  logic            s2_valid_q;   // s2 holds a request (READ_LATENCY 2, or a read-modify-write)
+  logic            s2_rmw_q;     // ... which is a read-modify-write (write-back this cycle)
 
   assign idx = mem_addr_i[OffW +: IdxW];
 
@@ -149,12 +161,13 @@ module sram_port #(
   // ECC: a write that covers whole codewords stores them directly.
   assign rmw     = ECC_EN && BYTE_EN && mem_we_i && (|cw_part);
 
-  // Grant: never while an engine owns the array or a response is pending.
+  // Grant: never while an engine owns the array, a response is pending or a
+  // read-modify-write is writing back.
   always_comb begin : p_grant
     grant  = 1'b0;
     do_access = 1'b0;
     wake_o = '0;
-    if (mem_req_i && !stall_i && !s1_valid_q) begin
+    if (mem_req_i && !stall_i && !s1_valid_q && !(s2_valid_q && s2_rmw_q)) begin
       if (req_err) begin
         grant = 1'b1;
       end else if (dom_awake_i[dom]) begin
@@ -205,7 +218,81 @@ module sram_port #(
   end
 
   // -------------------------------------------------------------------------
-  // ECC: decode the word read in s0, merge for read-modify-write, encode
+  // s2: the request and the raw word read in s0, registered at the array
+  // output (READ_LATENCY = 2: every request; otherwise read-modify-writes)
+  // -------------------------------------------------------------------------
+  logic                s2_err_q;
+  logic                s2_we_q;
+  logic [IdxW-1:0]     s2_idx_q;
+  logic [DomW-1:0]     s2_dom_q;
+  logic [StrbW-1:0]    s2_be_q;
+  logic [WIDTH-1:0]    s2_wdata_q;
+  logic [MW-1:0]       rd_q;        // stored word read in s0 (raw, before ECC)
+
+  if (HasS2) begin : g_s2
+    always_ff @(posedge clk) begin : p_s2
+      if (!rst_n) begin
+        s2_valid_q <= 1'b0;
+        s2_rmw_q   <= 1'b0;
+        s2_err_q   <= 1'b0;
+        s2_we_q    <= 1'b0;
+        s2_idx_q   <= '0;
+        s2_dom_q   <= '0;
+        s2_be_q    <= '0;
+        s2_wdata_q <= '0;
+        rd_q       <= '0;
+      end else begin
+        s2_valid_q <= s1_valid_q && ((READ_LATENCY == 2) || s1_rmw_q);
+        s2_rmw_q   <= s1_valid_q && s1_rmw_q;
+        if (s1_valid_q) begin
+          s2_err_q   <= s1_err_q;
+          s2_we_q    <= s1_we_q;
+          s2_idx_q   <= s1_idx_q;
+          s2_dom_q   <= s1_dom_q;
+          s2_be_q    <= s1_be_q;
+          s2_wdata_q <= s1_wdata_q;
+          rd_q       <= arr_rdata_i;
+        end
+      end
+    end
+  end else begin : g_no_s2
+    assign s2_valid_q = 1'b0;
+    assign s2_rmw_q   = 1'b0;
+    assign s2_err_q   = 1'b0;
+    assign s2_we_q    = 1'b0;
+    assign s2_idx_q   = '0;
+    assign s2_dom_q   = '0;
+    assign s2_be_q    = '0;
+    assign s2_wdata_q = '0;
+    assign rd_q       = '0;
+  end
+
+  // -------------------------------------------------------------------------
+  // Response stage x: s2 for READ_LATENCY = 2 and for a read-modify-write,
+  // s1 otherwise (an s1 read-modify-write has no response yet)
+  // -------------------------------------------------------------------------
+  logic             x_sel;      // 1: s2
+  logic             x_valid;
+  logic             x_err;
+  logic             x_we;
+  logic             x_rmw;
+  logic [IdxW-1:0]  x_idx;
+  logic [StrbW-1:0] x_be;
+  logic [WIDTH-1:0] x_wdata;
+  logic [MW-1:0]    x_rdata;    // stored word to decode
+
+  assign x_sel   = (READ_LATENCY == 2) || s2_valid_q;
+  assign x_valid = x_sel ? s2_valid_q : (s1_valid_q && !s1_rmw_q);
+  assign x_err   = x_sel ? s2_err_q   : s1_err_q;
+  assign x_we    = x_sel ? s2_we_q    : s1_we_q;
+  assign x_rmw   = x_sel && s2_rmw_q;
+  assign x_idx   = s2_idx_q;
+  assign x_be    = x_sel ? s2_be_q    : s1_be_q;
+  assign x_wdata = s2_wdata_q;
+  assign x_rdata = x_sel ? rd_q       : arr_rdata_i;
+
+  // -------------------------------------------------------------------------
+  // ECC: decode the word read, merge for read-modify-write, encode
   // -------------------------------------------------------------------------
   logic [WIDTH-1:0] rd_data;     // data read (corrected)
   logic [NCW-1:0]   cw_single;   // per codeword: corrected error
@@ -213,9 +300,9 @@ module sram_port #(
   logic [NCW-1:0]   cw_used;     // codewords that matter for the response
   logic             dec_single;
   logic             dec_double;
-  logic [NCW-1:0]   s1_touch;    // codewords strobed by the s1 request
+  logic [NCW-1:0]   x_touch;     // codewords strobed by the x request
   logic [WIDTH-1:0] merged;      // read-modify-write result
-  logic             rmw_write;   // s1 write-back of a read-modify-write
+  logic             rmw_write;   // s2 write-back of a read-modify-write
   logic [WIDTH-1:0] enc_data;    // data to encode / write
   logic [MW-1:0]    stored;      // word written to the array (before injection)
   logic [1:0]       inj_q;       // armed error injection
@@ -227,7 +314,7 @@ module sram_port #(
       sram_ecc_dec #(
         .K(CW)
       ) u_dec (
-        .code_i  (arr_rdata_i[c * CWS +: CWS]),
+        .code_i  (x_rdata[c * CWS +: CWS]),
         .data_o  (rd_data[c * CW +: CW]),
         .single_o(cw_single[c]),
         .double_o(cw_double[c])
@@ -240,7 +327,7 @@ module sram_port #(
       );
     end
   end else begin : g_no_ecc
-    assign rd_data   = arr_rdata_i[WIDTH-1:0];
+    assign rd_data   = x_rdata[WIDTH-1:0];
     assign cw_single = '0;
     assign cw_double = '0;
     assign stored    = MW'(enc_data);
@@ -248,18 +335,18 @@ module sram_port #(
 
   // A read checks every codeword; a read-modify-write only the codewords it
   // writes back.
-  for (genvar c = 0; c < NCW; c++) begin : g_s1_touch
-    assign s1_touch[c] = |s1_be_q[c * CWB +: CWB];
+  for (genvar c = 0; c < NCW; c++) begin : g_x_touch
+    assign x_touch[c] = |x_be[c * CWB +: CWB];
   end
-  assign cw_used    = s1_rmw_q ? s1_touch : '1;
+  assign cw_used    = x_rmw ? x_touch : '1;
   assign dec_single = |(cw_single & cw_used);
   assign dec_double = |(cw_double & cw_used);
 
   for (genvar b = 0; b < StrbW; b++) begin : g_merge
-    assign merged[8*b +: 8] = s1_be_q[b] ? s1_wdata_q[8*b +: 8] : rd_data[8*b +: 8];
+    assign merged[8*b +: 8] = x_be[b] ? x_wdata[8*b +: 8] : rd_data[8*b +: 8];
   end
 
-  assign rmw_write = s1_valid_q && s1_rmw_q && !dec_double;
+  assign rmw_write = HasRmw && x_valid && x_rmw && !dec_double;
   assign enc_data  = rmw_write ? merged : mem_wdata_i;
   assign bus_write = rmw_write || (do_access && mem_we_i && !rmw);
   assign flip      = !ECC_EN    ? '0 :
@@ -276,7 +363,7 @@ module sram_port #(
   end
 
   // -------------------------------------------------------------------------
-  // Array access: s0 request, or the s1 write-back of a read-modify-write
+  // Array access: s0 request, or the s2 write-back of a read-modify-write
   // -------------------------------------------------------------------------
   always_comb begin : p_array
     arr_cs_o      = 1'b0;
@@ -287,9 +374,9 @@ module sram_port #(
     if (rmw_write) begin
       arr_cs_o  = 1'b1;
       arr_we_o  = 1'b1;
-      arr_idx_o = s1_idx_q;
+      arr_idx_o = x_idx;
       if (ECC_EN && BYTE_EN) begin
-        arr_lane_we_o = NLANES'(s1_touch);
+        arr_lane_we_o = NLANES'(x_touch);
       end
     end else if (do_access) begin
       arr_cs_o = 1'b1;
@@ -305,19 +392,19 @@ module sram_port #(
   end
 
   // -------------------------------------------------------------------------
-  // s1 response
+  // Response (stage x)
   // -------------------------------------------------------------------------
-  logic             checked;    // s1 used read data
+  logic             checked;    // the response used read data
   logic             rsp_err;
   logic [WIDTH-1:0] rsp_data;
 
-  assign checked  = s1_valid_q && !s1_err_q && (s1_rmw_q || !s1_we_q);
-  assign rsp_err  = s1_err_q || (checked && dec_double);
-  assign rsp_data = (s1_valid_q && !s1_err_q && !s1_we_q && !dec_double) ? rd_data : '0;
+  assign checked  = x_valid && !x_err && (x_rmw || !x_we);
+  assign rsp_err  = x_err || (checked && dec_double);
+  assign rsp_data = (x_valid && !x_err && !x_we && !dec_double) ? rd_data : '0;
 
   // Status pulses are registered (one cycle after the response cycle): the
-  // read data behind them comes straight from the macro outputs, so a
-  // combinational pulse could glitch at the IP boundary.
+  // read data behind them comes from the array (or rd_q) through the
+  // decoder, so a combinational pulse could glitch at the IP boundary.
   logic ecc_corr_q, ecc_uncorr_q, err_irq_q;
 
   always_ff @(posedge clk) begin : p_status
@@ -328,52 +415,32 @@ module sram_port #(
     end else begin
       ecc_corr_q   <= ECC_EN && checked && dec_single;
       ecc_uncorr_q <= ECC_EN && checked && dec_double;
-      err_irq_q    <= (s1_valid_q && rsp_err) || (ECC_EN && checked && dec_single);
+      err_irq_q    <= (x_valid && rsp_err) || (ECC_EN && checked && dec_single);
     end
   end
 
   assign ecc_corr_o   = ecc_corr_q;
   assign ecc_uncorr_o = ecc_uncorr_q;
   assign err_irq_o    = err_irq_q;
-  assign busy_o       = s1_valid_q && s1_rmw_q;
-  assign idle_o       = !s1_valid_q;
+
+  assign mem_rvalid_o = x_valid;
+  assign mem_err_o    = rsp_err;
+  assign mem_rdata_o  = rsp_data;
+
+  // A read-modify-write is pending from its s1 (read) to its s2 (write-back).
+  assign busy_o       = (s1_valid_q && s1_rmw_q) || s2_rmw_q;
+  assign idle_o       = !s1_valid_q && !s2_rmw_q;
 
   assign req_idx_o  = idx;
   assign req_we_o   = mem_we_i;
   assign acc_o      = do_access;
-  assign rmw_pend_o = s1_valid_q && s1_rmw_q;
-  assign rmw_idx_o  = s1_idx_q;
+  assign rmw_pend_o = (s1_valid_q && s1_rmw_q) || s2_rmw_q;
+  assign rmw_idx_o  = s2_rmw_q ? s2_idx_q : s1_idx_q;
 
   for (genvar d = 0; d < NPD; d++) begin : g_busy
     assign dom_busy_o[d] = (do_access && (dom == DomW'(d))) ||
-                           (s1_valid_q && !s1_err_q && (s1_dom_q == DomW'(d)));
-  end
-
-  if (READ_LATENCY == 2) begin : g_rl2
-    logic             s2_valid_q;
-    logic             s2_err_q;
-    logic [WIDTH-1:0] s2_data_q;
-
-    // Output register (READ_LATENCY = 2).
-    always_ff @(posedge clk) begin : p_s2
-      if (!rst_n) begin
-        s2_valid_q <= 1'b0;
-        s2_err_q   <= 1'b0;
-        s2_data_q  <= '0;
-      end else begin
-        s2_valid_q <= s1_valid_q;
-        s2_err_q   <= rsp_err;
-        s2_data_q  <= rsp_data;
-      end
-    end
-
-    assign mem_rvalid_o = s2_valid_q;
-    assign mem_err_o    = s2_err_q;
-    assign mem_rdata_o  = s2_data_q;
-  end else begin : g_rl1
-    assign mem_rvalid_o = s1_valid_q;
-    assign mem_err_o    = rsp_err;
-    assign mem_rdata_o  = rsp_data;
+                           (s1_valid_q && !s1_err_q && (s1_dom_q == DomW'(d))) ||
+                           (s2_rmw_q && (s2_dom_q == DomW'(d)));
   end
 
 endmodule : sram_port

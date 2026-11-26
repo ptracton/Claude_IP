@@ -41,7 +41,7 @@ module sram_array #(
   parameter int unsigned NLANES_B   = NLANES,// port B write lanes
   parameter bit          COMMON_CLK = 1,     // b_clk is clk
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE  = ""     // preload (GENERIC/FPGA, NUM_BANKS = 1, R = 1)
+  parameter              INIT_FILE  = ""     // preload (GENERIC/FPGA, NUM_BANKS = 1, R = 1)
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                       clk,        // port A clock

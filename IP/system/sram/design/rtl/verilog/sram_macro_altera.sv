@@ -17,7 +17,7 @@ module sram_macro_altera #(
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE = ""    // optional preload (.mif / .hex)
+  parameter              INIT_FILE = ""    // optional preload (.mif / .hex)
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock
@@ -37,7 +37,7 @@ module sram_macro_altera #(
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
 );
 
-  localparam string       InitFile = (INIT_FILE == "") ? "UNUSED" : INIT_FILE;
+  localparam              InitFile = (INIT_FILE == "") ? "UNUSED" : INIT_FILE;
   // Byte size of the enables (unused with one lane, but must be legal).
   localparam int unsigned ByteSize = (NLANES > 1) ? W / NLANES : 8;
 

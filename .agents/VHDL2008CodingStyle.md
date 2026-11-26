@@ -1262,6 +1262,31 @@ end context my_project_ctx;
 context work.my_project_ctx;
 ```
 
+### Design Compiler subset (synthesizable RTL)
+
+Synopsys Design Compiler Y-2026.03-SP1 (csun.edu) parses only part of
+VHDL-2008, although `hdlin_vhdl_std` is 2008. Synthesizable RTL of every IP
+must stay inside what it accepts (probed construct by construct 2026-11-24;
+the sram RTL was rewritten to it in Step 10). Test benches are not affected.
+
+| Rejected by DC | Write instead |
+|---|---|
+| unary reductions `xor v`, `or v`, `and v` | package functions (sram: `red_xor`, `red_or`, `red_and`) |
+| `else generate`, `elsif generate`, `case generate` | separate `if ... generate` blocks with complementary conditions |
+| `maximum` / `minimum` | a package function (sram: `max_nat`) |
+| `x <= a when c else b;` inside a process | `if` / `else` in the process (the concurrent form is fine) |
+| reading an `out` port | an internal signal, assigned to the port |
+| `?=` on vectors used as `std_ulogic` (DC types the result boolean) | `=` comparisons, or `?=` on scalars |
+| textio `hread` | `read` of a string, converted, inside `-- pragma translate_off/on` (simulation-only loaders) |
+| function calls in port-map actuals | a signal or constant assigned from the call (plain type conversions are fine) |
+| generic defaults that refer to other generics | a sentinel default (e.g. 0) resolved to the other generic in the architecture |
+| a string generic actual that is a function call (crashes DC, VER-37) | a constant assigned from the call, passed as the actual |
+
+Accepted: `process (all)`, `?=` on scalars, `integer'image`, user functions,
+boolean signals. Do not name helper functions `xor_reduce` / `or_reduce` /
+`and_reduce`: Xcelium's IEEE 2008 libraries define them too, and calls become
+ambiguous (`*E,AMBIGE`).
+
 ### Package Dependencies
 
 ***Packages must not have cyclic dependencies.***

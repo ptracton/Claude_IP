@@ -30,6 +30,17 @@ package sram_pkg is
   -- ceil(log2(n)), 0 for n <= 1.
   function clog2(n : natural) return natural;
 
+  -- Synthesis-portable stand-ins for VHDL-2008 built-ins that Design
+  -- Compiler (Y-2026.03) does not parse: max_nat() and the unary reduction
+  -- operators (xor v / or v / and v).
+  function max_nat(a, b : natural) return natural;
+  function red_xor(v : std_ulogic_vector) return std_ulogic;
+  function red_or(v : std_ulogic_vector) return std_ulogic;
+  function red_and(v : std_ulogic_vector) return std_ulogic;
+
+  -- d when v = unset, else v (generic defaults that mean "same as port A").
+  function pick(v, unset, d : natural) return natural;
+
   -- SECDED (extended Hamming): r Hamming bits with 2**r >= k + r + 1, plus
   -- one overall parity bit; ecc_data_pos(j) = Hamming position of data bit j.
   function ecc_hamming_bits(k : natural) return natural;
@@ -56,7 +67,9 @@ package sram_pkg is
   function prim_width_dp(tech : natural; w : natural; nlanes : natural) return natural;
   function prim_depth_dp(tech : natural; prim_w : natural; d : natural) return natural;
 
-  -- Power-mode timing in clock cycles (mode: 1 = LS, 2 = DS, 3 = SD).
+  -- Power-mode timing in clock cycles (mode: 1 = LS, 2 = DS, 3 = SD). SAED32-LP
+  -- values checked against its databook in Step 10 (see sram_pkg.sv): valid
+  -- up to 180 MHz (deep-sleep wake, tDSFCRS 50 ns); the IP is specified at 100 MHz.
   function pwr_enter_cycles(tech : natural) return natural;
   function pwr_wake_cycles(tech : natural; mode : natural) return natural;
 
@@ -72,6 +85,49 @@ package body sram_pkg is
     end loop;
     return r;
   end function clog2;
+
+  function max_nat(a, b : natural) return natural is
+  begin
+    if a > b then
+      return a;
+    end if;
+    return b;
+  end function max_nat;
+
+  function red_xor(v : std_ulogic_vector) return std_ulogic is
+    variable r : std_ulogic := '0';
+  begin
+    for i in v'range loop
+      r := r xor v(i);
+    end loop;
+    return r;
+  end function red_xor;
+
+  function red_or(v : std_ulogic_vector) return std_ulogic is
+    variable r : std_ulogic := '0';
+  begin
+    for i in v'range loop
+      r := r or v(i);
+    end loop;
+    return r;
+  end function red_or;
+
+  function red_and(v : std_ulogic_vector) return std_ulogic is
+    variable r : std_ulogic := '1';
+  begin
+    for i in v'range loop
+      r := r and v(i);
+    end loop;
+    return r;
+  end function red_and;
+
+  function pick(v, unset, d : natural) return natural is
+  begin
+    if v = unset then
+      return d;
+    end if;
+    return v;
+  end function pick;
 
   function ecc_hamming_bits(k : natural) return natural is
     variable r : natural := 1;

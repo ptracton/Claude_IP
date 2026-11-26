@@ -103,3 +103,14 @@ lint all still pass.
   -o out.txt` (values shown at an edge are the post-edge values).
 - **A bind with no target:** SV elaboration ignores it; with a VHDL design it is `Error-[SVABIND] Bind target not found`. Guard binds to optional modules with a generated `define.
 - **`report_fv -list` row format:** `inconclusive(depth=22)` has no space before the depth. claude_vcf.py `_ROW_RE` now accepts it (fixed 2026-11-15); before, inconclusive waivers never matched and depths were lost.
+- **Upward XMR into VHDL internals (2026-11-25):** a bind's port actual may name an ancestor's
+  internal VHDL signal (`sram_core.u_clr.idx_q`), but a **bit-select** of one
+  (`sram_core.u_clr.init_q[0]`) is silently dropped: `Warning-[SM_IGN_CHX] Ignoring complex $hdl_xmr`,
+  leaving the checker input free. Connect the whole vector and slice inside the checker. Always grep
+  the VHDL job's vcf.log for SM_IGN_CHX after adding an XMR.
+- **Inductive helper lemmas (sram Step 10):** when a registered pipeline stage (e.g. an ECC
+  read-modify-write in s2) stops an end-to-end property converging, add proven lemmas that carry
+  the invariant through each stage (sram_port_fv a_s1_rd_ok / a_s2_rd_ok) and one that makes it
+  inductive at the source (sram_leaf_fv a_word_ok: "after the reset clear every stored word is
+  valid", read from the clear engine's state). Bind lemmas only where they converge (generated
+  `define, e.g. SRAM_FV_LEAF_CLR_BIND); an inconclusive helper is worse than none.

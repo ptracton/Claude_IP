@@ -15,7 +15,7 @@ module sram_macro_dp_generic #(
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE = ""    // optional $readmemh preload
+  parameter              INIT_FILE = ""    // optional $readmemh preload
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock

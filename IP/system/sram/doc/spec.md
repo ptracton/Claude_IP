@@ -36,7 +36,9 @@ Always present:
   built on the shared `claude_<proto>_mem_if` adapters
   (`IP/common/design/rtl/mem_bus.md`).
 - Bus error for addresses beyond `DEPTH` words.
-- Optional output pipeline register (`READ_LATENCY` = 1 or 2).
+- Optional read pipeline register (`READ_LATENCY` = 1 or 2). *[Step 10]* With 2 the
+  word read is registered at the array output and decoded (SECDED) in the next cycle,
+  so the macro access and the decoder never share a cycle.
 - Clear engine: a side-band request zeroes the whole array. It also runs
   automatically on wake-up from SHUTDOWN.
 - Status outputs for a power controller / interrupt controller.
@@ -75,14 +77,14 @@ There is no register block: all control and status is side-band pins.
 | `DEPTH` | power of two | 1024 | number of words |
 | `BYTE_EN` | 0/1 | 1 | byte-lane writes |
 | `PARTIAL_WR_ERR` | 0/1 | 1 | `BYTE_EN = 0` only: a partial write is a bus error (1) or writes the full word (0) |
-| `READ_LATENCY` | 1/2 | 1 | 2 adds an output register (every response, writes too, comes `READ_LATENCY` cycles after the grant) |
+| `READ_LATENCY` | 1/2 | 1 | 2 adds a read pipeline register ahead of the ECC decoder (every response, writes too, comes `READ_LATENCY` cycles after the grant; *[Step 10]* an ECC read-modify-write with `READ_LATENCY = 1` comes one cycle later) |
 | `PWR_GATE` | 0/1 | 1 | power modes |
 | `ECC_EN` | 0/1 | 0 | SECDED; *[Step 3]* the array is cleared after reset so every word holds a valid codeword |
 | `BANK_PG` | 0/1 | 0 | per-bank power modes |
 | `BIST_EN` | 0/1 | 0 | March C- engine |
 | `DUAL_PORT` | 0/1 | 0 | second bus port (core parameter; *[Step 3]* exposed as the `sram_<proto>_dp` top-levels) |
 | `WIDTH_B` | 8..128, `WIDTH / WIDTH_B` a power of two | `WIDTH` | *[Step 3c]* port B width (dual port) |
-| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as port A | port A's | *[Step 3c]* port B options. VCS-MX evaluates the VHDL default from port A's default, not its actual, when Verilog instantiates the VHDL top: set them explicitly there |
+| `BYTE_EN_B`, `PARTIAL_WR_ERR_B`, `READ_LATENCY_B` | as port A | port A's | *[Step 3c]* port B options. VCS-MX evaluates the VHDL default from port A's default, not its actual, when Verilog instantiates the VHDL top: set them explicitly there. *[Step 10]* VHDL: `WIDTH_B` / `READ_LATENCY_B` default 0 and `BYTE_EN_B` / `PARTIAL_WR_ERR_B` default 2, meaning "as port A" (Design Compiler rejects a generic default that names another generic) |
 | `COMMON_CLK` | 0/1 | 1 | *[Step 3c]* 1: one clock; 0: port B on its own clock (not SAED14) |
 | `INIT_FILE` | path | "" | FPGA / simulation preload (`$readmemh` format) |
 
@@ -143,12 +145,22 @@ events closer together than about three port-A cycles merge into one pulse
 | Mode | Contents | Bus access | SAED32-LP pins | Other ASIC PDKs | FPGA |
 |---|---|---|---|---|---|
 | RUN | kept | normal | — | — | — |
-| LIGHT_SLEEP | kept | wakes automatically, with wait states | LS | clock/chip-select gated | CE / `sleep` |
-| DEEP_SLEEP | kept | **bus error** | DS | clock/chip-select gated, periphery off (UPF) | CE / `sleep` |
+| LIGHT_SLEEP | kept | wakes automatically, with wait states | LS | clock/chip-select gated; outputs isolated (UPF) | CE / `sleep` |
+| DEEP_SLEEP | kept | **bus error** | DS | clock/chip-select gated; outputs isolated (UPF) | CE / `sleep` |
 | SHUTDOWN | **lost** (cleared on wake-up) | **bus error** | SD | power switched off (UPF), outputs isolated | contents marked invalid in simulation |
 
 Transitions honour each macro's databook timing; the wake-up latency becomes
-bus wait states or delays `pwr_mode_ack_o`.
+bus wait states or delays `pwr_mode_ack_o`. *[Step 10]* The SAED32-LP counts
+meet the databook up to 180 MHz (deep-sleep wake: 9 cycles >= tDSFCRS 50 ns);
+the IP is specified at 100 MHz (README "Power Management").
+
+*[Step 10]* Power intent (`design/upf/`, IEEE 1801): on SAED90, SAED14 and
+SKY130 each power domain's macros form a switched domain, powered while
+`sd_o` of its `sram_pwr_ctrl` is low, with outputs clamped to 0 while
+`awake_o` is low (any mode but RUN). LIGHT_SLEEP and DEEP_SLEEP keep the
+supply on: these macros have a single supply, so DEEP_SLEEP's "periphery off"
+is not expressed. SAED32-LP uses its own SD / LS / DS pins and one always-on
+domain. Checked with VC LP (`verification/tools/lp_sram.py`).
 
 ## Technology Mapping
 

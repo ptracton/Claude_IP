@@ -57,6 +57,9 @@ architecture rtl of sram_macro_dp_generic is
     -- Elaboration-time preload: not coverable logic (with INIT_FILE = "" the
     -- branch is constant; VCS does not filter VHDL constants out of line coverage).
     --synopsys coverage_off
+    -- File I/O is simulation-only for Design Compiler (no textio hread); the
+    -- ASIC flows never use this leaf, the FPGA flows preload via XPM/altsyncram.
+    -- pragma translate_off
     if INIT_FILE /= "" then
       file_open(f, INIT_FILE, read_mode);
       for i in 0 to D - 1 loop
@@ -67,6 +70,7 @@ architecture rtl of sram_macro_dp_generic is
       end loop;
       file_close(f);
     end if;
+    -- pragma translate_on
     --synopsys coverage_on
     return m;
   end function init_mem;

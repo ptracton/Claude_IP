@@ -78,7 +78,7 @@ for its simulation-only content loss).
 
 | File | Line | Rule | Justification |
 |---|---|---|---|
-| all tops, `sram_core`, `sram_array`, `sram_macro`, `sram_macro_dp`, GENERIC / XILINX / ALTERA leaves | INIT_FILE parameter | VC_SYNTH_STRING | `parameter string INIT_FILE`: preload file name for `$readmemh` (GENERIC) and the vendor init attributes (XPM, altsyncram); the PDK flows leave it "" (14 tops/blocks + 6 leaves) |
+| all tops, `sram_core`, `sram_array`, `sram_macro`, `sram_macro_dp`, GENERIC / XILINX / ALTERA leaves | INIT_FILE parameter | VC_SYNTH_STRING | `parameter INIT_FILE` (untyped since Step 10: Design Compiler rejects `parameter string`, VER-700) with a string value: preload file name for `$readmemh` (GENERIC) and the vendor init attributes (XPM, altsyncram); the PDK flows leave it "" (14 tops/blocks + 6 leaves) |
 | `sram_macro_generic.sv` | 45 | SM_IGN_INITIAL | `initial $readmemh(INIT_FILE)` preload: simulation and FPGA inference only, empty for ASIC |
 | `sram_macro_dp_generic.sv` | 50 | SM_IGN_INITIAL | same |
 | `sram_macro_generic.sv` | 66 | W528 | `sd_q`: read only inside `synopsys translate_off` (simulation-only content loss at shutdown) |

@@ -1,0 +1,143 @@
+# sram_power.upf — Power intent of the sram IP (IEEE 1801 / UPF 2.1), shared by
+# every PDK. Loaded by sram_<pdk>.upf at the scope of a bus top-level
+# (sram_<proto> / sram_<proto>_dp), whose core is the instance u_core.
+#
+# Variables (set by sram_<pdk>.upf, or by the caller before it):
+#   SRAM_VDD       nominal supply voltage of the PDK (V)
+#   SRAM_SWITCHED  1: each power domain's SRAM macros are on a switched
+#                  supply (SAED90, SAED14, SKY130: the macros have no sleep
+#                  pins); 0: one always-on domain (SAED32-LP: the macros take
+#                  SD / LS / DS from sram_pwr_ctrl themselves)
+#   SRAM_NPD       power domains of the configuration (sram_core NPD:
+#                  NUM_BANKS with BANK_PG, else 1)
+#   SRAM_NUM_BANKS banks (NUM_BANKS)
+#   SRAM_MACRO_PG  optional {power ground} pin names of single-rail SRAM
+#                  macros that need an explicit connect_supply_net (SAED14
+#                  SRAM1RW / SRAM2RW: {VDD VSS}; VC LP UPF_CSN_SRM)
+#
+# Structure (SRAM_SWITCHED = 1):
+#   PD_TOP       always on (VDD): bus interface(s), sram_core control —
+#                ports, power controllers, clear, BIST, CDC — and the array's
+#                bank multiplexers
+#   PD_MEM<d>    the macro wrappers of power domain d (u_core/u_array/
+#                g_bank[b].g_sp.u_macro, or every g_bank[b].g_dp.g_slice[s].
+#                u_macro of a dual port, for the banks b of domain d), on
+#                VDD_MEM<d> from power switch SW_MEM<d>
+#   SW_MEM<d>    on while u_core/dom_sd[d] is low: sram_pwr_ctrl holds sd_o
+#                high in SHUTDOWN only (entered from idle, with the macros
+#                deselected; contents are lost and cleared on wake-up, see
+#                doc/spec.md "Power modes")
+#   ISO_MEM<d>   outputs of PD_MEM<d> clamped to 0 while u_core/dom_awake[d]
+#                is low, in the parent (always-on) domain. awake_o of
+#                sram_pwr_ctrl is high in RUN only: it falls when the domain
+#                leaves RUN, ENTER_CYC cycles before sd_o rises, and rises
+#                only after the wake-up count (and, after SHUTDOWN, the clear)
+#                has finished, so isolation brackets the switch-off with the
+#                existing RTL (a separate isolation enable, not the switch
+#                control: VC LP PSW_ISO_SAME). The core issues no access to a
+#                domain that is not in RUN (sram_array_fv proves it), so the
+#                clamp only keeps the bank multiplexer inputs defined; it is
+#                also on in LIGHT_SLEEP / DEEP_SLEEP (supply on, harmless).
+# LIGHT_SLEEP and DEEP_SLEEP keep the supply on: these macros have a single
+# supply, so "periphery off" cannot be expressed; they are chip-select /
+# clock gated in RTL (the core issues no access).
+
+foreach v {SRAM_VDD SRAM_SWITCHED SRAM_NPD SRAM_NUM_BANKS} {
+  if {![info exists $v]} {
+    error "sram_power.upf: $v is not set (load sram_<pdk>.upf, which sets it)"
+  }
+}
+
+set sram_core u_core
+
+# ---------------------------------------------------------------------------
+# Always-on domain and supplies
+# ---------------------------------------------------------------------------
+create_power_domain PD_TOP -include_scope
+
+create_supply_port VDD -direction in
+create_supply_port VSS -direction in
+create_supply_net  VDD
+create_supply_net  VSS
+connect_supply_net VDD -ports VDD
+connect_supply_net VSS -ports VSS
+
+create_supply_set SS_TOP -function {power VDD} -function {ground VSS}
+associate_supply_set SS_TOP -handle PD_TOP.primary
+
+add_port_state VDD -state [list ON $SRAM_VDD]
+add_port_state VSS -state {GND 0.0}
+
+set pst_supplies [list VDD VSS]
+set pst_on       [list ON GND]
+
+# ---------------------------------------------------------------------------
+# Switched macro domains
+# ---------------------------------------------------------------------------
+if {$SRAM_SWITCHED} {
+  set banks_per_dom [expr {$SRAM_NUM_BANKS / $SRAM_NPD}]
+  set wrappers [find_objects $sram_core/u_array -pattern *u_macro -object_type inst \
+                  -transitive TRUE]
+  for {set d 0} {$d < $SRAM_NPD} {incr d} {
+    set elems {}
+    for {set k 0} {$k < $banks_per_dom} {incr k} {
+      set b [expr {$d * $banks_per_dom + $k}]
+      foreach w $wrappers {
+        if {[string match "*g_bank\\\[$b\\\].*" $w]} { lappend elems $w }
+      }
+    }
+    if {[llength $elems] == 0} {
+      error "sram_power.upf: no macro wrappers found for power domain $d"
+    }
+
+    create_power_domain PD_MEM$d -elements $elems
+    create_supply_net VDD_MEM$d
+    create_supply_set SS_MEM$d -function [list power VDD_MEM$d] -function {ground VSS}
+    associate_supply_set SS_MEM$d -handle PD_MEM$d.primary
+    if {[info exists SRAM_MACRO_PG] && [llength $SRAM_MACRO_PG] == 2} {
+      foreach w $elems {
+        foreach m [find_objects $w -pattern *u_prim -object_type inst -transitive TRUE] {
+          connect_supply_net VDD_MEM$d -ports [list $m/[lindex $SRAM_MACRO_PG 0]]
+          connect_supply_net VSS       -ports [list $m/[lindex $SRAM_MACRO_PG 1]]
+        }
+      }
+    }
+
+    create_power_switch SW_MEM$d -domain PD_TOP \
+      -input_supply_port  {vin VDD} \
+      -output_supply_port [list vout VDD_MEM$d] \
+      -control_port       [list ctrl $sram_core/dom_sd\[$d\]] \
+      -on_state           {on vin {!ctrl}} \
+      -off_state          {off {ctrl}}
+
+    set_isolation ISO_MEM$d -domain PD_MEM$d \
+      -applies_to outputs \
+      -clamp_value 0 \
+      -isolation_supply_set SS_TOP \
+      -isolation_signal $sram_core/dom_awake\[$d\] \
+      -isolation_sense low \
+      -location parent
+
+    add_port_state SW_MEM$d/vout -state [list ON $SRAM_VDD] -state {OFF off}
+    lappend pst_supplies VDD_MEM$d
+    lappend pst_on ON
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Power state table: all on, and each macro domain off on its own (every
+# combination is legal: the domains are independent)
+# ---------------------------------------------------------------------------
+create_pst sram_pst -supplies $pst_supplies
+add_pst_state ALL_ON -pst sram_pst -state $pst_on
+if {$SRAM_SWITCHED} {
+  set n [llength $pst_supplies]
+  for {set m 1} {$m < (1 << $SRAM_NPD)} {incr m} {
+    set st [list ON GND]
+    set name "MEM_OFF"
+    for {set d 0} {$d < $SRAM_NPD} {incr d} {
+      if {($m >> $d) & 1} { lappend st OFF; append name "_$d" } else { lappend st ON }
+    }
+    add_pst_state $name -pst sram_pst -state $st
+  }
+}

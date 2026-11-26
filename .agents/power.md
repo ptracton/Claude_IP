@@ -118,3 +118,9 @@ report_power -nosplit -unit mW -net_power  -leaf -nworst 10 -sort_by net_switchi
 
 Scope is always `tb_timer_{proto}/u_dut` — the DUT instance inside the SV testbench.
 `-strip_path` strips this prefix so net names match the gate-level design hierarchy.
+
+## Gate-level models for SAED90 / SKY130 (2026-11-25)
+Gate-level runs that feed PrimePower should compile the corrected vendor models: SAED90
+`saed90nm.v` from `IP/common/verification/tools/pdk_cell_models.py` (DFFSSR/SDFFSSR set-priority
+fix) and, for SRAM macros, `pdk_sram_models.model_files(pdk, dir, gate_level=True)`. The timer and
+bus_matrix flows still compile the vendor `saed90nm.v` (not re-checked for the SSR cells).

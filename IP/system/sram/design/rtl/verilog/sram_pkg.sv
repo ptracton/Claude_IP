@@ -186,9 +186,15 @@ package sram_pkg;
 
   // -------------------------------------------------------------------------
   // Power-mode timing in clock cycles (entry: pins asserted -> mode reached;
-  // wake: pins released -> first access). Conservative defaults; the SAED32
-  // low-power values are to be checked against its liberty/databook timing
-  // (tLSI/tLSW, tDSI/tDSW) at synthesis.
+  // wake: pins released -> first access). sram_pwr_ctrl holds each state for
+  // count + 1 cycles. SAED32-LP, checked against its databook (Low Power
+  // Memories Rev 1.0.2, Table 1.10) in Step 10: entry 4 -> 5 cycles >= tLSI
+  // 1.8 / tDSI / tSDI 2.5 ns; wake LS 2 -> 3 cycles >= tLSFCRS 1.8 ns; wake
+  // DS 8 -> 9 cycles >= tDSFCRS 50 ns up to 180 MHz; wake SD 16 -> 17 cycles
+  // >= tSDFCRS 50 ns up to 340 MHz (the macro itself: 333 MHz). The IP is
+  // specified at 100 MHz (user decision 2026-11-25: keep the counts). The
+  // other PDKs' counts are placeholders: their macros have no sleep pins and
+  // the UPF power switch has no ramp-time data.
   // -------------------------------------------------------------------------
   function automatic int unsigned pwr_enter_cycles(int unsigned tech);
     return (tech == TECH_SAED32) ? 4 : 2;

@@ -1,0 +1,58 @@
+================================================================================================
+Design Compiler Synthesis Report — sram IP
+Target PDK    : SAED14 (14nm)
+SRAM macros   : saed14sram_ss0p72v125c (SRAM1RW / SRAM2RW)
+Constraints   : 100 MHz bus clock(s); 3.0 ns input and output delay on every port;
+                dp: port B pins on clk_b, asynchronous to clk_a (SAED14: one clock)
+                compiled with a 0.2 ns setup margin (clock uncertainty, not in the .sdc):
+                WNS below includes it; synthesis/primetime/report_sta_*.txt has the real slack
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-11-25
+================================================================================================
+
+STATUS: PASS — 24/24 netlists meet timing with SRAM macros.
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb                     339     31      8 211539.156250 211667.427850     +3.03  MET
+  sram_ahb                     442     67      8 211539.156250 211728.833051     +3.04  MET
+  sram_axi4l                   694    169      8 211539.156250 211886.364254     +3.05  MET
+  sram_wb                      337     31      8 211539.156250 211666.673050     +3.04  MET
+  sram_apb_vhdl                344     31      8 211539.156250 211666.539850     +2.90  MET
+  sram_ahb_vhdl                446     67      8 211539.156250 211724.792650     +2.90  MET
+  sram_axi4l_vhdl              701    169      8 211539.156250 211886.186654     +2.90  MET
+  sram_wb_vhdl                 342     31      8 211539.156250 211665.829450     +2.90  MET
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_opts               1300    214     10 264423.945312 265038.041714     +2.18  MET
+  sram_ahb_opts               1413    250     10 264423.945312 265094.873715     +1.58  MET
+  sram_axi4l_opts             1669    352     10 264423.945312 265252.404918     +1.63  MET
+  sram_wb_opts                1308    214     10 264423.945312 265032.669314     +1.58  MET
+  sram_apb_opts_vhdl          1319    214     10 264423.945312 265029.206113     +2.16  MET
+  sram_ahb_opts_vhdl          1421    250     10 264423.945312 265089.190514     +1.96  MET
+  sram_axi4l_opts_vhdl        1677    352     10 264423.945312 265250.628917     +2.06  MET
+  sram_wb_opts_vhdl           1318    214     10 264423.945312 265028.984113     +0.22  MET
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_dp                 1492    161     16 699225.625000 699865.828598     +2.56  MET
+  sram_ahb_dp                 1697    232     16 699225.625000 699989.171801     +2.55  MET
+  sram_axi4l_dp               2111    390     16 699225.625000 700235.769405     +2.55  MET
+  sram_wb_dp                  1493    161     16 699225.625000 699863.830598     +2.55  MET
+  sram_apb_dp_vhdl            1514    161     16 699225.625000 699858.902198     +2.55  MET
+  sram_ahb_dp_vhdl            1713    232     16 699225.625000 699976.651000     +2.61  MET
+  sram_axi4l_dp_vhdl          2137    390     16 699225.625000 700229.065004     +2.45  MET
+  sram_wb_dp_vhdl             1513    161     16 699225.625000 699858.324998     +2.55  MET
+
+Area is in the library's units (um^2 for SAED32/14 and SKY130). Total area includes the macros.
+Macros = SRAM macro instances counted in the netlist; 0 would mean the array was not mapped to macros.
+WNS is the worst slack among the 10 paths in each <netlist>_timing.rpt.
+
+Per-netlist reports : synthesis/designcompiler/reports/saed14/
+Netlists, SDF, SDC  : synthesis/designcompiler/netlists/saed14/
+Full logs           : synthesis/designcompiler/dc_saed14_<cfg>_run.log
+================================================================================================

@@ -38,8 +38,17 @@ are excluded from the VHDL toggle (see "VHDL toggle constants" below).
 Tests (--test): all, reset, params, access, burst, pipeline, contention, ecc,
 power, clear, bist, dp, resetbusy.
 
-Gate-level (--postsyn) and power (--power) simulation arrive with synthesis
-(Step 10); the options are accepted and reported as not implemented.
+Gate-level (--postsyn, Step 10): the three DC netlists of each bus (base,
+opts, dp; synthesis/run_vendor_synth.py) with SDF, the vendor SRAM macro
+models and the standard-cell models, in tb_sram_<proto> with
++define+SRAM_POSTSYN (testbench/sram_tb_postsyn_body.svh). --lang picks the
+netlists synthesized from SV or from VHDL. VCS, csun.edu only:
+    python3 sim_sram.py --postsyn --proto all --lang all --pdk all --jobs 3
+    -> verification/work/postsyn/<proto>_<lang>_<pdk>/, postsyn/results.log
+SAED90 runs are reported as KNOWN (accepted timing failure); --no-sdf runs
+the same netlists with zero-delay gates (a timing failure passes there).
+Power (--power)
+is not implemented yet.
 """
 
 import argparse
@@ -180,13 +189,15 @@ def tech_defines(tech: str, lang: str = "sv") -> list:
     return d
 
 
-def macro_models(tech: str, sram_path: str, work_dir: str) -> list:
-    """Vendor SRAM macro models for a PDK (none for GENERIC)."""
+def macro_models(tech: str, sram_path: str, work_dir: str, gate_level: bool = False) -> list:
+    """Vendor SRAM macro models for a PDK (none for GENERIC). gate_level:
+    post-synthesis runs (SKY130 read delay from the liberty, see
+    pdk_sram_models.SKY130_GL_DELAY)."""
     if tech == "generic":
         return []
     sys.path.insert(0, os.path.join(get_common_path(sram_path), "verification", "tools"))
     import pdk_sram_models  # noqa: E402
-    return pdk_sram_models.model_files(tech, work_dir)
+    return pdk_sram_models.model_files(tech, work_dir, gate_level=gate_level)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +339,198 @@ def run_vcs(proto: str, lang: str, tech: str, test: str, waves: bool,
     print(f"  {tag} {summ}")
     _write_result(results, "PASS" if ok else "FAIL", sim_out)
     return ok, summ
+
+
+# ---------------------------------------------------------------------------
+# Gate level (--postsyn, Step 10): DC netlists + SDF, VCS
+# ---------------------------------------------------------------------------
+_SAED90_PDK = "/opt/ECE_Lib/SAED90nm_EDK_10072017/SAED90_EDK/SAED_EDK90nm"
+_SAED32_EDK = "/opt/ECE_Lib/SAED32_EDK"
+_SAED14_EDK = "/opt/ECE_Lib/SAED14nm_EDK_03_2025"
+
+# Standard-cell simulation models (as sim_timer.py). SAED14's cells wrap
+# "_func" UDPs that live in companion *_udp.v files. SKY130: primitives.v
+# is compiled from a copy with `default_nettype wire (its non-ANSI UDP ports
+# fail under `default_nettype none), and sky130_fd_sc_hd.v is a -v library
+# (one unused cell references an undeclared VPWR).
+POSTSYN_CELLS = {
+    "saed90": {"cells": [f"{_SAED90_PDK}/Digital_Standard_cell_Library/verilog/saed90nm.v"]},
+    "saed32": {"cells": [f"{_SAED32_EDK}/lib/stdcell_rvt/verilog/saed32nm.v"]},
+    "saed14": {"cells": [f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/verilog/{d}/saed14rvt_{d}{s}.v"
+                         for d in ("base", "cg", "dlvl", "iso") for s in ("", "_udp")]},
+    "sky130": {"cells": [], "nettype_wire": ["primitives.v"], "v_libs": ["sky130_fd_sc_hd.v"]},
+}
+POSTSYN_PDKS = list(POSTSYN_CELLS)
+
+# SAED90 does not meet 100 MHz (user decision 2026-11-25, synthesis/
+# known_issues.md): with +notimingcheck its violating paths show up as wrong
+# data, not as timing-check messages. Its runs are reported, not counted.
+POSTSYN_KNOWN_FAILURES = {"saed90"}
+
+# Netlists of one gate-level run: (bench instance, configuration suffix).
+POSTSYN_NETLISTS = [("u_base", ""), ("u_opts", "_opts"), ("u_dp", "_dp")]
+
+
+def _sky130_verilog() -> str:
+    pdk = os.environ.get("CLAUDE_SKY130_PDK_PATH", "")
+    return os.path.join(pdk, "libs.ref", "sky130_fd_sc_hd", "verilog")
+
+
+def postsyn_netlist_copy(src: str, top: str, tag: str, dst: str) -> None:
+    """Copy a DC netlist with every sub-module renamed <name>__<tag>.
+
+    One bench compiles three netlists, and DC names sub-designs after their
+    parameters, so the same name (e.g. sram_clr_00000400_00000002_1) can be
+    defined by two netlists with different logic. The top keeps its name;
+    library cells are not defined in the netlist and are untouched."""
+    import re
+    with open(src) as fh:
+        text = fh.read()
+    names = set(re.findall(r"^module\s+(\w+)", text, re.M)) - {top}
+    if names:
+        rx = re.compile(r"\b(" + "|".join(sorted(map(re.escape, names), key=len, reverse=True)) + r")\b")
+        text = rx.sub(lambda m: f"{m.group(1)}__{tag}", text)
+    with open(dst, "w") as fh:
+        fh.write(text)
+
+
+def run_vcs_postsyn(proto: str, lang: str, pdk: str, waves: bool, sram_path: str,
+                    work_dir: str, sdf: bool = True) -> tuple:
+    """Gate-level simulation of the three DC netlists of (proto, RTL language,
+    PDK) in tb_sram_<proto> (+define+SRAM_POSTSYN, sram_tb_postsyn_body.svh),
+    with DC's SDF on each, the vendor SRAM macro models and the standard-cell
+    models. +notimingcheck: function is checked; timing is PrimeTime's job
+    (synthesis/run_primetime_sta.py). Returns (passed, summary)."""
+    os.makedirs(work_dir, exist_ok=True)
+    results = os.path.join(work_dir, "results.log")
+    tb_top = f"tb_sram_{proto}"
+    tag = f"[postsyn/{proto}_{lang}/{pdk}]"
+    net_dir = os.path.join(sram_path, "synthesis", "designcompiler", "netlists", pdk)
+    lsuf = "_vhdl" if lang == "vhdl" else ""
+    nets, sdfs, defs = [], [], []
+    for inst, csuf in POSTSYN_NETLISTS:
+        top = f"sram_{proto}{'_dp' if csuf == '_dp' else ''}{'_opts' if csuf == '_opts' else ''}{lsuf}"
+        src = os.path.join(net_dir, f"{top}.v")
+        if not os.path.isfile(src):
+            msg = f"netlist not found: {src} (run synthesis/run_vendor_synth.py --dc first)"
+            print(f"  {tag} {msg}")
+            _write_result(results, "FAIL", msg)
+            return False, "netlist missing"
+        dst = os.path.join(work_dir, f"{top}.v")
+        postsyn_netlist_copy(src, top, inst[2:], dst)
+        nets.append(dst)
+        sdf_file = os.path.join(net_dir, f"{top}.sdf")
+        if sdf and os.path.isfile(sdf_file):
+            sdfs += ["-sdf", f"typ:{tb_top}.{inst}:{sdf_file}"]
+        defs.append(f"+define+PS_{inst[2:].upper()}={top}")
+    cfg = POSTSYN_CELLS[pdk]
+    # Corrected copies where a vendor cell model disagrees with its liberty
+    # (SAED90 SSR flip-flops, IP/common/verification/tools/pdk_cell_models.py)
+    sys.path.insert(0, os.path.join(get_common_path(sram_path), "verification", "tools"))
+    import pdk_cell_models  # noqa: E402
+    cells = pdk_cell_models.cell_files(pdk, work_dir) or list(cfg["cells"])
+    for name in cfg.get("nettype_wire", []):
+        src = os.path.join(_sky130_verilog(), name)
+        dst = os.path.join(work_dir, "nettype_wire_" + name)
+        with open(src) as fh:
+            text = fh.read()
+        with open(dst, "w") as fh:
+            fh.write(text.replace("`default_nettype none", "`default_nettype wire"))
+        cells.append(dst)
+    v_libs = []
+    for name in cfg.get("v_libs", []):
+        v_libs += ["-v", os.path.join(_sky130_verilog(), name)]
+    missing = [f for f in cells + v_libs[1::2] if not os.path.isfile(f)]
+    if missing:
+        msg = "cell models not found:\n" + "\n".join(missing)
+        print(f"  {tag} {msg}")
+        _write_result(results, "FAIL", msg)
+        return False, "cell models missing"
+    tbdir = os.path.join(sram_path, "verification", "testbench")
+    bench = [os.path.join(tbdir, f) for f in
+             ("sram_tb_pkg.sv", f"sram_tb_{proto}_master.sv", f"tb_sram_{proto}.sv")]
+    simv = os.path.join(work_dir, "simv")
+    cmd = (["vcs", "-full64", "-sverilog", "-timescale=1ns/1ps", "-o", simv,
+            "-debug_access+pp", "+notimingcheck", "+neg_tchk", "+vcs+initreg+random",
+            f"+incdir+{tbdir}", f"+define+TECH={TECH_NUM[pdk]}", "+define+SRAM_POSTSYN"]
+           # --no-sdf: zero-delay gates (the cell models' own specify / #
+           # delays too), so only function is left
+           + ([] if sdf else ["+delay_mode_zero"])
+           + defs + sdfs + macro_models(pdk, sram_path, work_dir, gate_level=True) + cells + nets + bench
+           + v_libs + ["-top", tb_top])
+    print(f"  {tag} Compiling (3 netlists, SDF {len(sdfs) // 2}) ...")
+    out, rc = _run(cmd, work_dir, 1800)
+    with open(os.path.join(work_dir, "compile.log"), "w") as fh:
+        fh.write(" ".join(cmd) + "\n\n" + out)
+    if rc != 0:
+        print(f"  {tag} Compile FAILED (see {work_dir}/compile.log)")
+        _write_result(results, "FAIL", out)
+        return False, "compile failed"
+    print(f"  {tag} Simulating ...")
+    # +vcs+initreg+0: every gate-level flop starts at 0 (no X before reset)
+    sim_out, rc = _run([simv, "+vcs+initreg+0"] + (["+waves"] if waves else []), work_dir, 7200)
+    with open(os.path.join(work_dir, "sim.log"), "w") as fh:
+        fh.write(sim_out)
+    ok = _passed(sim_out, tb_top)
+    summ = _summary_line(sim_out, tb_top) or f"no PASS line (rc {rc})"
+    print(f"  {tag} {summ}")
+    _write_result(results, "PASS" if ok else "FAIL", sim_out)
+    return ok, summ
+
+
+def run_postsyn(args, sram_path: str) -> int:
+    """--postsyn: every (proto, lang, pdk) selected, VCS, --jobs in parallel."""
+    if not ON_CSUN:
+        print("ERROR: --postsyn needs VCS and the PDKs (csun.edu only).")
+        return 1
+    protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
+    langs = SUPPORTED_LANGS if args.lang == "all" else [args.lang]
+    pdks = POSTSYN_PDKS if args.pdk == "all" else [args.pdk]
+    bad = [p for p in pdks if p not in POSTSYN_PDKS]
+    if bad:
+        print(f"ERROR: --pdk must be one of {POSTSYN_PDKS} or all (got {bad})")
+        return 1
+    work_base = os.path.join(sram_path, "verification", "work")
+    sub = "postsyn_nosdf" if args.no_sdf else "postsyn"
+    runs = [(f"{sub}/{p}_{lang}/{k}", (p, lang, k, args.waves, sram_path,
+                                        os.path.join(work_base, sub, f"{p}_{lang}_{k}"),
+                                        not args.no_sdf))
+            for k in pdks for p in protos for lang in langs]
+    summary = {}
+    with concurrent.futures.ThreadPoolExecutor(max(1, min(args.jobs, 3))) as ex:
+        futs = {ex.submit(run_vcs_postsyn, *a): label for label, a in runs}
+        for f in concurrent.futures.as_completed(futs):
+            try:
+                ok, summ = f.result()
+            except Exception as e:  # a crashed run is a FAIL, not a lost summary
+                ok, summ = False, f"runner error {type(e).__name__}: {e}"
+            summary[futs[f]] = ("PASS" if ok else "FAIL", summ)
+    rows = []
+    for label, a in runs:
+        st, summ = summary[label]
+        if st == "FAIL" and a[2] in POSTSYN_KNOWN_FAILURES and not args.no_sdf:
+            st = "KNOWN"
+        rows.append((label, st, summ))
+    all_pass = all(st in ("PASS", "KNOWN") for _, st, _ in rows) and bool(rows)
+    green, red, yellow, reset = "\033[32m", "\033[31m", "\033[33m", "\033[0m"
+    col = {"PASS": green, "FAIL": red, "KNOWN": yellow}
+    print("\n" + "=" * 78)
+    print("sram post-synthesis (gate-level) simulation results")
+    print("=" * 78)
+    for label, st, summ in rows:
+        print(f"  {label:<26} {col[st]}{st:<5}{reset}  {summ}")
+    if any(st == "KNOWN" for _, st, _ in rows):
+        print("  KNOWN = accepted failure (SAED90 misses 100 MHz, synthesis/known_issues.md)")
+    print("=" * 78)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(os.path.join(work_base, sub, "results.log"), "w") as fh:
+        fh.write(f"{'PASS' if all_pass else 'FAIL'}  sim_sram.py --postsyn"
+                 f"{' --no-sdf' if args.no_sdf else ''}  {stamp}\n")
+        for label, st, summ in rows:
+            fh.write(f"{st:<5} {label:<26} {summ}\n")
+    print(f"All post-synthesis simulations {green}PASSED{reset}." if all_pass
+          else f"One or more post-synthesis simulations {red}FAILED{reset}.")
+    return 0 if all_pass else 1
 
 
 def run_xcelium(proto: str, lang: str, tech: str, test: str, waves: bool,
@@ -858,14 +1061,21 @@ def main() -> int:
                              "verification/work/coverage/ (summary.txt, dashboard.html)")
     parser.add_argument("--jobs", type=int, default=1,
                         help="runs in parallel (each run has its own work directory)")
-    parser.add_argument("--postsyn", action="store_true", help="gate-level (Step 10)")
+    parser.add_argument("--postsyn", action="store_true",
+                        help="gate-level: DC netlists + SDF of --proto / --lang (RTL language "
+                             "synthesized) / --pdk, VCS (Step 10)")
+    parser.add_argument("--no-sdf", action="store_true",
+                        help="--postsyn without SDF, +delay_mode_zero (zero-delay gates): tells a timing failure "
+                             "from a functional one; results in work/postsyn_nosdf/")
     parser.add_argument("--power", action="store_true", help="PrimePower (Step 10/12)")
     parser.add_argument("--pdk", default="all", help="PDK for --postsyn / --power")
     args = parser.parse_args()
 
-    if args.postsyn or args.power:
-        print("FAIL: --postsyn / --power are not implemented yet (synthesis is Step 10).")
+    if args.power:
+        print("FAIL: --power is not implemented yet (Step 10/12).")
         return 1
+    if args.postsyn:
+        return run_postsyn(args, sram_path)
 
     sim = args.sim or ("vcs" if ON_CSUN else "verilator")
     if ON_CSUN and sim in _CSUN_BLOCKED:

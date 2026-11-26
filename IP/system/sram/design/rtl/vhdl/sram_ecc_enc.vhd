@@ -64,9 +64,9 @@ begin
 
   -- Hamming check bits and overall parity.
   g_check : for i in 0 to R_C - 1 generate
-    check(i) <= xor (data_i and COVER_C(i));
+    check(i) <= red_xor(data_i and COVER_C(i));
   end generate g_check;
 
-  code_o <= ((xor data_i) xor (xor check)) & check & data_i;
+  code_o <= (red_xor(data_i) xor red_xor(check)) & check & data_i;
 
 end architecture rtl;

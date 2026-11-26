@@ -16,7 +16,7 @@ module sram_macro_xilinx #(
   parameter int unsigned D         = 1024, // words
   parameter int unsigned NLANES    = 4,    // write lanes of W / NLANES bits
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE = ""    // optional preload (.mem, hex)
+  parameter              INIT_FILE = ""    // optional preload (.mem, hex)
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 clk,       // clock
@@ -31,7 +31,7 @@ module sram_macro_xilinx #(
   output logic [W-1:0]         rdata_o    // read data (cycle after a read)
 );
 
-  localparam string InitFile = (INIT_FILE == "") ? "none" : INIT_FILE;
+  localparam        InitFile = (INIT_FILE == "") ? "none" : INIT_FILE;
 
   logic [NLANES-1:0] wea;
   logic              sleep;

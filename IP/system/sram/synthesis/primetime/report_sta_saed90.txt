@@ -1,0 +1,55 @@
+========================================================================================================
+PrimeTime STA Report — sram IP
+Target        : SAED90 (90nm) — saed90nm_max + SRAM*_max macros (the EDK's single corner)
+SRAM macros   : SRAM<w>x<d>_1rw / SRAM<w>x<d> (_max .db per macro)
+Constraints   : DC's .sdc per netlist (100 MHz, 3.0 ns I/O delay; dp port B on clk_b);
+                ideal clocks; DC's wire-load model per netlist (no parasitics)
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-11-25
+========================================================================================================
+
+STATUS: FAIL — 2/24 netlists meet setup and hold.
+        Accepted known failure: 100 MHz setup not met on SAED90 (user decision 2026-11-25), see synthesis/known_issues.md
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb                   8000    -0.40     -0.203     -6.489    33    +0.813     0.000     0  VIOLATED
+  sram_ahb                   8000    -0.40     -0.203     -8.880    48    +0.796     0.000     0  VIOLATED
+  sram_axi4l                16000    +0.00     +0.202      0.000     0    +0.686     0.000     0  MET
+  sram_wb                    8000    -0.40     -0.203     -6.481    32    +0.813     0.000     0  VIOLATED
+  sram_apb_vhdl              8000    -0.40     -0.203     -6.481    32    +0.813     0.000     0  VIOLATED
+  sram_ahb_vhdl              8000    -0.40     -0.203     -6.481    32    +0.796     0.000     0  VIOLATED
+  sram_axi4l_vhdl           16000    +0.01     +0.213      0.000     0    +0.686     0.000     0  MET
+  sram_wb_vhdl               8000    -0.40     -0.203     -6.481    32    +0.813     0.000     0  VIOLATED
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_opts             35000    -1.47     -1.270   -138.707   265    +0.794     0.000     0  VIOLATED
+  sram_ahb_opts             35000    -1.53     -1.326   -233.927   378    +0.794     0.000     0  VIOLATED
+  sram_axi4l_opts           35000    -1.46     -1.256   -240.739   425    +0.793     0.000     0  VIOLATED
+  sram_wb_opts              35000    -0.99     -0.793    -97.908   226    +0.794     0.000     0  VIOLATED
+  sram_apb_opts_vhdl        35000    -1.53     -1.332   -179.060   256    +0.794     0.000     0  VIOLATED
+  sram_ahb_opts_vhdl        35000    -1.24     -1.045   -166.048   346    +0.794     0.000     0  VIOLATED
+  sram_axi4l_opts_vhdl      35000    -1.17     -0.968   -220.479   373    +0.793     0.000     0  VIOLATED
+  sram_wb_opts_vhdl         35000    -1.26     -1.064   -111.914   231    +0.794     0.000     0  VIOLATED
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_dp               35000    -1.41     -1.212   -297.951   529    +0.800     0.000     0  VIOLATED
+  sram_ahb_dp               35000    -1.10     -0.900    -87.706   213    +0.800     0.000     0  VIOLATED
+  sram_axi4l_dp             70000   -42.61    -42.407 -67878.228  2424    +1.353     0.000     0  VIOLATED
+  sram_wb_dp                35000    -1.43     -1.232   -274.176   627    +0.800     0.000     0  VIOLATED
+  sram_apb_dp_vhdl          35000    -1.60     -1.401   -291.660   665    +0.800     0.000     0  VIOLATED
+  sram_ahb_dp_vhdl          35000    -1.50     -1.300   -235.159   489    +0.800     0.000     0  VIOLATED
+  sram_axi4l_dp_vhdl        70000   -35.20    -34.997 -60751.477  2409    +1.353     0.000     0  VIOLATED
+  sram_wb_dp_vhdl           35000    -1.52     -1.316   -439.678   861    +0.800     0.000     0  VIOLATED
+
+WNS / TNS in ns; NVP = violating endpoints. DC WNS = Design Compiler's worst slack for the
+same netlist (synthesis corner only), for correlation.
+
+Per-netlist reports : synthesis/primetime/reports/saed90/
+Full log            : synthesis/primetime/pt_saed90_run.log
+========================================================================================================

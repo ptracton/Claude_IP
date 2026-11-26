@@ -1,0 +1,54 @@
+========================================================================================================
+PrimeTime STA Report — sram IP
+Target        : SAED14 (14nm) — SS 0.72 V 125 C (worst case) + saed14sram SS macros
+SRAM macros   : saed14sram_ss0p72v125c (SRAM1RW / SRAM2RW)
+Constraints   : DC's .sdc per netlist (100 MHz, 3.0 ns I/O delay; dp port B on clk_b);
+                ideal clocks; DC's wire-load model per netlist (no parasitics)
+Tool version  : PrimeTime (pt_shell)
+Run date      : 2026-11-25
+========================================================================================================
+
+STATUS: PASS — 24/24 netlists meet setup and hold.
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb                   8000    +3.03     +3.229      0.000     0    +0.172     0.000     0  MET
+  sram_ahb                   8000    +3.04     +3.239      0.000     0    +0.179     0.000     0  MET
+  sram_axi4l                 8000    +3.05     +3.249      0.000     0    +0.180     0.000     0  MET
+  sram_wb                    8000    +3.04     +3.239      0.000     0    +0.180     0.000     0  MET
+  sram_apb_vhdl              8000    +2.90     +3.097      0.000     0    +0.179     0.000     0  MET
+  sram_ahb_vhdl              8000    +2.90     +3.102      0.000     0    +0.179     0.000     0  MET
+  sram_axi4l_vhdl            8000    +2.90     +3.096      0.000     0    +0.179     0.000     0  MET
+  sram_wb_vhdl               8000    +2.90     +3.096      0.000     0    +0.179     0.000     0  MET
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_opts              8000    +2.18     +2.382      0.000     0    +0.155     0.000     0  MET
+  sram_ahb_opts              8000    +1.58     +1.783      0.000     0    +0.155     0.000     0  MET
+  sram_axi4l_opts            8000    +1.63     +1.834      0.000     0    +0.155     0.000     0  MET
+  sram_wb_opts               8000    +1.58     +1.783      0.000     0    +0.155     0.000     0  MET
+  sram_apb_opts_vhdl         8000    +2.16     +2.358      0.000     0    +0.155     0.000     0  MET
+  sram_ahb_opts_vhdl         8000    +1.96     +2.163      0.000     0    +0.155     0.000     0  MET
+  sram_axi4l_opts_vhdl       8000    +2.06     +2.262      0.000     0    +0.155     0.000     0  MET
+  sram_wb_opts_vhdl          8000    +0.22     +0.418      0.000     0    +0.155     0.000     0  MET
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                     WLM   DC WNS  Setup WNS        TNS   NVP  Hold WNS       TNS   NVP  Result
+  ----------------------------------------------------------------------------------------------------
+  sram_apb_dp                8000    +2.56     +2.759      0.000     0    +0.155     0.000     0  MET
+  sram_ahb_dp                8000    +2.55     +2.748      0.000     0    +0.155     0.000     0  MET
+  sram_axi4l_dp              8000    +2.55     +2.748      0.000     0    +0.155     0.000     0  MET
+  sram_wb_dp                 8000    +2.55     +2.748      0.000     0    +0.155     0.000     0  MET
+  sram_apb_dp_vhdl           8000    +2.55     +2.748      0.000     0    +0.155     0.000     0  MET
+  sram_ahb_dp_vhdl           8000    +2.61     +2.814      0.000     0    +0.155     0.000     0  MET
+  sram_axi4l_dp_vhdl         8000    +2.45     +2.646      0.000     0    +0.155     0.000     0  MET
+  sram_wb_dp_vhdl            8000    +2.55     +2.748      0.000     0    +0.155     0.000     0  MET
+
+WNS / TNS in ns; NVP = violating endpoints. DC WNS = Design Compiler's worst slack for the
+same netlist (synthesis corner only), for correlation.
+
+Per-netlist reports : synthesis/primetime/reports/saed14/
+Full log            : synthesis/primetime/pt_saed14_run.log
+========================================================================================================

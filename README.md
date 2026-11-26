@@ -22,7 +22,7 @@ Claude_IP/
 ├── IP/
 │   ├── common/          Shared components (bus bridges, BFMs, formal checkers, test packages, tool libraries)
 │   ├── interface/       Bus interconnect and interface IP
-│   └── system/          System peripherals (timers, ...)
+│   └── system/          System peripherals (timer, sram)
 ├── .agents/             Sub-agent workflow definitions (12-step IP development process) and tool notes
 └── virtualenv/          Python virtual environment for PeakRDL, volare and tool scripts
 ```
@@ -39,6 +39,7 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 | IP | Description | Protocols | Status |
 |----|-------------|-----------|--------|
 | [timer](IP/system/timer/) | Programmable 32-bit timer with prescaler, one-shot/free-running modes, interrupt, trigger output, restart and atomic snapshot | APB4, AHB-Lite, AXI4-Lite, WB | Complete (both flows) |
+| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-10 done on the csun.edu flow; FPGA / Yosys synthesis and standard-host runs pending; power (Step 12) not started |
 
 ### Interface
 
@@ -52,9 +53,11 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 |----|------|------|-----|------|------|------|------|
 | timer | 16/16 PASS | 8/8 PASS | 1/1 PASS on xsim (standard host; not run on csun.edu) | PASS | SAED90 -0.40 ns accepted; others MET | SAED32/14, SKY130 PASS; SAED90 known fail | 12/16 (SAED90 skipped) |
 | bus_matrix | 16/16 PASS (82 checks each) | 10/10 PASS | 5/5 PASS on VCS, 100 % coverage | PASS | SAED90 -0.56 ns accepted; others MET | 16/16 PASS | 16/16 |
+| sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 26/26 PASS (bounded waivers) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 24/24 PASS (20 lint + 4 CDC) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | not started |
 
 See each IP's README for the details and `synthesis/known_issues.md` for the
-accepted SAED90 violations.
+accepted SAED90 violations. The sram also has power intent (UPF) for the PDKs
+whose macros lack sleep pins, checked with VC LP (12/12 PASS).
 
 ## Shared Components
 
@@ -62,7 +65,9 @@ The [IP/common/](IP/common/) directory contains components shared by all IPs:
 
 - **Bus bridges** (`design/rtl/verilog/`, `design/rtl/vhdl/`):
   `claude_<proto>_if` turns APB4, AHB-Lite, AXI4-Lite or Wishbone B4 into a
-  simple register bus.
+  simple register bus; `claude_<proto>_mem_if` turns it into a pipelined
+  memory bus (request / grant / response, used by the sram);
+  `claude_sync` / `claude_pulse_sync` are clock-domain synchronizers.
 - **BFM task libraries** (`verification/tasks/`): handshake-correct bus
   masters for directed tests, configurable address width and timeout, with an
   error flag.
@@ -75,10 +80,18 @@ The [IP/common/](IP/common/) directory contains components shared by all IPs:
 - **Python tool libraries** (`verification/tools/`):
   - `claude_vcf.py`, the VC Formal driver with waivers;
   - `ip_tool_base.py`, a shared environment and results helper;
-  - `run_regression.py`.
-- **SKY130 library cache** (`synthesis/designcompiler/`):
-  `build_sky130_libs.py` compiles SKY130's `.lib` files to `.db` with Library
-  Compiler, for DC, PrimeTime and PrimePower.
+  - `run_regression.py`;
+  - `pdk_sram_models.py` / `pdk_cell_models.py`, corrected copies of vendor
+    SRAM-macro and standard-cell simulation models (SAED14 / SKY130 macro
+    model bugs, SKY130 gate-level read delay, SAED90 set/reset flip-flop
+    priority); the vendor files are never edited;
+  - `verify_mem_if.py`, the memory-adapter verification runner.
+- **Library caches** (`synthesis/designcompiler/`):
+  `build_sky130_libs.py` compiles SKY130's standard-cell and OpenRAM SRAM
+  `.lib` files to `.db` with Library Compiler, for DC, PrimeTime and
+  PrimePower; `build_saed32_sram_libs.py` builds a patched copy of the
+  SAED32 low-power SRAM liberty (missing SD / LS / DS pins added; not
+  committed, rebuilt on demand).
 - **CMake toolchain files** (`firmware/cmake/`): ARM Cortex-M33 and RISC-V
   32-bit cross-compilation.
 
@@ -106,7 +119,8 @@ Each IP follows a 12-step sub-agent workflow defined in
     - Yosys, Vivado (Zynq-7010) and Quartus (Cyclone V SE);
     - Design Compiler (SAED90/32/14, SKY130);
     - PrimeTime STA;
-    - SDF gate-level simulation.
+    - SDF gate-level simulation;
+    - UPF power intent, checked with VC LP (IPs with power domains).
 11. **cleanup**: scrub artifacts, finalize docs, tag the release
 12. **power**: PrimePower analysis of the gate-level netlist with SAIF from
     gate-level simulation (csun.edu)
@@ -132,7 +146,8 @@ Each IP follows a 12-step sub-agent workflow defined in
 | Synopsys VCS Y-2026.03 | SV/VHDL directed simulation, UVM, gate-level simulation |
 | Cadence Xcelium 25.03 | SV/VHDL directed simulation |
 | Synopsys VC Formal Y-2026.03 | Formal property verification (SV and VHDL) |
-| Synopsys SpyGlass Y-2026.03 | SV lint (VHDL-2008 lint is not available there) |
+| Synopsys SpyGlass Y-2026.03 | SV lint and CDC (VHDL-2008 lint is not available there) |
+| Synopsys VC LP (VC Static) Y-2026.03 | Static UPF / low-power checks |
 | Synopsys Design Compiler / Library Compiler | ASIC synthesis; SKY130 `.db` generation |
 | Synopsys PrimeTime / PrimePower | Static timing analysis; power analysis |
 | SAED90/32/14 and SKY130 PDKs | Standard-cell libraries (SKY130 via `volare`) |

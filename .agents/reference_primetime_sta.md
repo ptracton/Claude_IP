@@ -139,3 +139,18 @@ ss/tt/ff), reusing `synth.tcl`'s per-variant `write_sdc` output. Before
 trusting any new IP's SV timing numbers, double-check its `synth.tcl`
 actually resolves each variant's real clock port name rather than assuming
 a shared one.
+
+## IPs with SRAM macros (sram, 2026-11-25)
+- Link the SRAM macro `.db` files after the standard cells (`link_path`), the same files DC used.
+- No parasitics: the delays come from the wire-load model. Apply DC's per-netlist model in PT
+  (`set_wire_load_mode top; set_wire_load_model -name <m>`); sram's synth.tcl chooses it after
+  `write_sdc`, so `run_primetime_sta.py` reads it from DC's `<variant>_timing.rpt`. With that, PT
+  matched DC's slack to 0.005 ns on every SAED netlist.
+- PT was ~0.03 ns more pessimistic than DC on SKY130 SS; a 0.2 ns DC-only setup margin
+  (`set_clock_uncertainty` after `write_sdc`) closes it without changing the STA constraint.
+- Report setup **and** hold per netlist (machine-readable `STA_RESULT` lines from sta.tcl), with
+  DC's WNS beside PT's. Delete each target's old pt log before a run: a failed run otherwise
+  leaves the summary re-reading stale results (happened 2026-11-25).
+- SKY130 OpenRAM macros exist only at TT: SS / FF results are approximate on macro paths.
+- `report_constraint` DRC rows on macro pins (SAED32 read-data max_capacitance 0.025, OpenRAM
+  max_transition 0.04 ns) are vendor limits, documented, not part of PASS.

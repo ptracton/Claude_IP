@@ -122,6 +122,69 @@ def ensure_sky130_dbs(pdk_path: str = SKY130_PDK, cache_dir: Path = CACHE_DIR,
     return db_paths
 
 
+# OpenRAM SRAM macros (libs.ref/sky130_sram_macros, installed with volare;
+# used by IP/system/sram). The PDK ships them only at TT 1.8 V 25 C, so the
+# same .db is linked at every standard-cell corner.
+SKY130_SRAM_MACROS = [
+    "sky130_sram_1kbyte_1rw1r_32x256_8",
+    "sky130_sram_2kbyte_1rw1r_32x512_8",
+    "sky130_sram_1kbyte_1rw1r_8x1024_8",
+]
+SKY130_SRAM_CORNER = "TT_1p8V_25C"
+
+
+def ensure_sky130_sram_dbs(pdk_path: str = SKY130_PDK, cache_dir: Path = CACHE_DIR,
+                           force: bool = False) -> Optional[list]:
+    """Compile each OpenRAM macro's TT .lib to .db via lc_shell, caching each.
+
+    Returns the list of .db paths (SKY130_SRAM_MACROS order), or None on failure.
+    """
+    if not pdk_path:
+        print(f"  ERROR: {SKY130_PDK_ENV} is not set")
+        return None
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lib_dir = Path(pdk_path) / "libs.ref" / "sky130_sram_macros" / "lib"
+    db_paths, to_compile = [], []
+    for macro in SKY130_SRAM_MACROS:
+        ascii_lib = lib_dir / f"{macro}_{SKY130_SRAM_CORNER}.lib"
+        if not ascii_lib.is_file():
+            print(f"  ERROR: sky130 SRAM macro library not found at {ascii_lib}")
+            return None
+        db_path = cache_dir / f"{macro}_{SKY130_SRAM_CORNER}.db"
+        db_paths.append(str(db_path))
+        if force or not db_path.exists() or db_path.stat().st_mtime < ascii_lib.stat().st_mtime:
+            to_compile.append((ascii_lib, db_path))
+
+    if to_compile:
+        lc_shell = shutil.which("lc_shell")
+        if not lc_shell:
+            print("  ERROR: lc_shell not found on PATH — needed to compile the sky130 SRAM .lib to .db")
+            return None
+        compile_tcl = cache_dir / "compile_sram_lib.tcl"
+        lines = []
+        for ascii_lib, db_path in to_compile:
+            # OpenRAM names the library <macro>_<corner>_lib
+            lines.append(f'read_lib "{ascii_lib}"')
+            lines.append(f'write_lib {ascii_lib.stem}_lib -output "{db_path}"')
+        lines.append("quit")
+        compile_tcl.write_text("\n".join(lines) + "\n")
+        print(f"  Compiling {len(to_compile)} sky130 SRAM macro libraries -> .db (lc_shell)")
+        try:
+            result = subprocess.run([lc_shell, "-f", str(compile_tcl)], stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, universal_newlines=True,
+                                    timeout=600, cwd=str(cache_dir))
+        except subprocess.TimeoutExpired:
+            print("  ERROR: lc_shell timed out after 600 s compiling sky130 SRAM libs")
+            return None
+        (cache_dir / "lc_sram_run.log").write_text(result.stdout)
+        for _, db_path in to_compile:
+            if not db_path.exists():
+                print(f"  ERROR: lc_shell failed to compile {db_path.name} (exit {result.returncode})")
+                print(f"         See {cache_dir / 'lc_sram_run.log'} for details")
+                return None
+    return db_paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compile sky130 ASCII .lib corners to .db (shared cache)")
     parser.add_argument("--pdk", default=SKY130_PDK, help="Path to the sky130A PDK root")
@@ -136,6 +199,11 @@ def main() -> None:
     for corner, path in db_paths.items():
         marker = "  (synthesis corner)" if corner == SKY130_SYNTH_CORNER else ""
         print(f"  {corner:<15} {path}{marker}")
+    sram_dbs = ensure_sky130_sram_dbs(args.pdk, Path(args.cache_dir), args.force)
+    if not sram_dbs:
+        sys.exit(1)
+    for path in sram_dbs:
+        print(f"  {'sram TT':<15} {path}")
     sys.exit(0)
 
 

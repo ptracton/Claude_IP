@@ -31,10 +31,10 @@ entity sram_axi4l_dp is
     BANK_PG          : natural  := 0;              -- one power domain per bank (0 / 1)
     NUM_BANKS        : positive := 1;              -- banks (power of two)
     BIST_EN          : natural  := 0;              -- March C- engine (0 / 1)
-    WIDTH_B          : positive := WIDTH;          -- port B data width (multiple of 8)
-    BYTE_EN_B        : natural  := BYTE_EN;        -- port B byte-lane writes
-    PARTIAL_WR_ERR_B : natural  := PARTIAL_WR_ERR; -- port B partial-write error
-    READ_LATENCY_B   : positive := READ_LATENCY;   -- port B: 1 or 2
+    WIDTH_B          : natural := 0;             -- port B data width (multiple of 8); 0 = WIDTH
+    BYTE_EN_B        : natural := 2;             -- port B byte-lane writes; 2 = BYTE_EN
+    PARTIAL_WR_ERR_B : natural := 2;             -- port B partial-write error; 2 = PARTIAL_WR_ERR
+    READ_LATENCY_B   : natural := 0;             -- port B: 1 or 2; 0 = READ_LATENCY
     COMMON_CLK       : natural  := 1;              -- 1: B clock is A's clock; 0: separate
     INIT_FILE        : string   := "";             -- preload (GENERIC/FPGA)
     RST_POL          : natural  := 0               -- 0 = active-low (reset pins)
@@ -71,8 +71,8 @@ entity sram_axi4l_dp is
     B_AWADDR         : in  std_ulogic_vector(ADDR_W - 1 downto 0);      -- write byte address
     B_WVALID         : in  std_ulogic;                                  -- write data valid
     B_WREADY         : out std_ulogic;                                  -- write data accepted
-    B_WDATA          : in  std_ulogic_vector(WIDTH_B - 1 downto 0);     -- write data
-    B_WSTRB          : in  std_ulogic_vector(WIDTH_B / 8 - 1 downto 0); -- write byte strobes
+    B_WDATA          : in  std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) - 1 downto 0);     -- write data
+    B_WSTRB          : in  std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) / 8 - 1 downto 0); -- write byte strobes
     B_BVALID         : out std_ulogic;                                  -- write response valid
     B_BREADY         : in  std_ulogic;                                  -- write response accepted
     B_BRESP          : out std_ulogic_vector(1 downto 0);               -- OKAY or SLVERR
@@ -81,7 +81,7 @@ entity sram_axi4l_dp is
     B_ARADDR         : in  std_ulogic_vector(ADDR_W - 1 downto 0);      -- read byte address
     B_RVALID         : out std_ulogic;                                  -- read data valid
     B_RREADY         : in  std_ulogic;                                  -- read data accepted
-    B_RDATA          : out std_ulogic_vector(WIDTH_B - 1 downto 0);     -- read data
+    B_RDATA          : out std_ulogic_vector(pick(WIDTH_B, 0, WIDTH) - 1 downto 0);     -- read data
     B_RRESP          : out std_ulogic_vector(1 downto 0);               -- OKAY or SLVERR
 
     -- Side-band: power, clear, status, ECC, BIST
@@ -105,6 +105,14 @@ end entity sram_axi4l_dp;
 
 architecture rtl of sram_axi4l_dp is
 
+  -- Port B options with the generics' "same as port A" defaults resolved
+  -- (VHDL-93 form: Design Compiler does not accept a generic default that
+  -- refers to another generic).
+  constant WIDTH_B_C          : positive := pick(WIDTH_B, 0, WIDTH);
+  constant BYTE_EN_B_C        : natural  := pick(BYTE_EN_B, 2, BYTE_EN);
+  constant PARTIAL_WR_ERR_B_C : natural  := pick(PARTIAL_WR_ERR_B, 2, PARTIAL_WR_ERR);
+  constant READ_LATENCY_B_C   : positive := pick(READ_LATENCY_B, 0, READ_LATENCY);
+
   -- Memory bus between the adapters and the core
   signal a_mem_req    : std_ulogic;
   signal a_mem_gnt    : std_ulogic;
@@ -119,10 +127,10 @@ architecture rtl of sram_axi4l_dp is
   signal b_mem_gnt    : std_ulogic;
   signal b_mem_we     : std_ulogic;
   signal b_mem_addr   : std_ulogic_vector(ADDR_W - 1 downto 0);
-  signal b_mem_be     : std_ulogic_vector(WIDTH_B / 8 - 1 downto 0);
-  signal b_mem_wdata  : std_ulogic_vector(WIDTH_B - 1 downto 0);
+  signal b_mem_be     : std_ulogic_vector(WIDTH_B_C / 8 - 1 downto 0);
+  signal b_mem_wdata  : std_ulogic_vector(WIDTH_B_C - 1 downto 0);
   signal b_mem_rvalid : std_ulogic;
-  signal b_mem_rdata  : std_ulogic_vector(WIDTH_B - 1 downto 0);
+  signal b_mem_rdata  : std_ulogic_vector(WIDTH_B_C - 1 downto 0);
   signal b_mem_err    : std_ulogic;
 
 begin
@@ -165,7 +173,7 @@ begin
 
   u_if_b : entity work.claude_axi4l_mem_if(rtl)
     generic map (
-      DATA_W => WIDTH_B,
+      DATA_W => WIDTH_B_C,
       ADDR_W => ADDR_W
     )
     port map (
@@ -214,10 +222,10 @@ begin
       NUM_BANKS        => NUM_BANKS,
       BIST_EN          => BIST_EN,
       DUAL_PORT        => 1,
-      WIDTH_B          => WIDTH_B,
-      BYTE_EN_B        => BYTE_EN_B,
-      PARTIAL_WR_ERR_B => PARTIAL_WR_ERR_B,
-      READ_LATENCY_B   => READ_LATENCY_B,
+      WIDTH_B          => WIDTH_B_C,
+      BYTE_EN_B        => BYTE_EN_B_C,
+      PARTIAL_WR_ERR_B => PARTIAL_WR_ERR_B_C,
+      READ_LATENCY_B   => READ_LATENCY_B_C,
       COMMON_CLK       => COMMON_CLK,
       INIT_FILE        => INIT_FILE
     )

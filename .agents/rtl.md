@@ -231,6 +231,12 @@ ghdl -s --std=08 design/rtl/vhdl/IP_NAME_<proto>.vhd  # repeat for each proto
 
 All files must pass before moving to Step 4.
 
+On csun.edu also run Design Compiler's `analyze` / `elaborate` on every top
+(SV and VHDL) before Step 4: DC accepts only part of VHDL-2008 and rejects SV
+`parameter string` (see `VHDL2008CodingStyle.md` "Design Compiler subset" and
+`VerilogCodingStyle.md` "`string` parameters"). The sram found this only at
+Step 10 and had to rewrite and re-verify its VHDL.
+
 ### 7. Update `README.md`
 
 Replace the `[TBD]` placeholders in these two sections:

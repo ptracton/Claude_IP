@@ -586,7 +586,7 @@ function automatic string bd_path(input int sb, input int idx);
   bank_d = (sb == SB_S32E) ? slv[a_slave[sb]].depth / 2 : slv[a_slave[sb]].depth;
   k      = idx / bank_d;
 `ifdef VHDL_DUT
-  return $sformatf("%s.%s.u_core.u_array.gen_bank(%0d).gen_port.u_macro.gen_tech.u_leaf.mem(%0d)",
+  return $sformatf("%s.%s.u_core.u_array.gen_bank(%0d).gen_sp.u_macro.gen_generic.u_leaf.mem(%0d)",
                    `TB_STR, u, k, idx % bank_d);
 `else
   return $sformatf("%s.%s.u_core.u_array.g_bank[%0d].g_sp.u_macro.g_generic.u_leaf.mem[%0d]",

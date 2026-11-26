@@ -1,0 +1,13 @@
+# sram_saed14.upf — Power intent of the sram IP for saed14 (IEEE 1801 / UPF 2.1).
+#
+# SAED14: saed14rvt / saed14sram 0.8 V nominal (synthesis corner ss0p72v125c); SRAM1RW / SRAM2RW have no sleep pins.
+# Load at the scope of a bus top-level (sram_<proto> / sram_<proto>_dp)
+# after setting SRAM_NPD and SRAM_NUM_BANKS for its configuration, e.g.
+#   set SRAM_NPD 2; set SRAM_NUM_BANKS 2      ;# BANK_PG = 1, NUM_BANKS = 2
+#   load_upf design/upf/sram_saed14.upf
+# Checked by verification/tools/lp_sram.py (VC LP). Structure: sram_power.upf.
+
+set SRAM_VDD      0.8
+set SRAM_SWITCHED 1
+set SRAM_MACRO_PG {VDD VSS}   ;# single-rail macros: explicit connect_supply_net
+load_upf [file join [file dirname [info script]] sram_power.upf]

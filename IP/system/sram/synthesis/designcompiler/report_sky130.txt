@@ -1,0 +1,58 @@
+================================================================================================
+Design Compiler Synthesis Report — sram IP
+Target PDK    : SKY130 (130nm, SkyWater open-source PDK)
+SRAM macros   : OpenRAM sky130_sram_*_1rw1r_* at TT 1.8 V 25 C (only corner shipped)
+Constraints   : 100 MHz bus clock(s); 3.0 ns input and output delay on every port;
+                dp: port B pins on clk_b, asynchronous to clk_a (SAED14: one clock)
+                compiled with a 0.2 ns setup margin (clock uncertainty, not in the .sdc):
+                WNS below includes it; synthesis/primetime/report_sta_*.txt has the real slack
+Tool version  : Design Compiler (dc_shell)
+Run date      : 2026-11-25
+================================================================================================
+
+STATUS: PASS — 24/24 netlists meet timing with SRAM macros.
+
+Configuration base: WIDTH 32, DEPTH 1024, BYTE_EN, PWR_GATE
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb                     370     31      2 569076.937500 571770.771061     +0.76  MET
+  sram_ahb                     515     67      2 569076.937500 573108.303826     +0.76  MET
+  sram_axi4l                   737    169      2 569076.937500 576421.481354     +2.12  MET
+  sram_wb                      394     31      2 569076.937500 571882.127859     +0.76  MET
+  sram_apb_vhdl                397     31      2 569076.937500 571905.900660     +0.76  MET
+  sram_ahb_vhdl                488     67      2 569076.937500 572998.198230     +0.76  MET
+  sram_axi4l_vhdl              738    169      2 569076.937500 576427.737354     +1.59  MET
+  sram_wb_vhdl                 395     31      2 569076.937500 571884.630259     +0.76  MET
+
+Configuration opts: base + ECC_EN, BANK_PG (2 banks), BIST_EN, READ_LATENCY 2
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_opts               1605    214     10 2032732.343750 2046284.090683     +0.01  MET
+  sram_ahb_opts               1744    250     10 2032732.343750 2047173.693864     +0.02  MET
+  sram_axi4l_opts             1997    352     10 2032732.343750 2050389.277792     +0.01  MET
+  sram_wb_opts                1633    214     10 2032732.343750 2045932.503491     +0.06  MET
+  sram_apb_opts_vhdl          1617    214     10 2032732.343750 2045957.527494     +0.02  MET
+  sram_ahb_opts_vhdl          1723    250     10 2032732.343750 2047117.389866     +0.04  MET
+  sram_axi4l_opts_vhdl        1976    352     10 2032732.343750 2050361.751395     +0.02  MET
+  sram_wb_opts_vhdl           1615    214     10 2032732.343750 2045936.257094     +0.01  MET
+
+Configuration dp: opts + WIDTH_B 8, COMMON_CLK 0 (SAED14: 1)
+  Netlist                    Cells    FFs Macros   Macro area   Total area  WNS (ns)  Timing
+  --------------------------------------------------------------------------------------------
+  sram_apb_dp                 1874    196     16 3252371.750000 3267677.679298     +0.72  MET
+  sram_ahb_dp                 2468    266     16 3252371.750000 3271406.255258     +0.29  MET
+  sram_axi4l_dp               2950    416     16 3252371.750000 3276931.554336     +0.30  MET
+  sram_wb_dp                  2032    196     16 3252371.750000 3267257.276128     +0.30  MET
+  sram_apb_dp_vhdl            2024    196     16 3252371.750000 3267267.285733     +0.36  MET
+  sram_ahb_dp_vhdl            2459    266     16 3252371.750000 3271391.240861     +0.91  MET
+  sram_axi4l_dp_vhdl          2941    416     16 3252371.750000 3276927.800738     +0.36  MET
+  sram_wb_dp_vhdl             2024    196     16 3252371.750000 3267249.768932     +0.91  MET
+
+Area is in the library's units (um^2 for SAED32/14 and SKY130). Total area includes the macros.
+Macros = SRAM macro instances counted in the netlist; 0 would mean the array was not mapped to macros.
+WNS is the worst slack among the 10 paths in each <netlist>_timing.rpt.
+
+Per-netlist reports : synthesis/designcompiler/reports/sky130/
+Netlists, SDF, SDC  : synthesis/designcompiler/netlists/sky130/
+Full logs           : synthesis/designcompiler/dc_sky130_<cfg>_run.log
+================================================================================================

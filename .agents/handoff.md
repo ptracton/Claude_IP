@@ -1,4 +1,30 @@
-# Handoff — SRAM, updated 2026-11-23 (Steps 7-9 done, uncommitted)
+# Handoff — SRAM, updated 2026-11-25 (Step 10 done on csun.edu, uncommitted)
+
+## Step 10 synthesis (2026-11-24/25, uncommitted) — read first
+Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
+- **DC** `synthesis/run_vendor_synth.py --dc` + `designcompiler/synth.tcl`: base / opts / dp x 4 buses
+  x SV/VHDL = 24 netlists per PDK (96). SAED WLM picked from logic area; 0.2 ns setup margin
+  (`set_clock_uncertainty` after `write_sdc`). SAED32 links a patched SRAMLP liberty
+  (`IP/common/synthesis/designcompiler/build_saed32_sram_libs.py`, cache not committed).
+  SAED32/14/SKY130 24/24 MET; SAED90 2/24 — accepted (user 2026-11-25), `synthesis/known_issues.md`.
+- **RTL changes for DC (user approved):** SV untyped `INIT_FILE`; VHDL rewritten to the DC
+  VHDL-2008 subset (see `VHDL2008CodingStyle.md` "Design Compiler subset"); ECC RMW registered (s2),
+  RL2 register before the decoder (`sram_port` SV/VHDL, `sram_model` latency per entry).
+- **Re-verified on that RTL:** Step 4 80/80, UVM 1440/1440, mutants 9/9, formal 26/26 (new lemmas
+  `sram_leaf_fv a_word_ok`, `sram_port_fv`; core_ecc a_err_rule proven again), SpyGlass 24/24.
+  `regression_sram.py --collect` was NOT regenerated.
+- **STA** `synthesis/run_primetime_sta.py` + `primetime/sta.tcl`: 6 targets x 24, setup + hold, DC's
+  per-netlist WLM. All PASS except SAED90 (accepted).
+- **Gate level** `sim_sram.py --postsyn [--no-sdf]` + `testbench/sram_tb_postsyn_body.svh`: 24/24
+  PASS, SAED90 8 KNOWN (pass with --no-sdf). Vendor model bugs fixed in generated copies:
+  SAED90 SSR flops (`IP/common/verification/tools/pdk_cell_models.py`), SKY130 OpenRAM read delay
+  (`pdk_sram_models.py gate_level=True`).
+- **UPF** `design/upf/` + `verification/tools/lp_sram.py` (VC LP): 12/12 PASS.
+- **Power cycle counts** checked vs SAED32-LP databook: valid to 180 MHz; kept (user).
+- Open: Vivado / Quartus / Yosys flows (scripts written, standard host); timer and bus_matrix
+  postsyn still compile the vendor SAED90 `saed90nm.v` (SSR-flop bug not checked there); Step 11
+  cleanup / tag and Step 12 power not started. /tmp aging deleted 14 bus_matrix files again
+  (restored from HEAD 2026-11-25).
 
 ## Step 9 firmware (2026-11-23 late, uncommitted) — read first
 - `IP/system/sram/firmware/`: sram.h, src/sram_memtest.c, src/sram_sideband.c, src/sram_access.h,
@@ -223,4 +249,4 @@ coverage `verification/work/coverage/`. `cleanup.sh` removes all of it.
    2026-11-07). Re-run Yosys/Vivado/Quartus for bus_matrix AHB there too.
 3. Optional: deeper AW/W/AR slots in `claude_axi4l_mem_if` would let same-type AXI streams
    pipeline (not requested).
-4. Next plan step: Step 6 (UVM), see plan §5.
+4. ~~Next plan step: Step 6 (UVM)~~ — superseded; current state at the top of this file.

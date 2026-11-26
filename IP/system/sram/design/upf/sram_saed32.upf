@@ -1,0 +1,12 @@
+# sram_saed32.upf — Power intent of the sram IP for saed32 (IEEE 1801 / UPF 2.1).
+#
+# SAED32: saed32rvt / saed32sramlp at 0.95 V (synthesis corner ss0p95v125c); SRAMLP macros have SD / LS / DS pins driven by sram_pwr_ctrl, so no UPF switching.
+# Load at the scope of a bus top-level (sram_<proto> / sram_<proto>_dp)
+# after setting SRAM_NPD and SRAM_NUM_BANKS for its configuration, e.g.
+#   set SRAM_NPD 2; set SRAM_NUM_BANKS 2      ;# BANK_PG = 1, NUM_BANKS = 2
+#   load_upf design/upf/sram_saed32.upf
+# Checked by verification/tools/lp_sram.py (VC LP). Structure: sram_power.upf.
+
+set SRAM_VDD      0.95
+set SRAM_SWITCHED 0
+load_upf [file join [file dirname [info script]] sram_power.upf]

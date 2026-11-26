@@ -48,7 +48,7 @@ module sram_axi4l_dp #(
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,   // port B: 1 or 2
   parameter bit          COMMON_CLK       = 1,              // 1: B clock is A's clock; 0: separate
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE        = "",             // preload (GENERIC/FPGA)
+  parameter              INIT_FILE        = "",             // preload (GENERIC/FPGA)
   //spyglass enable_block VC_SYNTH_STRING
   /* verilator lint_off UNUSEDPARAM */
   parameter int unsigned RST_POL          = 0,              // 0 = active-low (reset pins)

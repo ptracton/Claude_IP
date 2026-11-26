@@ -19,12 +19,17 @@
 // the prover can use it as a proven lemma.
 // Shutdown content loss is simulation-only in the leaf (translate_off), so
 // formal sees retained contents; sram_core_fv allows zeros after shutdown.
+//
+// CLR = 1 (one leaf, one power domain, no BIST): a_word_ok — after the reset
+// clear (sram_clr, CLEAR_ON_RESET with ECC) every word's lanes are known
+// valid (ok_q all set), and during that pass every word already written.
 
 module sram_leaf_fv #(
   parameter int unsigned W      = 22,   // stored word width
   parameter int unsigned D      = 8,    // words
   parameter int unsigned NLANES = 1,    // write lanes (= codewords with ECC)
-  parameter bit          ECC    = 1     // lanes are SECDED codewords
+  parameter bit          ECC    = 1,    // lanes are SECDED codewords
+  parameter bit          CLR    = 0     // a_word_ok: one leaf, one power domain, no BIST
 ) (
   input  logic                 clk,
   input  logic                 rst_n,     // sram_core's reset (upward reference in the bind)
@@ -33,7 +38,11 @@ module sram_leaf_fv #(
   input  logic [$clog2(D)-1:0] addr_i,
   input  logic [W-1:0]         wdata_i,
   input  logic [NLANES-1:0]    lane_we_i,
-  input  logic [W-1:0]         mem [D]
+  input  logic [W-1:0]         mem [D],
+  // sram_clr state (upward references in the bind; used only when CLR = 1)
+  input  logic                 clr_init,    // init_q[0]: not yet cleared since reset
+  input  logic                 clr_active,  // active_q: a pass is running
+  input  logic [$clog2(D):0]   clr_idx      // idx_q: next word of the pass
 );
 
   localparam int unsigned LW = W / NLANES;   // lane (codeword) width
@@ -107,6 +116,21 @@ module sram_leaf_fv #(
     for (genvar i = 0; i < D; i++) begin : g_word
       for (genvar l = 0; l < NLANES; l++) begin : g_lane
         a_lane_ok: assert property (ok_q[i][l] |-> valid(mem[i][LW*l +: LW]));
+      end
+    end
+
+    // Every word is known valid once the reset clear has finished, and
+    // during that pass every word it has already written. Clear writes zero
+    // (a valid codeword) to all lanes, the port only writes encoder output,
+    // and nothing else writes the leaf when there is no BIST, so this is
+    // inductive. It gives the port pipeline lemmas (sram_port_fv) the fact
+    // that a granted read finds valid codewords: without it they did not
+    // converge once the read-modify-write gained its s2 stage (Step 10).
+    // Single domain and leaf only (CLR): with BANK_PG and BIST the domain
+    // mapping and the March C- patterns are not modelled here.
+    if (CLR) begin : g_clr
+      for (genvar i = 0; i < D; i++) begin : g_word_ok
+        a_word_ok: assert property ((!clr_init || (clr_active && clr_idx > i)) |-> &ok_q[i]);
       end
     end
 

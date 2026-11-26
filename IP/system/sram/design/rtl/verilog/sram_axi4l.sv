@@ -31,7 +31,7 @@ module sram_axi4l #(
   parameter int unsigned NUM_BANKS      = 1,     // banks (power of two)
   parameter bit          BIST_EN        = 0,     // March C- engine
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE      = "",    // preload (GENERIC/FPGA)
+  parameter              INIT_FILE      = "",    // preload (GENERIC/FPGA)
   //spyglass enable_block VC_SYNTH_STRING
   /* verilator lint_off UNUSEDPARAM */
   parameter int unsigned RST_POL        = 0,     // 0 = active-low; polarity carried by ARESETn

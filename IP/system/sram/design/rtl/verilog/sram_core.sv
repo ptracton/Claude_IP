@@ -68,7 +68,7 @@ module sram_core #(
   parameter int unsigned READ_LATENCY_B   = READ_LATENCY,    // port B: 1 or 2
   parameter bit          COMMON_CLK       = 1,      // 1: clk_b is clk; 0: separate clocks
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE        = "",     // preload (GENERIC/FPGA)
+  parameter              INIT_FILE        = "",     // preload (GENERIC/FPGA)
   //spyglass enable_block VC_SYNTH_STRING
   // Derived
   localparam int unsigned NPD             = BANK_PG ? NUM_BANKS : 1,

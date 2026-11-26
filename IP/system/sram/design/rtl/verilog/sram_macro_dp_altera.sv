@@ -16,7 +16,7 @@ module sram_macro_dp_altera #(
   parameter int unsigned NLANES     = 4,    // write lanes of W / NLANES bits
   parameter bit          COMMON_CLK = 1,    // 1: a_clk and b_clk are the same clock
   //spyglass disable_block VC_SYNTH_STRING
-  parameter string       INIT_FILE  = ""    // optional preload (.mif / .hex)
+  parameter              INIT_FILE  = ""    // optional preload (.mif / .hex)
   //spyglass enable_block VC_SYNTH_STRING
 ) (
   input  logic                 a_clk,       // port A clock
@@ -43,11 +43,11 @@ module sram_macro_dp_altera #(
   /* verilator lint_on UNUSEDSIGNAL */
 );
 
-  localparam string       InitFile = (INIT_FILE == "") ? "UNUSED" : INIT_FILE;
+  localparam              InitFile = (INIT_FILE == "") ? "UNUSED" : INIT_FILE;
   // Byte size of the enables (unused with one lane, but must be legal).
   localparam int unsigned ByteSize = (NLANES > 1) ? W / NLANES : 8;
   // Port B registers: clock0 with a common clock, else clock1.
-  localparam string       ClkB     = COMMON_CLK ? "CLOCK0" : "CLOCK1";
+  localparam              ClkB     = COMMON_CLK ? "CLOCK0" : "CLOCK1";
 
   altsyncram #(
     .operation_mode                    ("BIDIR_DUAL_PORT"),

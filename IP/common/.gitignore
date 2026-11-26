@@ -1,0 +1,3 @@
+# Patched SAED32 low-power SRAM liberty (build_saed32_sram_libs.py): derived
+# from licensed vendor files, rebuilt on demand, not committed
+synthesis/designcompiler/saed32_lib/

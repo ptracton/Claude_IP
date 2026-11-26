@@ -2593,6 +2593,15 @@ unless otherwise noted:
 -   Interfaces.
 -   The `alias` statement.
 
+#### `string` parameters (Design Compiler)
+
+Synopsys Design Compiler Y-2026.03 rejects `parameter string` and `localparam
+string` (VER-700). Declare a string-valued parameter untyped (`parameter
+INIT_FILE = ""`) in synthesizable RTL. An untyped parameter takes the width
+of its value, so a conditional between two literals of different lengths
+(`cond ? "none" : INIT_FILE`) pads the shorter one with leading NULs; compare
+or pass such values with that in mind. (sram, Step 10, 2026-11-24.)
+
 #### Floating begin-end blocks
 
 The use of generate blocks other than `for` loop, `if`, or `case` generate
