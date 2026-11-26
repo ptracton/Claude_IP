@@ -456,6 +456,16 @@ plausible-looking but meaningless power numbers.
 SAIF file existing, `pt_shell.log` having no `Error:` lines (other than the
 harmless startup PT-063), and every report being non-empty.
 
+**Variant for IPs whose gate-level bench holds several netlists (sram):** VCS writes
+one backward SAIF per netlist instance (`+saif`, `$set_toggle_region` /
+`$toggle_report`), PrimePower runs once per netlist, the libraries include the SRAM
+macros at the typical corner, DC's wire-load model is applied by name (the `.sdc`'s
+synthesis-corner library line is dropped), SAIF annotation must be >= 99 %, and power
+groups are checked for negative values (the SAED32-LP SRAM liberty has negative
+input-pin internal power: its macro share is reported as invalid). Outputs:
+`verification/work/power/<proto>_<lang>_<pdk>/power/<netlist>/`, summary
+`verification/work/power/results.log`. Details: `.agents/power.md`.
+
 Output files land in `verification/work/postsyn/<pdk>/<proto>/power/`:
 
 | File | Contents |

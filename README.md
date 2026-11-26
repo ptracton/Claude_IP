@@ -9,11 +9,13 @@ Two tool flows are supported, and every script picks one from the host name:
 - **Open-source / FPGA (standard hosts):** Icarus Verilog, GHDL, ModelSim,
   Vivado, Quartus, Yosys, SymbiYosys and Verilator.
 - **Commercial ASIC (`*.csun.edu` hosts):** Synopsys VCS, Cadence Xcelium,
-  VC Formal, SpyGlass, Design Compiler, PrimeTime and PrimePower. It targets
-  the SAED90/32/14 and SkyWater SKY130 PDKs.
+  VC Formal, SpyGlass, VC LP, Design Compiler, PrimeTime and PrimePower. It
+  targets the SAED90/32/14 and SkyWater SKY130 PDKs.
 
 The [timer](IP/system/timer/) is the reference implementation: new IPs follow
-its structure, scripts and documentation.
+its structure, scripts and documentation. The [sram](IP/system/sram/) is the
+reference for memory IP, vendor macros, several synthesized configurations
+and power intent (UPF).
 
 ## Project Structure
 
@@ -39,7 +41,7 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 | IP | Description | Protocols | Status |
 |----|-------------|-----------|--------|
 | [timer](IP/system/timer/) | Programmable 32-bit timer with prescaler, one-shot/free-running modes, interrupt, trigger output, restart and atomic snapshot | APB4, AHB-Lite, AXI4-Lite, WB | Complete (both flows) |
-| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-10 done on the csun.edu flow; FPGA / Yosys synthesis and standard-host runs pending; power (Step 12) not started |
+| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-10 and 12 done on the csun.edu flow; FPGA / Yosys synthesis and standard-host runs pending; Step 11 (release) open |
 
 ### Interface
 
@@ -53,11 +55,15 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 |----|------|------|-----|------|------|------|------|
 | timer | 16/16 PASS | 8/8 PASS | 1/1 PASS on xsim (standard host; not run on csun.edu) | PASS | SAED90 -0.40 ns accepted; others MET | SAED32/14, SKY130 PASS; SAED90 known fail | 12/16 (SAED90 skipped) |
 | bus_matrix | 16/16 PASS (82 checks each) | 10/10 PASS | 5/5 PASS on VCS, 100 % coverage | PASS | SAED90 -0.56 ns accepted; others MET | 16/16 PASS | 16/16 |
-| sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 26/26 PASS (bounded waivers) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 24/24 PASS (20 lint + 4 CDC) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | not started |
+| sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 26/26 PASS (bounded waivers) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 24/24 PASS (20 lint + 4 CDC) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | 36/36 (SAED90 skipped; SAED32 macro power not valid) |
 
 See each IP's README for the details and `synthesis/known_issues.md` for the
 accepted SAED90 violations. The sram also has power intent (UPF) for the PDKs
-whose macros lack sleep pins, checked with VC LP (12/12 PASS).
+whose macros lack sleep pins, checked with VC LP (12/12 PASS). Its power
+(PrimePower, typical corner, 100 MHz) is dominated by the SRAM macros' clock
+energy: about 9-20 mW on SAED14 and 11-54 mW on SKY130 depending on the
+configuration; SAED32's macro power cannot be estimated from its vendor
+liberty (negative internal-power data), so only its logic power is reported.
 
 ## Shared Components
 
@@ -123,7 +129,8 @@ Each IP follows a 12-step sub-agent workflow defined in
     - UPF power intent, checked with VC LP (IPs with power domains).
 11. **cleanup**: scrub artifacts, finalize docs, tag the release
 12. **power**: PrimePower analysis of the gate-level netlist with SAIF from
-    gate-level simulation (csun.edu)
+    gate-level simulation (csun.edu; one SAIF per netlist when a bench holds
+    several, typical-corner cell and macro libraries)
 
 ## Tool Requirements
 

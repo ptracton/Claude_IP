@@ -145,14 +145,19 @@ events closer together than about three port-A cycles merge into one pulse
 | Mode | Contents | Bus access | SAED32-LP pins | Other ASIC PDKs | FPGA |
 |---|---|---|---|---|---|
 | RUN | kept | normal | — | — | — |
-| LIGHT_SLEEP | kept | wakes automatically, with wait states | LS | clock/chip-select gated; outputs isolated (UPF) | CE / `sleep` |
-| DEEP_SLEEP | kept | **bus error** | DS | clock/chip-select gated; outputs isolated (UPF) | CE / `sleep` |
+| LIGHT_SLEEP | kept | wakes automatically, with wait states | LS | chip select held off; outputs isolated (UPF) | CE / `sleep` |
+| DEEP_SLEEP | kept | **bus error** | DS | chip select held off; outputs isolated (UPF) | CE / `sleep` |
 | SHUTDOWN | **lost** (cleared on wake-up) | **bus error** | SD | power switched off (UPF), outputs isolated | contents marked invalid in simulation |
 
 Transitions honour each macro's databook timing; the wake-up latency becomes
 bus wait states or delays `pwr_mode_ack_o`. *[Step 10]* The SAED32-LP counts
 meet the databook up to 180 MHz (deep-sleep wake: 9 cycles >= tDSFCRS 50 ns);
 the IP is specified at 100 MHz (README "Power Management").
+
+*[Step 12]* The macro clocks are not gated: the macro liberties charge clock
+energy on every edge, so the macros' clock power (> 95 % of the total on
+SAED14 / SKY130, README "Power Analysis") is spent in every mode in which the
+supply is on. Per-bank macro clock gating is a possible improvement.
 
 *[Step 10]* Power intent (`design/upf/`, IEEE 1801): on SAED90, SAED14 and
 SKY130 each power domain's macros form a switched domain, powered while

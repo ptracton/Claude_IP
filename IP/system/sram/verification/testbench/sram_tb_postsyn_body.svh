@@ -558,6 +558,37 @@
   initial if ($test$plusargs("waves")) $vcdpluson(0, `TB_NAME);
 `endif
 
+  // +saif (sim_sram.py --power, Step 12): backward SAIF per netlist instance,
+  // recorded by VCS from the end of reset (and the post-reset clear) to the end
+  // of the sequence, written as saif_base.saif / saif_opts.saif / saif_dp.saif.
+  bit saif_on;
+  initial begin
+    saif_on = $test$plusargs("saif");
+`ifdef VCS
+    if (saif_on) begin
+      $set_gate_level_monitoring("on");
+      $set_toggle_region(u_base, u_opts, u_dp);
+    end
+`endif
+  end
+
+  task automatic saif_start();
+`ifdef VCS
+    if (saif_on) $toggle_start();
+`endif
+  endtask
+
+  task automatic saif_stop();
+`ifdef VCS
+    if (saif_on) begin
+      $toggle_stop();
+      $toggle_report("saif_base.saif", 1.0e-9, u_base);
+      $toggle_report("saif_opts.saif", 1.0e-9, u_opts);
+      $toggle_report("saif_dp.saif", 1.0e-9, u_dp);
+    end
+`endif
+  endtask
+
   initial begin
     n_fail   = 0;
     n_checks = 0;
@@ -578,6 +609,7 @@
     for (int i = 0; i < NI; i++) wait_idle(i);
     sh_zero(I_OPTS, 0, WORDS - 1);
     sh_zero(I_DP, 0, WORDS - 1);
+    saif_start();
     $display("[postsyn] %s: base / opts / dp netlists, TECH %0d", `TB_STR, TECH);
     for (int i = 0; i < NI; i++) t_access(i);
     t_ecc(I_OPTS);
@@ -588,6 +620,7 @@
     t_bist(I_DP);
     t_dp();
     cyc(10);
+    saif_stop();
     if (n_fail == 0) $display("PASS %s postsyn: %0d checks", `TB_STR, n_checks);
     else             $display("FAIL %s postsyn: %0d of %0d checks failed", `TB_STR, n_fail, n_checks);
     $finish;

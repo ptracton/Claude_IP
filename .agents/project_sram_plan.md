@@ -22,11 +22,17 @@ instead of the `claude_*_if` register bridges.
 | 3b — macro tiling rework (§11) | **Done 2026-10-17** (D11 = A); uncommitted |
 | 3c — asymmetric / dual-clock DP (§12) | **Done 2026-10-17**, uncommitted (§12.9) |
 | 4 — directed tests | **Done 2026-10-18**, uncommitted (§13.7): one SV bench, 12 tests, SV and VHDL tops (mixed language), 4 buses × 5 techs × VCS/Xcelium, 80/80 PASS; coverage ≥ 90 per module per run (SV min 92.95, VHDL min 93.00) |
-| 5–12 | Not started |
+| 5 — formal (§ in handoff) | **Done 2026-11-15**: VC Formal 26/26 SV + VHDL (re-run 2026-11-25) |
+| 6 — UVM (§14) | **Done 2026-11-23**: 1440/1440, mutants 9/9 (re-run on the Step 10 RTL) |
+| 7 — regression (§15) | **Done 2026-11-23** (`regression_sram.py`; `--collect` not regenerated after Step 10) |
+| 8 — lint (§16) | **Done 2026-11-23**: SpyGlass 20 lint + 4 CDC, 24/24 (re-run 2026-11-25) |
+| 9 — firmware (§17) | **Done 2026-11-23**: host 124/124, mutants 22/22; cross build pending (no compilers on csun) |
+| 10 — synthesis (§18) | **Done 2026-11-25 on csun.edu**: DC 96 netlists, STA, gate-level 24/24, UPF / VC LP 12/12; Vivado / Quartus / Yosys pending (standard host). Committed 7ba3fa7 |
+| 11 — cleanup / release tag | Open |
+| 12 — power (§19) | **Done 2026-11-25**: PrimePower 36/36 (SAED90 skipped; SAED32 macro power not valid) |
 
-**Nothing is committed.** The working tree also holds the SKY130 PDK move to `$HOME` and the
-`CLAUDE_SKY130_PDK_PATH` env var, plus their doc and setup.sh edits (timer, bus_matrix,
-.agents). Step 0 results: `IP/common/verification/mem_if/results.log`.
+Status table updated 2026-11-25 (the paragraphs below are the history from Step 4; the step
+sections hold the details). Step 0 results: `IP/common/verification/mem_if/results.log`.
 
 **Open items carried forward:**
 - XILINX/ALTERA leaves are written but never elaborated (no Vivado/Quartus on csun). Verify
@@ -1168,3 +1174,17 @@ RL2 register), axi4l_dp -46 (WLM 70000 + DELLN cells), dp VHDL built after the V
   holds count+1 cycles: enter 4 (50 ns), LS 2 (30 ns), DS 8 (90 ns, valid <= 180 MHz), SD 16 (170 ns,
   <= 340 MHz). User: "Keep, document limit" -> comments in sram_pkg (SV/VHDL), README table, spec note.
   Open item from §0 closed. Step 10 left: Vivado/Quartus/Yosys on the standard host.
+
+## 19. Step 12 — power (PrimePower, 2026-11-25)
+- `sim_sram.py --power`: gate-level run (postsyn bench, SDF) with `+saif` -> VCS backward SAIF per
+  netlist (`$set_toggle_region(u_base, u_opts, u_dp)`, start after the post-reset clear, report at
+  the end); PrimePower per netlist: typical std cells + typical macros, DC .sdc without its
+  SS-library `set_wire_load_model` line + DC's model by name, `read_saif -strip_path`, averaged
+  `report_power` (overall, hierarchy 3 levels, top cells, top nets, annotation).
+- PASS = pt_shell clean, reports non-empty, SAIF >= 99 %. Negative macro group -> "invalid", not
+  counted (SAED32-LP vendor liberty: input-pin internal_power negative, leakage 0).
+- Results (verification/work/power/results.log): 36/36 PASS, 100 % annotation, SAED90 SKIP.
+  SAED14 total 9.0 / 11.3 / 19.9 mW; SKY130 11.2-11.8 / 38.6-39.2 / 53.0-53.9 mW; SAED32 logic
+  0.12-0.46 / 0.70-1.05 / 0.95-1.48 mW (base / opts / dp). Macros > 95 % (clock energy on every
+  edge, free-running macro clocks: OpenRAM 13.8 pJ per clk0 rise in every state). Follow-up
+  candidate: per-bank macro clock gating.

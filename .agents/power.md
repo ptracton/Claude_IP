@@ -124,3 +124,22 @@ Gate-level runs that feed PrimePower should compile the corrected vendor models:
 `saed90nm.v` from `IP/common/verification/tools/pdk_cell_models.py` (DFFSSR/SDFFSSR set-priority
 fix) and, for SRAM macros, `pdk_sram_models.model_files(pdk, dir, gate_level=True)`. The timer and
 bus_matrix flows still compile the vendor `saed90nm.v` (not re-checked for the SSR cells).
+
+## IPs with several netlists in one gate-level run / SRAM macros (sram, 2026-11-25)
+- One bench simulating several netlists: write a backward SAIF per instance from VCS instead of a
+  VPD + vcd2saif (`$set_gate_level_monitoring("on"); $set_toggle_region(u_a, u_b);` at time 0,
+  `$toggle_start` after reset, `$toggle_stop; $toggle_report("a.saif", 1.0e-9, u_a);` at the end,
+  behind a `+saif` plusarg). PrimePower then uses `read_saif <f> -strip_path tb/u_a`. 100 % of nets
+  annotated on every sram run; no multi-GB VPDs.
+- DC's `.sdc` names the synthesis-corner library on `set_wire_load_model -library ...`: with
+  typical-corner libraries that is SEL-005 and no wire load. Drop the line and apply DC's model by
+  name (`run_primetime_sta.dc_wire_load`).
+- Link the macro `.db` files at the typical corner too (SAED90 `SRAM*_typ.db`, SAED14
+  `saed14sram_tt0p8v25c.db`, SAED32 patched `tt1p05v25c_i1p05v`, SKY130 TT).
+- Check the power groups for **negative** values: the SAED32-LP SRAM liberty has negative input-pin
+  internal power (vendor data); report logic and macro power separately and flag a negative macro
+  share instead of adding it up. Require >= 99 % SAIF annotation.
+- Macro liberties charge clock energy on every clock edge, selected or not: with free-running macro
+  clocks the macros are > 95 % of the total even when idle (sram finding; clock gating is the fix).
+- Runner: `IP/system/sram/verification/tools/sim_sram.py --power` (`run_power`, `run_power_one`,
+  `power_libs`).

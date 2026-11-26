@@ -47,8 +47,12 @@ netlists synthesized from SV or from VHDL. VCS, csun.edu only:
     -> verification/work/postsyn/<proto>_<lang>_<pdk>/, postsyn/results.log
 SAED90 runs are reported as KNOWN (accepted timing failure); --no-sdf runs
 the same netlists with zero-delay gates (a timing failure passes there).
-Power (--power)
-is not implemented yet.
+
+Power (--power, Step 12): the same gate-level runs with +saif (one backward
+SAIF per netlist), then PrimePower per netlist at the typical corner:
+    python3 sim_sram.py --power --proto all --pdk all --jobs 3
+    -> verification/work/power/<proto>_<lang>_<pdk>/power/<netlist>/, power/results.log
+SAED90 is SKIP; a negative macro share (SAED32-LP liberty) is reported as invalid.
 """
 
 import argparse
@@ -395,7 +399,7 @@ def postsyn_netlist_copy(src: str, top: str, tag: str, dst: str) -> None:
 
 
 def run_vcs_postsyn(proto: str, lang: str, pdk: str, waves: bool, sram_path: str,
-                    work_dir: str, sdf: bool = True) -> tuple:
+                    work_dir: str, sdf: bool = True, saif: bool = False) -> tuple:
     """Gate-level simulation of the three DC netlists of (proto, RTL language,
     PDK) in tb_sram_<proto> (+define+SRAM_POSTSYN, sram_tb_postsyn_body.svh),
     with DC's SDF on each, the vendor SRAM macro models and the standard-cell
@@ -468,7 +472,12 @@ def run_vcs_postsyn(proto: str, lang: str, pdk: str, waves: bool, sram_path: str
         return False, "compile failed"
     print(f"  {tag} Simulating ...")
     # +vcs+initreg+0: every gate-level flop starts at 0 (no X before reset)
-    sim_out, rc = _run([simv, "+vcs+initreg+0"] + (["+waves"] if waves else []), work_dir, 7200)
+    for inst, _ in POSTSYN_NETLISTS:     # stale activity must not reach --power
+        f = os.path.join(work_dir, f"saif_{inst[2:]}.saif")
+        if os.path.exists(f):
+            os.remove(f)
+    sim_out, rc = _run([simv, "+vcs+initreg+0"] + (["+waves"] if waves else [])
+                       + (["+saif"] if saif else []), work_dir, 7200)
     with open(os.path.join(work_dir, "sim.log"), "w") as fh:
         fh.write(sim_out)
     ok = _passed(sim_out, tb_top)
@@ -530,6 +539,206 @@ def run_postsyn(args, sram_path: str) -> int:
             fh.write(f"{st:<5} {label:<26} {summ}\n")
     print(f"All post-synthesis simulations {green}PASSED{reset}." if all_pass
           else f"One or more post-synthesis simulations {red}FAILED{reset}.")
+    return 0 if all_pass else 1
+
+
+# ---------------------------------------------------------------------------
+# Power (--power, Step 12): PrimePower on the gate-level activity
+# ---------------------------------------------------------------------------
+POWER_PDKS = ["saed90", "saed32", "saed14", "sky130"]  # SAED90 rows: SKIP (POSTSYN_KNOWN_FAILURES)
+
+
+def power_libs(pdk: str, sram_path: str) -> list:
+    """Typical-corner standard-cell and SRAM macro .db files (the netlists are
+    synthesized at the worst corner; power is reported at typical, as the
+    timer and bus_matrix do)."""
+    import glob
+    import re
+    sys.path.insert(0, os.path.join(get_common_path(sram_path), "synthesis", "designcompiler"))
+    import build_sky130_libs  # noqa: E402
+    import build_saed32_sram_libs  # noqa: E402
+    if pdk == "saed90":
+        std = [f"{_SAED90_PDK}/Digital_Standard_cell_Library/synopsys/models/saed90nm_typ.db"]
+        mdir = f"{_SAED90_PDK}/Memories/synopsys/models"
+        return std + sorted(f for f in glob.glob(f"{mdir}/SRAM*_typ.db")
+                            if re.search(r"/SRAM\d+x\d+(_1rw)?_typ\.db$", f))
+    if pdk == "saed32":
+        db = build_saed32_sram_libs.ensure_saed32_sram_db("tt1p05v25c_i1p05v")
+        return [f"{_SAED32_EDK}/lib/stdcell_rvt/db_nldm/saed32rvt_tt1p05v25c.db"] + ([db] if db else [])
+    if pdk == "saed14":
+        base = f"{_SAED14_EDK}/SAED14nm_EDK_STD_RVT/liberty/nldm"
+        return [f"{base}/base/saed14rvt_base_tt0p8v25c.db", f"{base}/cg/saed14rvt_cg_tt0p8v25c.db",
+                f"{base}/dlvl/saed14rvt_dlvl_tt0p8v25c_i0p8v.db", f"{base}/iso/saed14rvt_iso_tt0p8v25c.db",
+                f"{_SAED14_EDK}/SAED14nm_EDK_SRAM/liberty/nldm/saed14sram_tt0p8v25c.db"]
+    dbs = build_sky130_libs.ensure_sky130_dbs(build_sky130_libs.SKY130_PDK) or {}
+    sram = build_sky130_libs.ensure_sky130_sram_dbs(build_sky130_libs.SKY130_PDK) or []
+    return ([dbs["tt_025C_1v80"]] if "tt_025C_1v80" in dbs else []) + list(sram)
+
+
+def _power_numbers(rpt: str) -> dict:
+    """Total / internal / switching / leakage (mW) from report_power."""
+    import re
+    d = {}
+    if not os.path.isfile(rpt):
+        return d
+    text = open(rpt).read()
+    for label, key in (("Cell Internal Power", "internal"), ("Net Switching Power", "switching"),
+                       ("Cell Leakage Power", "leakage"), ("Total Power", "total")):
+        m = re.search(rf"{label}\s*=\s*([\d.eE+-]+)", text)
+        if m:
+            d[key] = float(m.group(1))
+    # Power groups: "<group>  internal switching leakage total (pct)"
+    grp = {}
+    for m in re.finditer(r"^(clock_network|register|combinational|sequential|memory)\s+"
+                         r"([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)", text, re.M):
+        grp[m.group(1)] = float(m.group(5))
+    if grp:
+        d["logic"] = sum(v for k, v in grp.items() if k != "memory")
+        d["memory"] = grp.get("memory", 0.0)
+    return d
+
+
+def _annotation_pct(rpt: str) -> float:
+    """Percentage of nets annotated from the SAIF (report_switching_activity)."""
+    import re
+    if not os.path.isfile(rpt):
+        return -1.0
+    for line in open(rpt):
+        m = re.match(r"\s*Nets\s+\d+\(\s*([\d.]+)%\)", line)
+        if m:
+            return float(m.group(1))
+    return -1.0
+
+
+def run_power_one(proto: str, lang: str, pdk: str, inst: str, csuf: str, sram_path: str,
+                  work_dir: str) -> tuple:
+    """PrimePower for one netlist instance of a gate-level run. Returns
+    (passed, numbers dict, detail)."""
+    tb_top = f"tb_sram_{proto}"
+    lsuf = "_vhdl" if lang == "vhdl" else ""
+    top = f"sram_{proto}{'_dp' if csuf == '_dp' else ''}{'_opts' if csuf == '_opts' else ''}{lsuf}"
+    net_dir = os.path.join(sram_path, "synthesis", "designcompiler", "netlists", pdk)
+    pdir = os.path.join(work_dir, "power", inst[2:])
+    os.makedirs(pdir, exist_ok=True)
+    saif = os.path.join(work_dir, f"saif_{inst[2:]}.saif")
+    netlist = os.path.join(net_dir, f"{top}.v")
+    sdc = os.path.join(net_dir, f"{top}.sdc")
+    libs = power_libs(pdk, sram_path)
+    missing = [f for f in [saif, netlist, sdc] + libs if not os.path.isfile(f)] + ([] if libs else ["libs"])
+    if missing:
+        return False, {}, "missing: " + ", ".join(missing)
+    rpts = {k: os.path.join(pdir, f"power_{k}.rpt")
+            for k in ("annotation", "overall", "hierarchy", "top_cells", "top_nets")}
+    for r in rpts.values():
+        if os.path.exists(r):
+            os.remove(r)
+    # DC's .sdc names the synthesis-corner library on its wire-load line; drop
+    # it and apply DC's per-netlist model by name from the typical library
+    # (as run_primetime_sta.py does: the model is chosen after write_sdc).
+    sdc_pw = os.path.join(pdir, f"{top}_power.sdc")
+    with open(sdc) as fi, open(sdc_pw, "w") as fo:
+        for line in fi:
+            if not line.startswith("set_wire_load_model"):
+                fo.write(line)
+    sys.path.insert(0, os.path.join(sram_path, "synthesis"))
+    import run_primetime_sta  # noqa: E402
+    wlm = run_primetime_sta.dc_wire_load(pdk, top)
+    wlm_cmds = ["set_wire_load_mode top", f"set_wire_load_model -name {wlm}"] if wlm != "-" else []
+    tcl = os.path.join(pdir, "run_power.tcl")
+    with open(tcl, "w") as fh:
+        fh.write("\n".join([
+            f"# PrimePower — GENERATED by sim_sram.py --power ({proto} {lang} {pdk} {inst[2:]})",
+            "set_app_var power_enable_analysis true",
+            "set_app_var power_analysis_mode averaged",
+            f"set_app_var link_path [list * {' '.join(libs)}]",
+            f"read_verilog {netlist}",
+            f"current_design {top}",
+            "link_design",
+            f"read_sdc {sdc_pw}",
+            *wlm_cmds,
+            f"read_saif {saif} -strip_path {tb_top}/{inst}",
+            "update_power",
+            f"redirect {rpts['annotation']} {{ report_switching_activity -list_not_annotated }}",
+            f"redirect {rpts['overall']} {{ report_power -nosplit -unit mW }}",
+            f"redirect {rpts['hierarchy']} {{ report_power -nosplit -unit mW -hierarchy -levels 3 }}",
+            f"redirect {rpts['top_cells']} {{ report_power -nosplit -unit mW -cell_power -leaf "
+            "-nworst 10 -sort_by total_power }",
+            f"redirect {rpts['top_nets']} {{ report_power -nosplit -unit mW -net_power -leaf "
+            "-nworst 10 -sort_by net_switching_power }",
+            "exit", ""]))
+    out, rc = _run(["pt_shell", "-f", tcl], pdir, 1800)
+    with open(os.path.join(pdir, "pt_shell.log"), "w") as fh:
+        fh.write(out)
+    # pt_shell exits 0 even when the script aborts: judge by the log and the
+    # reports. PT-063 (Library Compiler path unset) is printed at every start.
+    errors = [ln for ln in out.splitlines() if ln.startswith("Error:") and "(PT-063)" not in ln]
+    nums = _power_numbers(rpts["overall"])
+    nums["annot"] = _annotation_pct(rpts["annotation"])
+    empty = [k for k, r in rpts.items() if k != "annotation"
+             and (not os.path.isfile(r) or os.path.getsize(r) == 0)]
+    ok = rc == 0 and not errors and not empty and "total" in nums
+    detail = "; ".join(errors[:2]) if errors else ("empty reports: " + ", ".join(empty) if empty else "")
+    if ok and nums["annot"] < 99.0:
+        ok, detail = False, f"SAIF annotation {nums['annot']:.1f} % < 99 %"
+    if ok and nums.get("memory", 0.0) < 0.0:
+        # The vendor macro liberty's input-pin internal power is negative
+        # (SAED32-LP); the macro share is not a usable estimate.
+        nums["memory_invalid"] = True
+        detail = "macro power negative (vendor liberty input-pin internal_power), not counted"
+    return ok, nums, detail
+
+
+def run_power(args, sram_path: str) -> int:
+    """--power: gate-level runs with +saif, then PrimePower per netlist."""
+    if not ON_CSUN:
+        print("ERROR: --power needs VCS, PrimePower and the PDKs (csun.edu only).")
+        return 1
+    protos = SUPPORTED_PROTOS if args.proto == "all" else [args.proto]
+    langs = SUPPORTED_LANGS if args.lang == "all" else [args.lang]
+    pdks = POWER_PDKS if args.pdk == "all" else [args.pdk]
+    work_base = os.path.join(sram_path, "verification", "work")
+    runs = [(p, lang, k) for k in pdks for p in protos for lang in langs]
+    rows = []
+
+    def one(run):
+        p, lang, k = run
+        label = f"power/{p}_{lang}/{k}"
+        if k in POSTSYN_KNOWN_FAILURES:
+            return [(label, "-", "SKIP", {}, "gate-level activity not valid (accepted timing failure)")]
+        wd = os.path.join(work_base, "power", f"{p}_{lang}_{k}")
+        ok, summ = run_vcs_postsyn(p, lang, k, False, sram_path, wd, sdf=True, saif=True)
+        if not ok:
+            return [(label, "-", "FAIL", {}, f"gate-level run failed: {summ}")]
+        out = []
+        for inst, csuf in POSTSYN_NETLISTS:
+            pok, nums, det = run_power_one(p, lang, k, inst, csuf, sram_path, wd)
+            out.append((label, inst[2:], "PASS" if pok else "FAIL", nums, det))
+        return out
+
+    with concurrent.futures.ThreadPoolExecutor(max(1, min(args.jobs, 3))) as ex:
+        for res in ex.map(one, runs):
+            rows += res
+    all_pass = all(st in ("PASS", "SKIP") for _, _, st, _, _ in rows) and bool(rows)
+    lines = [f"{'PASS' if all_pass else 'FAIL'}  sim_sram.py --power  "
+             f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}",
+             f"{'run':<24} {'netlist':<5} {'status':<5} {'logic':>9} {'macros':>9} {'total':>9} "
+             f"{'switching':>9} {'leakage':>9} {'SAIF %':>7}  (mW, typical corner)"]
+    for label, inst, st, n, det in rows:
+        if n.get("total") is not None:
+            inv = n.get("memory_invalid")
+            mac = "invalid" if inv else f"{n.get('memory', 0):.4f}"
+            tot = "n/a" if inv else f"{n['total']:.4f}"
+            lines.append(f"{label:<24} {inst:<5} {st:<5} {n.get('logic', 0):>9.4f} {mac:>9} {tot:>9} "
+                         f"{n.get('switching', 0):>9.4f} {n.get('leakage', 0):>9.4f} "
+                         f"{n.get('annot', -1):>7.1f}  {det}")
+        else:
+            lines.append(f"{label:<24} {inst:<5} {st:<5} {det}")
+    os.makedirs(os.path.join(work_base, "power"), exist_ok=True)
+    with open(os.path.join(work_base, "power", "results.log"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print("\n" + "=" * 100)
+    print("\n".join(lines))
+    print("=" * 100)
     return 0 if all_pass else 1
 
 
@@ -1067,13 +1276,14 @@ def main() -> int:
     parser.add_argument("--no-sdf", action="store_true",
                         help="--postsyn without SDF, +delay_mode_zero (zero-delay gates): tells a timing failure "
                              "from a functional one; results in work/postsyn_nosdf/")
-    parser.add_argument("--power", action="store_true", help="PrimePower (Step 10/12)")
+    parser.add_argument("--power", action="store_true",
+                        help="PrimePower (Step 12): gate-level runs with SAIF, then report_power per "
+                             "netlist (base / opts / dp) at the typical corner; SAED90 skipped")
     parser.add_argument("--pdk", default="all", help="PDK for --postsyn / --power")
     args = parser.parse_args()
 
     if args.power:
-        print("FAIL: --power is not implemented yet (Step 10/12).")
-        return 1
+        return run_power(args, sram_path)
     if args.postsyn:
         return run_postsyn(args, sram_path)
 

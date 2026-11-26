@@ -997,6 +997,7 @@ per-target reports.
 | PrimeTime STA (setup and hold; SKY130 at SS / TT / FF with TT macros) | `synthesis/run_primetime_sta.py` | SAED32, SAED14, SKY130 SS / TT / FF 24/24; worst setup +3.53 / +0.42 / +0.18 / +1.28 / +1.42 ns; SAED90 accepted |
 | Gate-level simulation (3 netlists per bus, SDF, 2448 checks per run) | `verification/tools/sim_sram.py --postsyn` | 24/24 PASS (SAED32, SAED14, SKY130 x 4 buses x SV / VHDL netlists); SAED90 8 known (pass with `--no-sdf`) |
 | UPF (VC LP) | `verification/tools/lp_sram.py` | 12/12 PASS |
+| PrimePower (Step 12) | `verification/tools/sim_sram.py --power` | 36/36 PASS (SAED90 skipped); see Power Analysis |
 | Vivado / Quartus / Yosys | `synthesis/run_vendor_synth.py --vivado / --quartus / --yosys` | not run yet (standard host) |
 
 SAED90 misses 100 MHz by -0.20 ns (base, read latency 1) to -1.4 ns (options,
@@ -1008,9 +1009,47 @@ OpenRAM read delay (`pdk_sram_models.py`, gate level).
 
 ## Power Analysis
 
-> Populated by Step 12 (power)
+Step 12, csun.edu, 2026-11-25: `python3 verification/tools/sim_sram.py --power
+--proto all --pdk all --jobs 3`. Each gate-level run (`--postsyn` bench, SV
+netlists, SDF) records a backward SAIF per netlist with VCS (`+saif`, from the
+end of the post-reset clear to the end of the sequence); PrimePower
+(`report_power`, averaged mode) reads the netlist, DC's constraints and
+wire-load model, the SAIF, and the **typical-corner** standard-cell and SRAM
+macro libraries. 36/36 analyses PASS, 100 % of nets annotated; SAED90 SKIP
+(its gate-level activity is not valid: accepted timing failure). Results:
+`verification/work/power/results.log`, reports in
+`verification/work/power/<proto>_sv_<pdk>/power/<netlist>/`.
 
-[TBD]
+Average power over the gate-level test sequence (mW, 100 MHz; ranges over
+the four buses — the macro power does not depend on the bus):
+
+| PDK | Netlist | Logic | SRAM macros | Total |
+|---|---|---|---|---|
+| SAED14 | base (32 x 1024) | 0.007-0.030 | 8.99 | 9.00-9.02 |
+| SAED14 | opts (ECC, 2 banks, BIST, RL2) | 0.076-0.100 | 11.24 | 11.31-11.34 |
+| SAED14 | dp (opts + 8-bit port B) | 0.093-0.136 | 19.81 | 19.90-19.94 |
+| SKY130 | base | 0.13-0.68 | 11.08 | 11.21-11.76 |
+| SKY130 | opts | 0.99-1.55 | 37.65 | 38.64-39.20 |
+| SKY130 | dp | 0.92-1.73 | 52.13 | 53.05-53.86 |
+| SAED32 | base | 0.12-0.46 | not valid | — |
+| SAED32 | opts | 0.70-1.05 | not valid | — |
+| SAED32 | dp | 0.95-1.48 | not valid | — |
+
+Findings:
+- **The macros dominate (> 95 %), and almost all of it is their clock.** The
+  macro liberties charge internal energy on every clock rise, selected or not
+  (SKY130 OpenRAM: 13.8 pJ per `clk0` rise in every `csb0` / `web0` state,
+  ~5.5 mW per macro at 100 MHz), and the leaves connect each macro's clock to
+  the bus clock. Gating the macro clocks while a bank is deselected or asleep
+  would remove most of it; LIGHT_SLEEP / DEEP_SLEEP hold the chip select
+  off but leave the clock running (follow-up, not done; spec "Power modes").
+- **SAED32 macro power is not usable:** the SAED32-LP SRAM liberty's
+  input-pin `internal_power` tables are negative (to about -2700 per
+  transition, in the vendor file itself) and its leakage is 0, so PrimePower
+  reports negative memory power. The logic columns are valid; the macro share
+  is flagged and not added up (`synthesis/known_issues.md`).
+- The logic share is mostly leakage on SAED32 and register clock-pin power on
+  SKY130; AXI4-Lite is the largest bus adapter.
 
 ## Directory Layout
 
@@ -1067,11 +1106,13 @@ Options: `--sim vcs|xcelium|verilator|all`, `--proto ahb|apb|axi4l|wb|all`,
 `--test <name>` (see Tests), `--waves`, `--coverage`, `--jobs N`. Results and
 coverage files are listed under Simulation Results.
 
-Synthesis, STA, gate-level simulation and UPF checks (csun.edu, Step 10):
+Synthesis, STA, gate-level simulation, UPF checks (Step 10) and power (Step 12), csun.edu:
 
 ```bash
 python3 $CLAUDE_SRAM_PATH/synthesis/run_vendor_synth.py --dc --jobs 3     # 96 netlists, ~1 h
 python3 $CLAUDE_SRAM_PATH/synthesis/run_primetime_sta.py                  # 6 targets, ~1 min
 python3 $CLAUDE_SRAM_PATH/verification/tools/sim_sram.py --postsyn --proto all --lang all --pdk all --jobs 3
 python3 $CLAUDE_SRAM_PATH/verification/tools/lp_sram.py                   # VC LP, 12 runs
+python3 $CLAUDE_SRAM_PATH/verification/tools/sim_sram.py --power --proto all --pdk all --jobs 3
+                                                    # Step 12: SAIF + PrimePower, 36 analyses
 ```

@@ -1,4 +1,14 @@
-# Handoff — SRAM, updated 2026-11-25 (Step 10 done on csun.edu, uncommitted)
+# Handoff — SRAM, updated 2026-11-25 (Steps 10 + 12 done on csun.edu; Step 10 committed 7ba3fa7)
+
+## Step 12 power (2026-11-25, uncommitted) — read first
+- `sim_sram.py --power` (run_power / run_power_one / power_libs) + SAIF capture in
+  `sram_tb_postsyn_body.svh` (`+saif`, VCS toggle tasks per netlist). Typical-corner libs incl.
+  macros; DC's WLM applied by name (the .sdc's SS-library line dropped).
+- 36/36 PASS (4 buses x SAED32/14/SKY130 x base/opts/dp, SV netlists), 100 % SAIF; SAED90 SKIP.
+  SAED14 9.0 / 11.3 / 19.9 mW, SKY130 11.2-11.8 / 38.6-39.2 / 53.0-53.9 mW (base / opts / dp);
+  macros > 95 %, from free-running macro clocks. SAED32 macro power invalid (vendor liberty
+  negative input-pin internal_power) — logic only reported. README "Power Analysis",
+  known_issues.md "Power analysis". Open follow-up: per-bank macro clock gating (not requested).
 
 ## Step 10 synthesis (2026-11-24/25, uncommitted) — read first
 Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
@@ -23,7 +33,7 @@ Full log and every user decision: `project_sram_plan.md` §18 (18.1-18.6).
 - **Power cycle counts** checked vs SAED32-LP databook: valid to 180 MHz; kept (user).
 - Open: Vivado / Quartus / Yosys flows (scripts written, standard host); timer and bus_matrix
   postsyn still compile the vendor SAED90 `saed90nm.v` (SSR-flop bug not checked there); Step 11
-  cleanup / tag and Step 12 power not started. /tmp aging deleted 14 bus_matrix files again
+  cleanup / tag open (Step 12 power done since, see the top of this file). /tmp aging deleted 14 bus_matrix files again
   (restored from HEAD 2026-11-25).
 
 ## Step 9 firmware (2026-11-23 late, uncommitted) — read first

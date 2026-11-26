@@ -193,6 +193,35 @@ finishes, the bus times out). The timer and bus_matrix post-synthesis flows
 compile the vendor `saed90nm.v`; their netlists were not checked for these
 cells.
 
+## Power analysis (PrimePower, Step 12)
+
+### SAED32-LP SRAM liberty: negative macro internal power
+
+The vendor `saed32sramlp_<corner>.lib` (the shipped `.lib`, not changed by
+`build_saed32_sram_libs.py`) characterizes the input pins' internal power
+(CSB, WEB, A, I) with large negative values (`rise_power` down to about
+-2700 per transition at TT 1.05 V 25 C) and gives the macros no leakage.
+PrimePower then reports negative memory power (e.g. -2.1 mW for the opts
+netlist), which would cancel the logic. `sim_sram.py --power` flags a
+negative macro share as "invalid" and reports only the logic power for
+SAED32; no number is invented for the macros.
+
+### Macro clocks are free-running
+
+Every macro liberty here charges internal energy on each clock rise whether
+the macro is selected or not, and the leaves connect the macro clocks to the
+bus clock, so the macros' clock power (> 95 % of the total on SAED14 /
+SKY130) is spent even when the SRAM is idle or a bank is asleep. Clock gating
+per bank is a possible improvement (not done; the power modes gate the chip
+select only).
+
+### DC's `.sdc` and the typical-corner libraries
+
+The `.sdc` names the synthesis-corner library on its `set_wire_load_model`
+line (SAED), which the typical-corner power run does not load (SEL-005, and
+no wire load). The power script drops that line and applies DC's per-netlist
+model by name from the typical library (as STA does).
+
 ## Vivado / Quartus / Yosys (standard host)
 
 `run_vendor_synth.py --vivado / --quartus / --yosys` synthesize the same 24
