@@ -1,8 +1,8 @@
-# Step 5 — `formal` Sub-Agent
+# Step 7 — `formal` Sub-Agent
 
 ## Trigger
 
-Step 4 complete and all directed tests passing.
+Step 6 complete (UVM passing), Step 5 lint passing, and all directed tests passing.
 
 ## Prerequisites
 

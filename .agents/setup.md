@@ -254,9 +254,9 @@ Full register map: [doc/IP_NAME_regs.html](doc/IP_NAME_regs.html)
 
 [TBD]
 
-## Formal Verification Results
+## Lint Results
 
-> Populated by Step 5 (formal)
+> Populated by Step 5 (lint)
 
 [TBD]
 
@@ -266,9 +266,9 @@ Full register map: [doc/IP_NAME_regs.html](doc/IP_NAME_regs.html)
 
 [TBD]
 
-## Lint Results
+## Formal Verification Results
 
-> Populated by Step 8 (lint)
+> Populated by Step 7 (formal)
 
 [TBD]
 
@@ -359,7 +359,7 @@ Skeleton. Must include the env var guard. Argument: `--lang {sv,vhdl,all}`. Must
 Skeleton Python formal verification runner. Must include the env var guard. Writes
 `${CLAUDE_IP_NAME_PATH}/verification/formal/results.log` containing `PASS` or `FAIL`.
 Exits non-zero on `FAIL`. Full implementation is completed by the `formal` sub-agent
-(Step 5).
+(Step 7).
 
 ---
 

@@ -1,8 +1,8 @@
-# Step 8 — `lint` Sub-Agent
+# Step 5 — `lint` Sub-Agent
 
 ## Trigger
 
-Step 3 complete. Runs in parallel with Steps 4–7.
+Step 4 complete and all directed tests passing.
 
 ## Prerequisites
 
@@ -77,7 +77,7 @@ resolved without extra configuration in each IP.
    - Writes `verification/lint/lint_results.log` containing `PASS` or `FAIL`.
    - Exits non-zero on any un-waived warning or error. A `SKIPPED` language
      (VHDL on csun.edu) does not count as a failure.
-6. Coordinate with the `regression` sub-agent (Step 7): `lint_IP_NAME.py` exit code
+6. Coordinate with the `regression` sub-agent (Step 8): `lint_IP_NAME.py` exit code
    must be propagated correctly by `regression_IP_NAME.py`.
 
 ### SpyGlass (csun.edu only, SV lint)

@@ -2,7 +2,7 @@
 
 ## Trigger
 
-Step 5 complete (formal verification passing) and all directed tests passing; Vivado is
+Step 5 complete (lint passing) and all directed tests passing; Vivado is
 available (`xvlog`/`xelab`/`xsim` in `$PATH` after sourcing `setup.sh`).
 
 ## Prerequisites
@@ -10,7 +10,7 @@ available (`xvlog`/`xelab`/`xsim` in `$PATH` after sourcing `setup.sh`).
 - All eight directed-test results logs contain `PASS`
   (`verification/work/icarus/<proto>_sv/results.log` ×4 and
   `verification/work/ghdl/<proto>_vhdl/results.log` ×4).
-- `verification/work/formal/<proto>/results.log` contains `PASS` for all protocols.
+- `verification/lint/lint_results.log` contains `PASS` (Step 5).
 - `verification/testbench/`, `verification/tests/`, `verification/tasks/` exist and
   are populated from Step 4.
 - `CLAUDE_<IP_NAME>_PATH` is set (sourced from `setup.sh`).

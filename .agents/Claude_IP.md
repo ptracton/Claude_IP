@@ -312,7 +312,7 @@ are the exception, not the rule.
   cells only. No implicit multi-cycle paths.
 - **Bus-protocol agnosticism**: Core logic is decoupled from bus wrappers. Bus interfaces are thin
   adapter layers that terminate at a simple register-file interface.
-- **Lint-clean from day one**: Code must pass the linter (Step 7) before a PR is merged. Never
+- **Lint-clean from day one**: Code must pass the linter (Step 5) before a PR is merged. Never
   defer lint fixes.
 - **Simulation-synthesis equivalence**: Constructs that simulate differently from how they
   synthesize are forbidden in RTL files (only allowed in `verification/`).
@@ -406,18 +406,22 @@ deliverables exist before starting work.
 | 2  | [.agents/rdl.md](.agents/rdl.md) | SystemRDL register definitions and code generation |
 | 3  | [.agents/rtl.md](.agents/rtl.md) | RTL design and bus-interface adapters |
 | 4  | [.agents/directed_tests.md](.agents/directed_tests.md) | Directed simulation tests |
-| 5  | [.agents/formal.md](.agents/formal.md) | Formal verification via SymbiYosys and Synopsys VC Formal |
+| 5  | [.agents/lint.md](.agents/lint.md) | RTL linting |
 | 6  | [.agents/uvm.md](.agents/uvm.md) | UVM verification environment |
-| 7  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
-| 8  | [.agents/lint.md](.agents/lint.md) | RTL linting (runs in parallel with Steps 4–6) |
+| 7  | [.agents/formal.md](.agents/formal.md) | Formal verification via SymbiYosys and Synopsys VC Formal |
+| 8  | [.agents/regression.md](.agents/regression.md) | Regression harness and reporting |
 | 9  | [.agents/firmware.md](.agents/firmware.md) | C99 device driver library (runs in parallel with Steps 3–8); register-less IPs: memory tests + hook-based side-band helpers, host unit tests + mutants (`fw_<ip>.py`) |
 | 10 | [.agents/synthesis.md](.agents/synthesis.md) | Synthesis via Yosys, Vivado, Quartus; Design Compiler + PrimeTime + gate-level simulation on csun.edu; UPF + VC LP for IPs with power domains |
-| 11 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag |
-| 12 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |
+| 11 | [.agents/power.md](.agents/power.md) | Post-synthesis power analysis via PrimePower (PTPX) |
+| 12 | [.agents/cleanup.md](.agents/cleanup.md) | Final cleanup, documentation, and release tag — **always last** |
+
+**RULE — Cleanup (Step 12) is always the last thing done.** No other step runs after it.
+If any earlier step is re-run or changed after cleanup (a fix, a new technology, a csun.edu
+re-run), cleanup must be run again before the IP is considered released.
 
 ---
 
-## Power Analysis (Step 12 — csun.edu only)
+## Power Analysis (Step 11 — csun.edu only)
 
 Power analysis runs **after synthesis (Step 10)** and uses the gate-level netlist and SDF
 produced by Synopsys Design Compiler. It is an optional but important step for ASIC
@@ -680,14 +684,15 @@ to its vendor or third-party models.
 |----------|------------|-------------------|
 | setup (1) | All | `setup.sh`, `cleanup.sh`, directory tree |
 | rdl (2) | rtl (3), uvm (6), firmware (9) | `design/rtl/verilog/`, `design/rtl/vhdl/`, `firmware/include/IP_NAME_regs.h` |
-| rtl (3) | directed_tests (4), formal (5), uvm (6), lint (8), synthesis (10) | `design/rtl/verilog/`, `design/rtl/vhdl/` |
-| directed_tests (4) | formal (5), regression (7) | `verification/work/*/results.log`, `verification/work/coverage/summary.txt` (VCS `--coverage`) |
-| formal (5) | regression (7) | `verification/formal/results.log`, `verification/formal/vcf/results.log` |
-| uvm (6) | regression (7) | `verification/work/xsim/uvm/results.log` |
-| lint (8) | synthesis (10), regression (7) | `verification/lint/lint_results.log` |
-| synthesis (10) | power (12) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf,sdc}` |
-| All (2–9) | cleanup (11) | Full passing regression |
-| power (12) | cleanup (11) | `verification/work/postsyn/<pdk>/<proto>/power/power_*.rpt` |
+| rtl (3) | directed_tests (4), lint (5), uvm (6), formal (7) | `design/rtl/verilog/`, `design/rtl/vhdl/` |
+| directed_tests (4) | lint (5), regression (8) | `verification/work/*/results.log`, `verification/work/coverage/summary.txt` (VCS `--coverage`) |
+| lint (5) | uvm (6), regression (8) | `verification/lint/lint_results.log` |
+| uvm (6) | formal (7), regression (8) | `verification/work/xsim/uvm/results.log` |
+| formal (7) | regression (8) | `verification/formal/results.log`, `verification/formal/vcf/results.log` |
+| regression (8) | synthesis (10) | `verification/work/regression_results.log` (all `PASS`/`SKIP`; `run_regression.py` exits 0) — directed, lint, UVM, formal |
+| synthesis (10) | power (11) | `synthesis/designcompiler/netlists/<pdk>/IP_NAME_<proto>.{v,sdf,sdc}` |
+| power (11) | cleanup (12) | `verification/work/postsyn/<pdk>/<proto>/power/power_*.rpt` |
+| All (2–11) | cleanup (12) | Full passing regression |
 
 ---
 
@@ -730,7 +735,7 @@ A sub-agent **must not** mark its step complete until all of the following are s
 | volare | 0.20+ (Python venv) | Fetches/manages sky130 (and other open) PDK versions |
 | SpyGlass (`spyglass_vc`) | csun.edu only, on `$PATH` | SV lint (replaces Verilator there); no working VHDL-2008 path — VHDL lint is unavailable on csun.edu |
 | PrimeTime (`pt_shell`) | csun.edu only, on `$PATH` | STA via separate `run_primetime_sta.py` script — SAED90/32/14 (one corner each) and SKY130 (all 3 PVT corners) |
-| PrimePower (`pt_shell`, power mode) | csun.edu only, on `$PATH` | Power analysis from gate-level SAIF (`sim_<ip>.py --power`, Step 12) |
+| PrimePower (`pt_shell`, power mode) | csun.edu only, on `$PATH` | Power analysis from gate-level SAIF (`sim_<ip>.py --power`, Step 11) |
 | Synopsys VCS MX (`vcs`) | Y-2026.03, csun.edu only | SV/VHDL directed simulation, gate-level simulation, UVM (`-ntb_opts uvm-1.2`; Vivado is not available there) |
 | Synopsys URG (`urg`) | Y-2026.03 (with VCS), csun.edu only | Merges and reports VCS code coverage (`sim_<ip>.py --coverage`; needs `-lca -flex_merge modules` for different designs) |
 | Cadence Xcelium (`xrun`) | 25.03, csun.edu only | SV/VHDL directed simulation (no coverage flow yet) |

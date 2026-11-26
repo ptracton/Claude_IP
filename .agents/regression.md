@@ -1,8 +1,8 @@
-# Step 7 — `regression` Sub-Agent
+# Step 8 — `regression` Sub-Agent
 
 ## Trigger
 
-Steps 4, 5, and 6 complete (all directed tests, formal verification, and UVM tests passing).
+Steps 4–7 complete (directed tests, lint, UVM, and formal verification passing).
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Steps 4, 5, and 6 complete (all directed tests, formal verification, and UVM tes
 - On `*.csun.edu`: `verification/work/vcs/<proto>_sv/results.log` and `verification/work/xcelium/<proto>_vhdl/results.log` contain `PASS` for all 4 protocols.
 - `verification/work/formal/<proto>/results.log` contains `PASS` for all protocols.
 - On standard hosts: `verification/work/xsim/uvm/results.log` contains `PASS` (UVM, Step 6).
-- `verification/lint/lint_results.log` contains `PASS` (coordinate with lint sub-agent, Step 8).
+- `verification/lint/lint_results.log` contains `PASS` (coordinate with lint sub-agent, Step 5).
 - `verification/regression/` directory exists.
 - `verification/tools/run_regression.py` skeleton exists from Step 1.
 - `CLAUDE_<IP_NAME>_PATH` is set (sourced from `setup.sh`).

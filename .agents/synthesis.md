@@ -2,11 +2,13 @@
 
 ## Trigger
 
-Step 8 (`lint_IP_NAME.py`) exits 0 and Step 3 complete.
+Step 8 (regression) passes: `run_regression.py` exits 0, which covers the directed tests
+(Step 4), lint (Step 5), UVM (Step 6) and formal verification (Step 7).
 
 ## Prerequisites
 
-- `verification/lint/lint_results.log` contains `PASS`.
+- `verification/work/regression_results.log` shows every entry `PASS` or `SKIP` (no `FAIL`),
+  including directed tests, lint, UVM and formal.
 - `design/rtl/verilog/` and `design/rtl/vhdl/` are parse-clean.
 
 **Standard hosts** (not csun.edu):

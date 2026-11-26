@@ -1,8 +1,11 @@
-# Step 11 — `cleanup` Sub-Agent
+# Step 12 — `cleanup` Sub-Agent
 
 ## Trigger
 
-All prior steps complete and `verification/tools/regression_IP_NAME.py` exits 0.
+All prior steps (1–11, including power analysis) complete and `verification/tools/regression_IP_NAME.py` exits 0.
+
+**Cleanup is always the last step.** Nothing runs after it; if any earlier step is re-run
+or changed afterwards, run cleanup again.
 
 ## Prerequisites
 

@@ -41,7 +41,7 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 | IP | Description | Protocols | Status |
 |----|-------------|-----------|--------|
 | [timer](IP/system/timer/) | Programmable 32-bit timer with prescaler, one-shot/free-running modes, interrupt, trigger output, restart and atomic snapshot | APB4, AHB-Lite, AXI4-Lite, WB | Complete (both flows) |
-| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-12 done (standard host: no open-source formal or UVM; Step 11 cleanup done 2026-11-25, `v1.0.0` tag and csun.edu clean regression pending) |
+| [sram](IP/system/sram/) | Configurable on-chip SRAM over vendor macros (SAED90/32/14, SKY130 OpenRAM, Xilinx XPM, Altera altsyncram, generic). Byte enables, power modes (RUN / light sleep / deep sleep / shutdown, per bank), SECDED ECC, March C- BIST, clear engine, optional second port with its own width and clock. Side-band control, no registers | APB4, AHB-Lite, AXI4-Lite, WB (single and dual port) | Steps 1-12 done (standard host: no open-source formal or UVM; cleanup done 2026-11-25, `v1.0.0` tag and csun.edu clean regression pending) |
 
 ### Interface
 
@@ -51,11 +51,11 @@ has registers), `doc/` and a `README.md` with all results. Each IP's
 
 ### Verification status (csun.edu flow)
 
-| IP | Directed sim (VCS + Xcelium, SV + VHDL) | Formal (VC Formal) | UVM | Lint (SpyGlass SV) | DC + PrimeTime (4 PDKs) | Gate-level sim | Power |
+| IP | Directed sim (VCS + Xcelium, SV + VHDL) | Lint (SpyGlass SV) | UVM | Formal (VC Formal) | DC + PrimeTime (4 PDKs) | Gate-level sim | Power |
 |----|------|------|-----|------|------|------|------|
-| timer | 16/16 PASS | 8/8 PASS | 1/1 PASS on xsim (standard host; not run on csun.edu) | PASS | SAED90 -0.40 ns accepted; others MET | SAED32/14, SKY130 PASS; SAED90 known fail | 12/16 (SAED90 skipped) |
-| bus_matrix | 16/16 PASS (82 checks each) | 10/10 PASS | 5/5 PASS on VCS, 100 % coverage | PASS | SAED90 -0.56 ns accepted; others MET | 16/16 PASS | 16/16 |
-| sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 26/26 PASS (bounded waivers) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 24/24 PASS (20 lint + 4 CDC) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | 36/36 (SAED90 skipped; SAED32 macro power not valid) |
+| timer | 16/16 PASS | PASS | 1/1 PASS on xsim (standard host; not run on csun.edu) | 8/8 PASS | SAED90 -0.40 ns accepted; others MET | SAED32/14, SKY130 PASS; SAED90 known fail | 12/16 (SAED90 skipped) |
+| bus_matrix | 16/16 PASS (82 checks each) | PASS | 5/5 PASS on VCS, 100 % coverage | 10/10 PASS | SAED90 -0.56 ns accepted; others MET | 16/16 PASS | 16/16 |
+| sram | 80/80 PASS (4 buses x SV/VHDL x 5 technologies) | 24/24 PASS (20 lint + 4 CDC) | 1440/1440 PASS on VCS + Xcelium; mutants 9/9 | 26/26 PASS (bounded waivers) | 96 netlists; SAED32/14, SKY130 MET (STA at 6 targets); SAED90 -0.2 to -1.4 ns accepted | 24/24 PASS; SAED90 known fail | 36/36 (SAED90 skipped; SAED32 macro power not valid) |
 
 ### Verification status (standard-host flow)
 
@@ -124,24 +124,27 @@ Each IP follows a 12-step sub-agent workflow defined in
 3. **rtl**: core logic and bus adapters in SV and VHDL-2008
 4. **directed_tests**: testbenches on Icarus/GHDL/ModelSim/Verilator/xsim,
    or on VCS/Xcelium on csun.edu
-5. **formal**: SymbiYosys BMC, or VC Formal unbounded proofs with shared
-   protocol checkers (SV and VHDL)
-6. **uvm**: UVM environment on Vivado xsim, or on VCS on csun.edu
-7. **regression**: `run_regression.py` with full pass/fail reporting
-8. **lint**: Verilator and GHDL, or SpyGlass on csun.edu. Zero un-waived
+5. **lint**: Verilator and GHDL, or SpyGlass on csun.edu. Zero un-waived
    findings.
+6. **uvm**: UVM environment on Vivado xsim, or on VCS on csun.edu
+7. **formal**: SymbiYosys BMC, or VC Formal unbounded proofs with shared
+   protocol checkers (SV and VHDL)
+8. **regression**: `run_regression.py` with full pass/fail reporting (directed,
+   lint, UVM, formal). Synthesis starts only once it passes.
 9. **firmware**: C99 device driver (or, for the register-less sram, memory
-   tests and side-band helpers), cross-compiled for ARM Cortex-M33 and RISC-V
+   tests and side-band helpers), cross-compiled for ARM Cortex-M33 and RISC-V.
+   Runs in parallel with Steps 3-8.
 10. **synthesis**:
     - Yosys, Vivado (Zynq-7010) and Quartus (Cyclone V SE);
     - Design Compiler (SAED90/32/14, SKY130);
     - PrimeTime STA;
     - SDF gate-level simulation;
     - UPF power intent, checked with VC LP (IPs with power domains).
-11. **cleanup**: scrub artifacts, finalize docs, tag the release
-12. **power**: PrimePower analysis of the gate-level netlist with SAIF from
+11. **power**: PrimePower analysis of the gate-level netlist with SAIF from
     gate-level simulation (csun.edu; one SAIF per netlist when a bench holds
     several, typical-corner cell and macro libraries)
+12. **cleanup**: scrub artifacts, finalize docs, tag the release. Always the
+    last step; re-run it if anything earlier changes afterwards.
 
 ## Tool Requirements
 
