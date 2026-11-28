@@ -97,6 +97,22 @@ resolved without extra configuration in each IP.
      If the DFT goal is not licensed, log `DFT (SpyGlass): SKIPPED (no license)`; the
      Design Compiler `dft_drc` check in Step 10 then has to pass.
 
+8. **Math IP width rules (user 2026-11-27, `IP_SPEC_fx.md` R13).** For `IP/DSP/**` and every
+   IP that instantiates `claude_fx_*` / `claude_flt_*`, width findings are **errors**:
+   Verilator `WIDTHTRUNC`, `WIDTHEXPAND`, `WIDTHCONCAT`, and the SpyGlass width-mismatch rules
+   on csun.edu. A waiver needs a one-line reason in `waivers.md` (for example a deliberate
+   modular wrap at a non-recursive point). `lint_IP_NAME.py` reports them on their own line
+   (`WIDTH (math): PASS / FAIL`).
+9. **Side-band structure checks (new IP, user 2026-11-27, Python, all hosts):** the side-band
+   ports exist in the standard order (`rtl.md` §4d); no clock signal is driven by anything but
+   a `claude_clk_*` instance; every `claude_clk_gate` test-enable input is connected to
+   `scan_en_i | test_mode_i`. Reported as `SIDEBAND: PASS / FAIL`.
+
+10. **Parameter checks and metadata (new IP, user 2026-11-27, Python, all hosts):** every
+    parameter with a range in `<ip>.ip.yaml` has an elaboration check in the SV and VHDL tops
+    (`IP_SPEC_sideband.md` rule 6), and `ip_meta.py --check` passes. Reported as
+    `PARAMS: PASS / FAIL`.
+
 ### SpyGlass (csun.edu only, SV lint)
 
 SpyGlass's classic project-file interface (`spyglass_vc -project X.prj -goal
@@ -221,6 +237,7 @@ out of the RTL (first used by the sram IP, 2026-11-25):
 **All hosts:**
 - The DFT checks (item 7) pass: port check PASS on every top-level and the core, no
   latches or combinational loops in RTL, and no waiver on the DFT ports other than DFT0.
+- Math IP: `WIDTH (math)` passes (item 8). New IP: `SIDEBAND` passes (item 9).
 - Every RTL waiver in `verification/lint/waivers.md` has a corresponding
   suppression — a pragma at that exact line in the source, or (Verilator / GHDL on
   signed-off RTL) a file + rule + signal entry in `verilator_waivers.vlt` / the GHDL

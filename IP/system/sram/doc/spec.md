@@ -34,7 +34,7 @@ Always present:
 - One bus slave port: APB4, AHB-Lite (bursts, HSIZE), AXI4-Lite or Wishbone B4.
   One top-level per protocol (`sram_apb`, `sram_ahb`, `sram_axi4l`, `sram_wb`),
   built on the shared `claude_<proto>_mem_if` adapters
-  (`IP/common/design/rtl/mem_bus.md`).
+  (`.agents/IP_SPEC_mem_bus.md`).
 - Bus error for addresses beyond `DEPTH` words.
 - Optional read pipeline register (`READ_LATENCY` = 1 or 2). *[Step 10]* With 2 the
   word read is registered at the array output and decoded (SECDED) in the next cycle,
@@ -219,7 +219,7 @@ with `READ_LATENCY = 1` it answers one cycle later than other accesses. The macr
 the SECDED decode / encode never share a cycle. A pending clear or BIST stops new grants, and
 a domain waking from light sleep adds wait states (entry / wake counts under Power).
 
-**Bus adapters** (`IP/common/design/rtl/mem_bus.md`; SRAM answering at full speed,
+**Bus adapters** (`.agents/IP_SPEC_mem_bus.md`; SRAM answering at full speed,
 `READ_LATENCY = 1`, attached directly):
 
 | Protocol | Read / write | 16 transfers (measured, `test_burst` / `test_pipeline`) |

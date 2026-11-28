@@ -3,7 +3,7 @@
 The adapters (`IP/common/design/rtl/{verilog,vhdl}/claude_<proto>_mem_if.*`)
 connect an APB4, AHB-Lite, AXI4-Lite or Wishbone B4 slave port to the Claude
 memory bus. The bus itself is specified in
-[`IP/common/design/rtl/mem_bus.md`](../../design/rtl/mem_bus.md). Because the
+[`.agents/IP_SPEC_mem_bus.md`](../../../../.agents/IP_SPEC_mem_bus.md). Because the
 adapters are shared, they are verified here, once, independently of any IP
 that uses them.
 

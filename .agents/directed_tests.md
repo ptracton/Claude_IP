@@ -120,6 +120,18 @@ Each SV testbench:
   benches do the same. Only a test that checks DFT behavior (for example test-mode reset
   gating or key clearing, `Claude_IP.md` "Design-for-Test Rule") may drive them, and it
   returns them to 0 before the next test.
+- **New IP (user 2026-11-27):** ties every side-band input to its inactive value
+  (`dbg_freeze_i`, DMA acks, `evt_*_i`, `s_ctl_tvalid` = 0; `m_ctl_tready` = 1; `qreq_n_i` = 1)
+  except in the tests that exercise them, and runs the shared templates from
+  `${IP_COMMON_PATH}/verification/tests/`: side-band (IRQ, freeze, idle, DMA req / ack,
+  standard block, tie-off build), dual-port register (when `CTL_PORT` = 1), bus mode (streaming
+  IP), Q-channel with the power-manager BFM (when `PWR_GATE` = 1), and the multi-domain gating
+  test with random domain gating (several clock domains).
+- **New IP with `claude_clk_gate` branches:** every test runs with `CLK_GATE_EN` = 0 and = 1,
+  and the two runs must give identical outputs on every port, cycle by cycle.
+- **Math IP:** expected values come only from the golden model (`claude_fx.py` /
+  `claude_flt.py` based); the regression covers every supported named format, the recursive
+  zero-input limit-cycle test (fx R2), and the R6 / R7 edge cases where they apply.
 - **Starts with `` `timescale 1ns / 1ps ``** — every SV testbench-side file (TB
   top, BFM wrappers, memory models), not just the top. `-timescale=` on the
   command line only covers files compiled *before* the first `` `timescale ``
@@ -939,6 +951,8 @@ tables whenever the simulation results are refreshed.
   `CMR-VCINF` (dropped instance) warnings. Every module of every run in `per_run.txt` scores
   at least 90.
 - Every reported result comes from `sim_IP_NAME.py`, not from scratch scripts.
+- New IP: the shared side-band template (and the dual-port, bus-mode, Q-channel and
+  multi-domain templates where they apply) pass; `CLK_GATE_EN` = 0 and = 1 runs match.
 - The README Simulation Results section holds the current coverage tables (per run and merged
   per module, SV and VHDL), the target and its status. The target is 90% score for every
   component in every bus x language x technology run (user, 2026-10-18).

@@ -143,3 +143,20 @@ bus_matrix flows still compile the vendor `saed90nm.v` (not re-checked for the S
   clocks the macros are > 95 % of the total even when idle (sram finding; clock gating is the fix).
 - Runner: `IP/system/sram/verification/tools/sim_sram.py --power` (`run_power`, `run_power_one`,
   `power_libs`).
+
+
+## Clock- and power-gated IP (new IP, user 2026-11-27)
+
+Rules in `.agents/IP_SPEC_sideband.md`. For every new IP:
+
+- **Clock-gating saving:** run power twice on the same stimulus, netlist synthesized with
+  `CLK_GATE_EN` = 1 and with level-1 gating disabled (`-gate_clock` off, `CLK_GATE_EN` = 0),
+  and report both and the difference per PDK in the README "Power Analysis" table. Use a
+  stimulus with realistic idle periods (the IP's spec names it), not only full activity.
+- **Idle power:** one more run with the IP idle (`idle_o` = 1) for at least 1000 cycles, to
+  show the leakage-plus-clock-tree floor that the power manager would remove by gating.
+- **Power-gated IP (`PWR_GATE` = 1):** the gate-level simulation is UPF-aware (VCS NLP with
+  the IP's UPF), runs a power-down / power-up cycle through the Q-channel, and power is
+  reported per power domain, including the switched-off state.
+- **Gotcha:** the SAIF must include the clock-gate cells' enable activity; annotate at the
+  `u_dut` scope as for the timer and check the annotation percentage stays at 100 %.

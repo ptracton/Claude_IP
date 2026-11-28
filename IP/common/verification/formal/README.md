@@ -116,7 +116,7 @@ Use `IP/system/timer/verification/formal/vcf/` as the worked example.
 ### Memory IPs (`claude_<proto>_mem_if` + `mem_*` bus)
 
 Memories use the `claude_<proto>_mem_if` adapters instead of the register
-bridges (see `IP/common/design/rtl/mem_bus.md`). The adapters are verified
+bridges (see `.agents/IP_SPEC_mem_bus.md`). The adapters are verified
 once in `IP/common/verification/mem_if/formal/`, which is also the worked
 example. A memory IP binds `claude_mem_fv` with `INITIATOR_IS_DUT=0` on its
 memory core, so the core is checked as a legal `mem_*` target. Its data

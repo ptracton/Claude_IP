@@ -90,14 +90,14 @@ which planes it joins, and each plane has one standard interface (§3).
 | Control stream | **second register port (new, §3.8)**: register commands as stream packets | 1 cycle per hop + register access | SoC YAML (ring / point-to-point) |
 | Event | **1-cycle pulse (new)** | 1 cycle + CDC | event router registers |
 | IRQ | level, active high (convention exists in the timer) | 1–2 cycles | IRQ controller |
-| Debug / test | **TAP user-DR port (new)** | TCK-bound | JTAG host |
+| Debug / test | **TAP test data register (TDR) port (new)** | TCK-bound | JTAG host |
 
 ---
 
 ## 3. Shared interface standards (Phase 0 work in `IP/common/`)
 
 Each of these is specified once in `IP/common/design/rtl/<name>.md` (the same way as
-`mem_bus.md`), implemented in SV and VHDL, and verified once in
+`.agents/IP_SPEC_mem_bus.md`), implemented in SV and VHDL, and verified once in
 `IP/common/verification/`. **No IP may invent its own version.**
 
 ### 3.1 Register bus (exists)
@@ -164,10 +164,17 @@ Rules (on top of AXI4-Stream):
 ### 3.4 Event interface [NEW]
 
 - One-cycle, active-high pulse, synchronous to the producer's clock.
-- Crossing to another domain goes through `claude_pulse_sync` (which already exists). Its
-  merge limit of about 3 destination cycles is a documented property of every event input.
+- Crossing to another domain goes through the new lossless `claude_evt_sync` (merges close
+  events, never loses one); `claude_pulse_sync` only for events known to be far apart.
 - Every IP that has a natural "moment" exports it as an `evt_*_o` pulse. Every IP that
   has a natural "go" accepts an `evt_*_i` pulse. The timer's `trigger_out` is the model.
+- Full rules: `.agents/IP_SPEC_event.md` (producer / consumer rules, busy policy and
+  `EVT_MISS`, and the new lossless crossing cell `claude_evt_sync`, because
+  `claude_pulse_sync` can lose two close events).
+- The event router routes events only. Interrupts stay on the PLIC path and DMA requests on
+  the DMA path, with two bridges: interrupt / DMA-request lines can be tapped as router
+  inputs through edge detectors, and the router has its own `irq_o` for selected outputs
+  (user 2026-11-27).
 
 ### 3.5 Standard peripheral side-band (all new register IP)
 
@@ -178,14 +185,25 @@ Rules (on top of AXI4-Stream):
 | `idle_o` | out | no work pending, safe to gate the clock (used by the power manager) |
 | `dma_tx_req_o` / `dma_rx_req_o` | out | level request (FIFO above/below its watermark) |
 | `dma_tx_ack_i` / `dma_rx_ack_i` | in | one pulse per beat served; the peripheral re-evaluates its request after the ack. Used when DMA reaches the peripheral **over the system bus**; communication IP also has the back door (§6.1) |
-| `ctl_s_*` / `ctl_m_*` | in/out | control stream and response stream (§3.8), present when `CTL_PORT=1` |
+| `s_ctl_*` / `m_ctl_*` | in/out | control stream and response stream (§3.8), present when `CTL_PORT=1` |
 | `evt_*_o` / `evt_*_i` | out/in | event plane (§3.4) |
 
-### 3.6 TAP user-DR port [NEW]
+Full rules, tie-offs, port order and the standard register block (0xFC0–0xFFF of every
+4 KiB window), clock gating across domains and inside one domain, and power gating with
+the ARM AMBA Q-channel (`qreq_n_i`, `qaccept_n_o`, `qdeny_o`, `qactive_o`; isolation and
+retention in UPF): `.agents/IP_SPEC_sideband.md`.
 
-The JTAG TAP (§9.1) exposes generic `{capture, shift, update, tdi, tdo, sel}` ports per
-user instruction. These run in the TCK domain. Front ends (RISC-V DTM, JTAG2Bus, boundary
+### 3.6 TAP test data register (TDR) port [NEW]
+
+The JTAG TAP (§9.1) exposes one generic test data register port, `tdr_*` (`capture`, `shift`, `update`,
+`tdi`, `tdo`, `sel` per instruction). These run in the TCK domain. Front ends (RISC-V DTM, JTAG2Bus, boundary
 scan, MBIST) attach to these ports instead of each one embedding its own TAP.
+**Must conform to IEEE 1149.1-2013 (user 2026-11-27)** and be easy to extend: special
+operations are opcodes on the `jtag_ops` front end, or new instructions from the SoC YAML,
+with no TAP RTL change.
+Full rules: `.agents/IP_SPEC_tap_tdr.md` (signal set matching Xilinx `BSCANE2`, so
+the same front ends run behind `BSCANE2` / Intel `sld_virtual_jtag` on the FPGA boards;
+DMI-style 2-bit status in every DR; default 5-bit instruction map).
 
 ### 3.7 Byte command protocol engine [NEW, shared]
 
@@ -203,6 +221,11 @@ into bus transactions. Build **one** engine, `claude_cmd2bus` (byte stream in/ou
 
 The response includes a status byte (OK / bus error / timeout), so a hung slave can never
 lock the debugger. A bus timeout counter lives inside the engine.
+
+The sketch above is superseded by `.agents/IP_SPEC_cmd2bus.md` (FLAGS byte, STREAM_WRITE /
+STREAM_READ / CRC / POLL / CTL commands, `SOR` + trailing STATUS responses, HUNG state for
+a target that never answers, extension opcodes `0x80`–`0xFF` sharing the `jtag_ops` handler
+port).
 
 ### 3.8 Control stream and the second register port [NEW, critical path]
 
@@ -238,6 +261,10 @@ shared arbiter merges two initiators onto the internal regbus:
   never have it**: they have no `CTL_PORT` parameter, so it cannot be enabled. The timer
   already exists, so it gets the port as a later revision. The `CTL_PORT=0` default keeps
   today's timer unchanged.
+
+Full, current rules (supersede the sketch below where they differ: response header, WAIT /
+WAIT_EVT, broadcast, `rd_peek`, `OWNER` in the standard block at `0xFF0`):
+`.agents/IP_SPEC_ctl_stream.md`.
 
 **Control stream format** (a claude stream, §3.3, with `DW=32`, one packet per command,
 `tlast` on the last word):
@@ -323,9 +350,9 @@ them at SoC level.
 
 **SoC level:**
 
-- The `jtag_tap` (§9) gets standard 1149.1 instructions (IDCODE, BYPASS, SAMPLE/PRELOAD,
-  EXTEST, CLAMP, HIGHZ) plus private ones: `SCAN_MODE` (drives `test_mode_i`), `MBIST`,
-  and the RISC-V DTM and jtag2bus user DRs.
+- The `jtag_tap` (§9) gets standard 1149.1 instructions (BYPASS, SAMPLE, PRELOAD, EXTEST
+  mandatory; IDCODE, CLAMP, HIGHZ) plus private ones: `TEST_CTRL` (drives `test_mode_i`),
+  `MBIST`, `OPS`, and the RISC-V DTM and jtag2bus test data registers (`IP_SPEC_tap_tdr.md`).
 - **Boundary scan** cells are generated from the SoC's pad list (YAML) with a BSDL file,
   and the chain is TDI → boundary register → TDO through the TAP.
 - The SoC generator (§4) routes `test_mode_i` and `scan_en_i` to every instance and
@@ -345,13 +372,18 @@ the NPU) takes its numeric format from parameters:
 | `FRAC_W` | fractional bits; `0` = plain integer | 15 (Q1.15) |
 | `COEF_W` / `COEF_FRAC_W` | coefficient format | 16 / 15 (or a wider format where the block's spec says so, for example biquad Q2.30) |
 | `ACC_W` | accumulator width (guard bits) | sized so the default cannot overflow internally |
-| `ROUND` | `TRUNC`, `HALF_UP`, `CONVERGENT` (round half to even) | `CONVERGENT` |
-| `SAT` | saturate (1) or wrap (0) at the output | 1 |
+| `ROUND` | `TRUNC`, `ZERO`, `HALF_UP`, `HALF_AWAY` (TFLite), `CONVERGENT` (round half to even, PyTorch) | `CONVERGENT` |
+| `SAT` | wrap (0), saturate (1), symmetric saturate (2) at each quantization point | 1 |
 | `SIGNED` | signed (1) or unsigned (0), for integer use | 1 |
 
 The same RTL serves Q1.15 audio, other Q formats (for example Q1.23 or 18/25-bit for DSP48
 use) and integer pipelines. Every block's spec gives the supported range of each parameter,
-and the regression runs at least the default Q1.15, one wider Q format and integer mode.
+and the regression runs every named format the block supports plus custom ones.
+**Required named formats (user 2026-11-27):** uint8, sint8, uint16, sint16, uint32, sint32,
+q1.15, q1.31, q16.16, and custom sizes (any width 2–64, any fractional bits), including
+operations that mix formats.
+Exact definitions of formats, `convert` (align → round → saturate) and every mode, shared by
+RTL, Python and C: `.agents/IP_SPEC_fx.md`.
 
 **Golden models (mandatory for every math IP):**
 
@@ -371,9 +403,17 @@ and the regression runs at least the default Q1.15, one wider Q format and integ
   otherwise.
 - Chains: the SoC generator builds a chain model from the per-block models, so a whole
   YAML chain (§5) can be checked end to end.
+- Chains may quantize at every block or let precision grow and quantize once: links can be
+  `fmt: auto` (lossless width from each model's `out_fmt`, optional `max_w` cap), are
+  reported per link (SQNR, error, headroom, what-if width sweeps), and can be marked
+  `lossless: true` (static and run-time checks) — `.agents/IP_SPEC_fx.md` (user 2026-11-27).
 - The NPU model is checked against **both TFLite and PyTorch** quantized references for
   each layer and for whole models, so the RTL, the Python model and both frameworks agree
   (§8.1).
+- Floating-point and block-scaled formats (`fp64` … `fp4_e2m1`, `e8m0`, MX, NVFP4), with
+  rounding (including stochastic), overflow / NaN / subnormal rules, are defined once in
+  `.agents/IP_SPEC_float_formats.md` (user 2026-11-27); 4-bit integers, the TFLite 16x8
+  mode and G.711 companding are in `.agents/IP_SPEC_fx.md`.
 - The FPU (§8.2) is floating point: its golden model is Berkeley SoftFloat (bit-exact
   results and flags), with TestFloat vectors, instead of `claude_fx.py`.
 - Crypto IP (AES, SHA-256, DRBG) is exact by nature. It is checked against NIST test
@@ -383,6 +423,9 @@ and the regression runs at least the default Q1.15, one wider Q format and integ
 
 ## 4. System conventions for SoC assembly
 
+- **Specs (user 2026-11-27):** the SoC description and generator outputs, including a
+  **devicetree** (`soc.dts`) for Zephyr, are in `.agents/IP_SPEC_soc_yaml.md`; per-IP metadata
+  (`<ip>.ip.yaml`) in `.agents/IP_SPEC_ip_meta.md`; resets in `.agents/IP_SPEC_reset.md`.
 - **One SoC = one generated top.** A Python generator (`SoC/tools/gen_soc.py`, later work)
   reads a YAML description: masters, slaves, address map, IRQ numbers, stream routes and
   event routes. It emits an SV and a VHDL top, a C `soc.h` (base addresses and IRQ
@@ -435,6 +478,7 @@ cluster. A product can freeze the routes it has proven.
    │                                                         │
 s ─┼─► [REG_IN skid] ─► [opt. FIFO] ─► KERNEL ─► [REG_OUT] ─┼─► m
    │        └──────────── bypass mux (0-cycle) ────────┘     │
+   │ s = s_data_* (in), m = m_data_* (out)                   │
    │ evt_frame_o, irq_o                                      │
    └─────────────────────────────────────────────────────────┘
 ```
@@ -444,6 +488,20 @@ s ─┼─► [REG_IN skid] ─► [opt. FIFO] ─► KERNEL ─► [REG_OUT] �
   Control-stream writes with `SYNC` set take effect at the next data-frame boundary, so a
   sequencer can retune a filter exactly between frames. This ties in with the
   double-buffered coefficients below.
+- **Operated by the stream, configured by the bus (requirement, user 2026-11-26):** every
+  streaming block has a register-bus slave holding all of its configuration; the data
+  stream carries only samples and runs the block once it is enabled. The control stream is
+  only an alternate path into the same registers (`.agents/IP_SPEC_stream.md`), and it
+  stays optional (`CTL_PORT`).
+- **Bus operation mode (requirement, user 2026-11-26):** the CPU can also run a block's
+  math over the bus. `SRC_SEL` / `DST_SEL` switch the kernel's input to a `DIN` register
+  and its output to a `DOUT` register, through small FIFOs with overflow / underflow flags
+  and IRQs. The results are bit-exact with stream mode (`BUS_PORT`, default 1;
+  `.agents/IP_SPEC_stream.md`).
+- **One stream in, one stream out (requirement, user 2026-11-26):** every streaming block
+  receives on `s_data_*` and drives its result on a separate `m_data_*`, so blocks chain
+  output-to-input with no glue. Input and output formats are separate parameters (`S_*` /
+  `M_*`) and the generator checks each link (`.agents/IP_SPEC_stream.md`).
 - The **kernel** is the only block-specific part (FIR MAC array, FFT butterflies, ...). Its
   ports are the stream in, the stream out, the coefficient read port and the status bits.
 - **Double-buffered coefficients**: software writes the shadow bank, and the swap happens
@@ -559,9 +617,9 @@ channel connects to directly, bypassing the system bus:
 
 | Part | What it does |
 |---|---|
-| **Control** (`ctl_s_*` / `ctl_m_*`) | §3.8 port B. DMA writes the same registers the CPU would: SPI chip select, frame length and mode; I2C target address and command FIFO; UART baud and line control. Ownership rules apply |
-| **TX data stream** (`tx_s_*`) | Claude stream straight into the TX FIFO. The FIFO's free space is the `tready`, so no req/ack handshake and no bus beat per byte |
-| **RX data stream** (`rx_m_*`) | Claude stream straight out of the RX FIFO. `tlast` marks the end of a transaction (SPI CS de-assert, I2C STOP, UART RX timeout / idle line) |
+| **Control** (`s_ctl_*` / `m_ctl_*`) | §3.8 port B. DMA writes the same registers the CPU would: SPI chip select, frame length and mode; I2C target address and command FIFO; UART baud and line control. Ownership rules apply |
+| **TX data stream** (`s_tx_*`) | Claude stream straight into the TX FIFO. The FIFO's free space is the `tready`, so no req/ack handshake and no bus beat per byte |
+| **RX data stream** (`m_rx_*`) | Claude stream straight out of the RX FIFO. `tlast` marks the end of a transaction (SPI CS de-assert, I2C STOP, UART RX timeout / idle line) |
 | **Events** | `evt_done_o`, `evt_err_o` (NACK, arbitration lost, parity / framing error, overrun) for the DMA's `WAIT` descriptor and the event router |
 | **Data-width packing** | `PACK` parameter: 8/16/32-bit stream words packed or unpacked to the frame width (for example 4 UART bytes per 32-bit word), so DMA moves words |
 | **Arbitration with the bus path** | The TX FIFO is fed by the stream port or by the bus data register. Writes through both at once are a configuration error (sticky status), selected by `CTRL.DATA_SRC` |
@@ -594,7 +652,7 @@ one) still works. The back door is the low-latency, low-bus-load path.
 | **clint** [NEW] | S | RISC-V `mtime` / `mtimecmp` / `msip`; `mtime` ticks from a clock enable so its rate is stable while the core clock changes. Needed by every RISC-V OS; **SiFive-CLINT-compatible layout** (`msip` 0x0000, `mtimecmp` 0x4000, `mtime` 0xBFF8; one `msip` / `mtimecmp` per hart) so the stock FreeRTOS and Zephyr drivers work unchanged (§12.1); `mtime` can run on the always-on clock while the core clock is gated (tickless idle) |
 | **dma** | L | 1–16 channels; mem→mem, mem→periph, periph→mem, **mem→stream (MM2S), stream→mem (S2MM)**; linked-list descriptors in memory (scatter-gather); **2-D transfers** (count, stride) for VGA, image and NPU tiles; fixed / increment address per side; byte / half / word / burst; circular mode with half-complete IRQ (audio ping-pong); peripheral req/ack per channel (§3.5) or event trigger; priority + round-robin arbitration; error reporting with the faulting address. **Back-door ports (§6.1):** per channel, optional direct stream ports to one peripheral (TX/RX data) and a control-stream port; descriptor types `MOVE`, `CTL` (send a control packet, optionally capture the response to memory), `WAIT` (event / peripheral done, with timeout), `IRQ`, `JUMP` (loops). Master: `mem_*` initiator + `claude_<proto>_mst_if`; slave: regbus |
 | **syscon** [NEW] | S | Chip ID / version, boot-mode straps, scratch registers, software reset request, pad-mux / alternate-function select (or a separate **pinmux**), clock-gate enables. Every SoC needs one place for these |
-| **reset_ctrl** [NEW] | S | Power-on, external pin, watchdog, software and debug resets → per-domain resets with sequencing (release memories, then interconnect, then CPU); async assert / sync de-assert in each domain; reset-cause register |
+| **reset_ctrl** [NEW] | S | (`.agents/IP_SPEC_reset.md`) Power-on, external pin, watchdog, software and debug resets → per-domain resets with sequencing (release memories, then interconnect, then CPU); async assert / sync de-assert in each domain; reset-cause register |
 | **rtc** [NEW] | S | 32.768 kHz domain; seconds counter + alarm; wakes the system from deep sleep |
 | **mailbox / hw_semaphore** [NEW] | S | For multi-core SoCs (small core + big core, or CPU + NPU controller): message FIFOs with doorbell IRQs, and atomic test-and-set locks |
 | **qei** [NEW] | S | Quadrature encoder: A/B/index, filtered, 32-bit position, velocity capture; pairs with PID and PWM for motor control |
@@ -614,16 +672,17 @@ and real/complex options where they make sense.
 | Block | Size | Key features |
 |---|---|---|
 | **fir** | M | 1–1024 taps; direct, transposed or systolic (param); symmetric-coefficient folding; serial / semi-parallel / parallel MAC via `CYCLES_PER_SAMPLE`; polyphase decimate-by-D / interpolate-by-L; multi-channel via `tid`; reloadable double-buffered coefficient RAM; complex data or complex coefficients (param) |
-| **iir_biquad** | M | Cascade of 1–16 sections; transposed direct form II (default) or DF-I (param, better for fixed point); Q2.30-style coefficients; per-section output scaling; saturation with sticky flag; single time-multiplexed MAC for low rate; multi-channel state RAM |
+| **iir_biquad** | M | Cascade of 1–16 sections; transposed direct form II (default) or DF-I (param, better for fixed point); Q2.30-style coefficients; per-section output scaling; saturation with sticky flag (never wrap in the loop, fx R1); `STATE_ROUND` and first-order error feedback `ERR_FB` against limit cycles (fx R2); coefficients from `claude_fx.coef` (stability check, ordering, scaling); single time-multiplexed MAC for low rate; multi-channel state RAM |
 | **fft** | L | Streaming R2²SDF pipeline (1 sample/clk) and a memory-based radix-2/4 option (small area); N = 16…4096 (max at elaboration, smaller sizes set at run time); forward / inverse; block-floating-point or fixed scaling schedule (exponent in `tuser`); natural or bit-reversed output order; optional window multiply on the input (window ROM/RAM) |
 | **decimator family** | M | **CIC** decimator / interpolator (order 1–6, R 2…4096 programmable, M 1–2, Hogenauer pruning); **halfband** FIR ↓2/↑2; **CIC compensation** FIR (preset from a Python design tool); generic integer resampler built from the polyphase FIR |
 | **cordic** [NEW] | M | Rotation and vectoring modes: sin/cos, atan2, magnitude, phase, polar↔rectangular; pipelined or iterative; the base for NCO, mixer, FM demodulation and the FFT's magnitude stage |
 | **nco / dds** [NEW] | S | Phase accumulator + LUT or CORDIC; frequency / phase registers; dithering; quadrature output; test-tone source for every DSP bench |
 | **mixer / ddc** [NEW] | S | Complex multiply with an NCO; building block for a digital down-converter |
 | **mag_log** [NEW] | S | |x|, |x|², log2/dB (LUT + interpolation); post-FFT feature extraction for the NPU (mel energies) |
+| **g711** [NEW] | S | `claude_g711`: G.711 μ-law / A-law ↔ `sint16` / `q1.15` stream converter (both directions, per ITU-T G.711), for telephony codecs at the edge of an audio chain; golden model = the G.711 tables |
 | **moving_avg / stats** [NEW] | S | Boxcar/CIC smoothing, min/max/mean/RMS over a window; peak detect |
 | **fx_lib** [NEW, `IP/common`] | S | Rounding (truncate, half-up, convergent), saturation, multiply-with-rounding, leading-zero count. Every DSP block uses these, so they are verified once |
-| **div / sqrt** [NEW] | S–M | Pipelined or iterative integer and fixed-point divider and square root; needed by PID, normalization and CORDIC gain correction |
+| **div / sqrt** [NEW] | S–M | Pipelined or iterative integer and fixed-point divider and square root, exactly defined by fx R6 (correct rounding per `ROUND`, `DZ_MODE` = `SAT` or `RISCV`); needed by PID, normalization and CORDIC gain correction |
 | **npu** | XL | See §8.1 |
 | **fpu** [NEW] | M–L | IEEE 754 single and double precision; CPU (RISC-V F/D), stream and bus/control-stream attachments. See §8.2 |
 
@@ -657,7 +716,8 @@ smallest configuration and grows for ASIC.
 | **NPU-0 "vector MAC"** | INT8 dot products / 1-D convolution over two streams, INT32 accumulate, requantize. Register driven | Proves the arithmetic, quantization model and Python bit-exact flow cheaply |
 | **NPU-1 "GEMM"** | R×C systolic array (param 4×4 … 32×32), scratchpad, tiled matrix multiply, descriptor queue | Fully connected and 1×1 convolution layers |
 | **NPU-2 "CNN"** | Conv2D (im2col in the DMA address generator), depthwise conv, pooling, activation LUT, layer fusion | Real CNN models |
-| **NPU-3** | Optional: INT4 / INT16 modes, sparsity skip, CPU coprocessor port (§12) | Performance |
+| **NPU-3 "more integer"** | **TFLite 16x8** (`sint16` activations × `sint8` weights, `sint64` accumulators), **int4 weights** (`sint4` / `uint4`, packed, group scales), sparsity skip, CPU coprocessor port (§12) | Audio / speech accuracy (16x8); half the weight memory (int4) |
+| **NPU-4 "float"** | **`bf16`** activations / weights with `fp32` accumulation, then **`fp8_e4m3` / `fp8_e5m2`** and the **OCP MX** formats (`mxfp8`, `mxfp6`, `mxfp4`, `mxint8`), then `nvfp4`; block-scale units (`claude_mx_quant` / `_dequant`) in the DMA / post-processing path | Models exported in float or low-precision float; checked against PyTorch dtypes, `ml_dtypes` and the OCP MX reference (`IP_SPEC_float_formats.md`, user 2026-11-27) |
 
 Software (planned alongside the RTL, under `IP/DSP/npu/firmware` + `tools/`):
 a Python compiler with **two front ends**, **TFLite** (int8 `.tflite`) and **PyTorch**
@@ -700,14 +760,14 @@ same verified datapath.
 | Attachment | Top | Use |
 |---|---|---|
 | **CPU** | `fpu_rv` | RISC-V **F** and **D** extensions for rv_core: 32 × 64-bit FP register file (`FLEN` = 32 or 64 by parameter), `fcsr` (`frm`, `fflags`), FP loads/stores through the core's LSU, attached through the coprocessor port (§12). Optional **Zfinx / Zdinx** (FP in the integer registers, no FP register file) for rv_tiny |
-| **Stream** | `fpu_stream` (inside `claude_dsp_shell`) | float32 / float64 samples in the DSP chain: elementwise ops between two streams, scaling, multiply-accumulate, and **int / Q-format ↔ float converters**, so a chain can switch between fixed point and float (for example a float FFT stage or float post-processing ahead of the CPU) |
+| **Stream** | `fpu_stream` (inside `claude_dsp_shell`) | `fp32` / `fp64` / `fp16` / `bf16` / `fp8` samples in the DSP chain (stream `FLT` parameter): elementwise ops between two streams, scaling, multiply-accumulate, and **int / Q-format ↔ float converters**, so a chain can switch between fixed point and float (for example a float FFT stage or float post-processing ahead of the CPU) |
 | **Peripheral** | `fpu_reg` | Register / control-stream (§3.8) operand-and-result interface for SoCs whose CPU has no F/D, and for DMA-driven batches |
 
 **Features (`fpu_core`):**
 
 | Feature | Detail |
 |---|---|
-| Precision | `PRECISION` = `SP`, `DP` or `SP_DP` (double datapath that also does single, NaN-boxed per the RISC-V spec) |
+| Precision | `PRECISION` = `SP`, `DP` or `SP_DP` (double datapath that also does single, NaN-boxed per the RISC-V spec); **`HAS_FP16`** (`fp16`: `Zfh` full arithmetic or `Zfhmin` load / store / convert, by parameter) and **`HAS_BF16`** (`bf16` conversions, `Zfbfmin`), user 2026-11-27; formats and rules in `.agents/IP_SPEC_float_formats.md` |
 | Operations | add, sub, mul, **fused multiply-add** (fmadd / fmsub / fnmadd / fnmsub), div, sqrt, min / max (IEEE 754-2019 `minimumNumber` / `maximumNumber` as RISC-V requires), compare (eq / lt / le), classify, sign inject, int32 / uint32 / int64 / uint64 ↔ float conversions, SP ↔ DP conversion |
 | Rounding | all five IEEE 754 modes: RNE, RTZ, RDN, RUP, RMM; dynamic (`frm`) or static per instruction |
 | Exceptions | the five IEEE flags (NV, DZ, OF, UF, NX), sticky, in `fcsr` / a status register; no traps (RISC-V style) |
@@ -739,11 +799,11 @@ same verified datapath.
 
 | Block | Size | Key features |
 |---|---|---|
-| **jtag_tap** | S | IEEE 1149.1 16-state FSM; IR length param; IDCODE (param value), BYPASS, SAMPLE/PRELOAD, EXTEST (with boundary scan); N user instructions exposed as user-DR ports (§3.6); optional TRST; TCK-domain only, with clean hand-offs to the system clock. Daisy-chain friendly |
+| **jtag_tap** | S | IEEE 1149.1 16-state FSM; IR length param; IDCODE (param value), BYPASS, SAMPLE, PRELOAD, EXTEST, CLAMP, HIGHZ (with boundary scan), **IEEE 1149.1-2013 conforming**; N design-specific instructions, each driving a test data register through the `tdr_*` port (§3.6); `jtag_ops` for special operations; optional TRST*; TCK-domain only, with clean hand-offs to the system clock. Daisy-chain friendly |
 | **jtag2bus** | S | User-DR front end + `claude_cmd2bus` (§3.7): single reads/writes, auto-increment bursts. Works with OpenOCD (a custom driver or a Tcl `irscan`/`drscan` script) |
 | **jtag_dma** | M | The bulk-load path: streams words from TCK into an async FIFO, then into memory through `mem_*` with no per-word handshake over JTAG. Fast program download and memory dump. **Built as the burst/streaming mode of jtag2bus, not a separate IP (D5, decided)** |
 | **riscv_dm + dtm** [NEW, essential] | M | RISC-V External Debug Support 0.13.2: DTM on the TAP (DTMCS / DMI) and a Debug Module with halt/resume, abstract register access, program buffer, system-bus access and `ndmreset`. **Without it neither CPU can be debugged with GDB/OpenOCD.** It drives `dbg_freeze_i` across the SoC |
-| **boundary_scan** [NEW] | M | BSR cells generated from a pad list; EXTEST/SAMPLE/PRELOAD; BSDL generated by script; CLAMP / HIGHZ; generated per SoC from the pad-list YAML; Phase 2 (D7, §3.9) |
+| **boundary_scan** [NEW] | M | BSR cells generated from a pad list; EXTEST, SAMPLE, PRELOAD (separate, IEEE 1149.1-2013); BSDL generated by script; CLAMP / HIGHZ; generated per SoC from the pad-list YAML; Phase 2 (D7, §3.9) |
 | **mbist_ctrl** [NEW] | M | Shared memory-BIST controller (March C-, MATS+, checkerboard), with a programmable algorithm, reached from the TAP and from registers. The sram's built-in March C- becomes one engine behind it; reports failing address and bank |
 | **lbist** [NEW, later] | M | PRPG (LFSR) + MISR around scan chains for logic BIST (ASIC) |
 | **scan / DFT flow** [NEW, flow work] | — | Not RTL. **Required for every SoC (D7):** `test_mode_i` / `scan_en_i` on every IP and the RTL rules of §3.9; DFT Compiler scan insertion (csun.edu, optional compression); TestMAX ATPG (stuck-at + transition) with coverage targets; gate-level simulation of the patterns |

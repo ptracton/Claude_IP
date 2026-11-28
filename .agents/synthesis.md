@@ -134,6 +134,28 @@ Key requirements:
   - If DFT Compiler is not licensed, log `DFT DRC: SKIPPED (no license)`; the SpyGlass DFT
     goal (lint step) then has to pass.
 
+- **IP boundary budgets (new IP, user 2026-11-27):** `set_input_delay` and `set_output_delay`
+  of 40 % of the clock period on every port of each clock (both the DC and the PrimeTime SDC),
+  so a SoC can connect two IPs with 20 % margin. A tighter budget may be used; a looser one needs
+  a reason in `synthesis/known_issues.md`.
+- **Clock gating (new IP, user 2026-11-27, `IP_SPEC_sideband.md`):**
+  - Level 1: `set_clock_gating_style -sequential_cell latch -minimum_bitwidth 4
+    -control_point before -control_signal scan_enable` with the gate's test-enable pin tied
+    to `scan_en_i | test_mode_i` (`set_dft_signal ... -type ScanEnable` already names
+    `scan_en_i`), then compile with `-gate_clock` (`compile_ultra -gate_clock` where
+    licensed, otherwise `compile -gate_clock`). Write
+    `reports/$PDK_TARGET/<variant>_clock_gating.rpt` (`report_clock_gating -gated -ungated`).
+  - Level 2 branches (`claude_clk_gate`): each branch is a generated clock of the root
+    (`create_generated_clock -combinational -source <root>` on the gate output) in both the
+    DC and the PrimeTime SDC, with clock-gating setup / hold checks on every enable
+    (`set_clock_gating_check`). Synthesize with `CLK_GATE_EN` = 1.
+  - **Gate:** no clock-gating check violations in STA; the report lists gated / ungated flop
+    counts, which go into the README synthesis table.
+- **Power intent (new IP with `PWR_GATE` = 1):** load `design/upf/<ip>_<pdk>.upf` (which
+  sources `<ip>_power.upf`) before compile, as the sram does (see "IPs with SRAM macros, power
+  domains or several configurations" below); run VC LP static checks on the netlist; zero
+  errors. Isolation clamp values must match the IP spec's clamp table.
+
 #### `synthesis/run_vendor_synth.py` — Design Compiler section
 
 Constants:
@@ -584,6 +606,10 @@ Reference implementation: `IP/system/sram/synthesis/` and
 | `synthesis/primetime/reports/<target>/` | Per-variant timing/QoR/constraint reports, per target |
 
 ## Quality Gate
+
+- **New IP:** the clock-gating report exists per variant and STA has no clock-gating check
+  violations; with `PWR_GATE` = 1, VC LP is clean and the UPF loads in DC and PrimeTime.
+  FPGA flows synthesize with `CLK_GATE_EN` = 0 (gates pass-through) and report it.
 
 **Standard hosts:**
 - Yosys completes without errors for all SV and VHDL variants.

@@ -251,6 +251,13 @@ and active-low reset (8-cycle de-assertion). Set the VIF in `uvm_config_db` befo
 `run_test()`. Tie the DFT ports `test_mode_i` and `scan_en_i` to 0 in the testbench top
 (`Claude_IP.md`, "Design-for-Test Rule"); the UVM environment models functional mode only.
 
+**New IP (user 2026-11-27):** the environment adds the common agents the IP needs: control
+stream (`CTL_PORT` = 1, running bus traffic and control-stream traffic at full rate at once),
+event driver / monitor, claude stream source / sink, JTAG host (front ends), and the Q-channel
+power-manager agent (`PWR_GATE` = 1). The scoreboard checks bus-mode results against stream
+mode for streaming IP and uses the golden model for math IP. Run the base test with
+`CLK_GATE_EN` = 0 and = 1 when the IP has gated branches.
+
 **The driver must drive every master output idle from time 0** (blocking
 assignments to the VIF at the start of `run_phase`, before waiting for
 reset). AXI requires VALID low during reset; a driver that first drives on
@@ -353,3 +360,5 @@ Include Vivado version and date.
 - `run_regression.py` includes `uvm/xsim/IP_NAME_base_test PASS` in its summary table.
 - `--skip-uvm` flag skips the UVM step cleanly (for environments without Vivado).
 - The UVM runner does not hang — Popen + polling is used for xsim.
+- New IP: the common agents above are used where they apply, and the `CLK_GATE_EN` = 0 / 1
+  runs both pass.

@@ -58,7 +58,7 @@ them share one protocol-independent core. A top-level contains only wiring.
 ```
 
 **Request flow.** The bus adapter turns each transfer into one memory-bus
-request (`IP/common/design/rtl/mem_bus.md`). `sram_port` handles it in three
+request (`.agents/IP_SPEC_mem_bus.md`). `sram_port` handles it in three
 stages:
 
 1. **Request cycle.** The request is checked. It is held back (no grant) while
@@ -205,7 +205,7 @@ Every response, writes included, comes `READ_LATENCY` cycles after the grant.
 | `sram_wb` | `CLK_I RST_I CYC_I STB_I WE_I ADR_I DAT_I SEL_I DAT_O ACK_O ERR_O` | classic cycles; ERR_O on error |
 | `sram_<proto>_dp` | the above, twice: `A_*` and `B_*`, each with its own clock and reset (`A_PCLK`/`B_PCLK`, ...); port B's data and strobes are `WIDTH_B` wide | side-band on port A's clock |
 
-The bus adapter timing is described in `IP/common/design/rtl/mem_bus.md`.
+The bus adapter timing is described in `.agents/IP_SPEC_mem_bus.md`.
 
 ### Side-band ports (all top-levels)
 

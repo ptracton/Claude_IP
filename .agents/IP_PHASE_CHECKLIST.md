@@ -33,9 +33,9 @@ Started 2026-11-26. Nothing below has RTL yet unless it is checked.
   | CTL | second register port (control stream), `CTL_PORT=1` default | §3.8 |
   | noCTL | must **never** have the control-stream port | §3.8, D11 |
   | BD | DMA back door: control + TX/RX data streams + done/error events | §6.1 |
-  | STR | claude stream data ports | §3.3 |
+  | STR | claude stream data ports; processing blocks also have bus operation mode (`BUS_PORT`: `DIN`/`DOUT` FIFOs, `SRC_SEL`/`DST_SEL`) and a register bus for all configuration | §3.3, `IP_SPEC_stream.md` |
   | EVT | event inputs/outputs | §3.4 |
-  | GM | quantized bit-exact Python golden model on `claude_fx.py`, float reference, Q1.15 + wider Q + integer in regression | §3.10 |
+  | GM | quantized bit-exact Python golden model on `claude_fx.py`, float reference; regression covers every supported named format (uint8 … q16.16, `IP_SPEC_fx.md`) plus custom formats | §3.10 |
   | SF | SoftFloat / TestFloat golden model | §8.2 |
   | ML | TFLite **and** PyTorch three-way checking | §8.1 |
   | RTOS | needed by FreeRTOS / Zephyr; stock-driver register compatibility | §12.1 |
@@ -67,21 +67,32 @@ Shared parts are verified once, in `IP/common/verification/`, the way the memory
 were (`mem_if/`, `verify_mem_if.py`), not through the full 12-step flow. Their columns are
 therefore different:
 
-`Spec` = interface spec `.md` in `IP/common/design/rtl/` · `SV` · `VHDL` · `Sim` (Icarus /
+`Spec` = interface spec (`.agents/IP_SPEC_<name>.md`, moved to `IP/common/design/rtl/` with the RTL) · `SV` · `VHDL` · `Sim` (Icarus /
 GHDL / xsim; VCS + Xcelium on csun.edu) · `Lint` · `Formal` · `Py` (Python model / driver /
 BFM where needed) · `Doc` (`Claude_IP.md` Common Components list + IP_PLAN cross-reference).
 
 ### 0.1 Interface specifications (write and review before any RTL)
 
-- [ ] `mem_bus.md` extended for the **initiator** direction (master adapters) — §3.2
-- [ ] `stream.md`: claude stream (AXI4-Stream names, `HAS_READY`, `REG_IN`/`REG_OUT`, `tuser`/`tid`, Q-format rules) — §3.3
-- [ ] `event.md`: event pulse interface — §3.4
-- [ ] `sideband.md`: standard peripheral side-band (`irq_o`, `dbg_freeze_i`, `idle_o`, DMA req/ack, `evt_*`) — §3.5
-- [ ] `tap_user_dr.md`: TAP user-DR port — §3.6
-- [ ] `cmd2bus.md`: byte command protocol — §3.7
-- [ ] `ctl_stream.md`: control stream packet format, ownership, ring topology, bus-wins arbitration — §3.8
-- [ ] `fx.md`: fixed-point formats, rounding and saturation modes (RTL and Python agree) — §3.10
-- [ ] User review of all of the above
+All interface specs live in `.agents/` as `IP_SPEC_<name>.md`, permanently (user
+2026-11-27), including the shipped memory-bus spec, `IP_SPEC_mem_bus.md` (moved from
+`IP/common/design/rtl/mem_bus.md`, where a stub stays for the signed-off files that name
+that path). RTL headers of new components point to their spec in `.agents/`.
+
+
+- [x] `IP_SPEC_mem_bus_initiator.md`: memory bus **initiator** direction (master adapters) — §3.2 (approved 2026-11-26)
+- [x] `IP_SPEC_stream.md`: claude stream (AXI4-Stream names, `HAS_READY`, `REG_IN`/`REG_OUT`, `tuser`/`tid`, Q-format rules, one in / one out, bus configuration, bus operation mode) — §3.3 (approved 2026-11-27)
+- [x] `IP_SPEC_event.md`: event pulse interface (producer/consumer rules, busy policy, `EVT_MISS`, `claude_evt_sync`, router level inputs and `irq_o`) — §3.4 (approved 2026-11-27)
+- [x] `IP_SPEC_sideband.md`: standard peripheral side-band (`irq_o`, `dbg_freeze_i`, `idle_o`, DMA req/ack, `evt_*`, standard register block at 0xFC0, multi-domain and branch clock gating, Q-channel power gating) — §3.5 (approved 2026-11-27)
+- [x] `IP_SPEC_tap_tdr.md`: TAP and TDR port (IEEE 1149.1-2013 conformance, BSCANE2-shaped `tdr_*` / `tap_*` signals, `claude_tdr`, extension by `jtag_ops` opcodes or YAML instructions, instruction map, TEST_CTRL, debug lock, `TAP_IMPL` FPGA adapters) — §3.6 (approved 2026-11-27)
+- [x] `IP_SPEC_cmd2bus.md`: byte command protocol (framing, FLAGS, commands incl. STREAM / CRC / POLL / CTL, response with `SOR` and trailing STATUS, HUNG handling, extension opcodes sharing the `jtag_ops` handler port, `claude_cmd2bus.py` host library, C99 `claude_cmd2bus.h` / `.c` with byte-offset wire format and transport-agnostic API) — §3.7 (approved 2026-11-27)
+- [x] `IP_SPEC_ctl_stream.md`: control stream packet format (request / RSP headers, WAIT / WAIT_EVT, SYNC, broadcast), `claude_regbus_arb` (bus wins, `rd_peek`), ownership in the standard block, ring forwarding and BAD_DEST, `claude_ctl.h` — §3.8 (approved 2026-11-27)
+- [x] `IP_SPEC_fx.md`: fixed-point formats, `convert` (align → round → saturate), 5 rounding modes (adds `FX_ZERO`, `FX_HALF_AWAY` for TFLite), 3 saturation modes (adds `FX_SAT_SYM`), named formats uint4 / sint4 / uint8 / sint8 / uint16 / sint16 / uint32 / sint32 / q1.15 / q1.31 / q16.16 plus custom (W 2–64) and mixed-format operations, TFLite `srdhm` / `rdbpot`, chain precision (`fmt: auto`, precision report, lossless links), TFLite 16x8 mode, G.711 companding as storage, robustness rules R1–R14 (feedback saturation, limit cycles, coefficient tool, dither, asymmetry, div / sqrt, transcendentals, offset binary, BFP on streams, CMSIS-DSP, ETSI deferred, RDL field formats, RTL rules, metrics), RTL / Python / C99 `claude_fx.h` agree — §3.10 (approved 2026-11-27)
+- [x] `IP_SPEC_float_formats.md`: fp64 / fp32 / fp16 / bf16 / fp8_e4m3 / fp8_e5m2 / fp6 / fp4_e2m1 / e8m0, OCP MX (mxfp8/6/4, mxint8) and NVFP4, rounding incl. stochastic, SATFINITE / NaN / subnormal rules, stream `FLT`, `claude_flt_*` RTL, `claude_flt.py`, C99 `claude_flt.h` — §3.10, §8.1, §8.2 (approved 2026-11-27)
+- [x] User review of all of the above (approved 2026-11-27; bus-mode block fixed at `0xF80`)
+- [x] Review round 2 (user 2026-11-27, all accepted): v1.1 of stream, event, sideband, cmd2bus, ctl_stream, float_formats (powered-off traffic, control-stream security, soft reset / halt / abort, error-capable bridges, tick inputs, IP boundary timing, parameter checking, misaligned cmd2bus commands); spec version numbers and change logs on every spec — approved 2026-11-27
+- [x] `IP_SPEC_reset.md`: reset kinds, `claude_reset_sync`, request / hold interface, sequencing, `RST_CAUSE`, reset-domain crossing, DFT2 — new (approved 2026-11-27)
+- [x] `IP_SPEC_ip_meta.md`: per-IP `<ip>.ip.yaml` schema, generated vs. written parts, `ip_meta.py --check`, IP-XACT later — new (approved 2026-11-27)
+- [x] `IP_SPEC_soc_yaml.md`: SoC YAML schema, validation rules, generated outputs (tops, SDC, UPF, `soc.h`, **`soc.dts` devicetree**, linker script, BSDL, OpenOCD, chain model, docs) — new (approved 2026-11-27)
 
 ### 0.2 Common RTL components
 
@@ -92,17 +103,24 @@ BFM where needed) · `Doc` (`Claude_IP.md` Common Components list + IP_PLAN cros
 | `claude_axi4l_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_wb_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_skid_buffer` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_stream_fmt` (fixed-point format converter) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_fifo_sync` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_fifo_async` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_fifo_stream` (incl. packet mode) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_reset_sync` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_handshake_sync` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_apb_if_err` (error-capable regbus bridge, new file) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_ahb_if_err` (error-capable regbus bridge, new file) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_axi4l_if_err` (error-capable regbus bridge, new file) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_wb_if_err` (error-capable regbus bridge, new file) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_evt_sync` (lossless event crossing, merge report) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_gray_sync` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_edge_detect` / `claude_glitch_filter` / `claude_debounce` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_clk_en_div` (any integer N) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_clk_en_frac` (fractional N.F) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_clk_en_tick` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
-| `claude_fx_*` (round, sat, mul, lzc) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| `claude_fx_*` (pkg, round, sat, conv, mul, lzc, srdhm) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| `claude_flt_*` (pkg, cvt, fx_cvt) + `claude_mx_quant` / `_dequant` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_arb` (round-robin, fixed priority) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_lfsr` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_crc` (primitive) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
@@ -110,15 +128,24 @@ BFM where needed) · `Doc` (`Claude_IP.md` Common Components list + IP_PLAN cros
 | `claude_ctl2reg` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_regbus_arb` (bus always wins) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_ctl_ring` (DEST-ID forwarder) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_tdr` (1149.1 test data register: capture / shift / falling-edge update, `SYS_XFER`) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 
 ### 0.3 Verification infrastructure
 
-- [ ] Formal checkers: master-role use of `claude_<proto>_fv`; `claude_stream_fv`; `claude_ctl_fv`; FIFO and Gray-code properties
-- [ ] SV BFM tasks (no `interface`, Icarus-safe): stream source/sink, control-stream driver/monitor, `mem_*` initiator responder
-- [ ] UVM agents (xsim): stream, control stream
+- [ ] Formal checkers: master-role use of `claude_<proto>_fv`; `claude_stream_fv`; `claude_ctl_fv`; `claude_evt_fv`; `claude_sideband_fv`; `claude_qch_fv` (Q-channel); `claude_tdr_fv` (TDR front ends); FIFO and Gray-code properties
+- [ ] SV BFM tasks (no `interface`, Icarus-safe): stream source/sink, control-stream driver/monitor, event driver/monitor, `mem_*` initiator responder
+- [ ] `claude_mem_model`: behavioral SRAM as a `mem_*` target (delays, error ranges, backdoor), `IP/common/verification/models/`
+- [ ] Master-adapter system test: 2 master adapters → `bus_matrix_<proto>` (default config) → slave adapters → `claude_mem_model`, all 4 protocols, SV / VHDL / mixed (`IP_SPEC_mem_bus_initiator.md`, verification plan)
+- [ ] UVM agents (xsim): stream, control stream, event, JTAG host
 - [ ] VHDL equivalents of the BFM tasks used by the VHDL benches
-- [ ] `IP/common/verification/tools/claude_fx.py`, checked bit-exact against `claude_fx_*` RTL
+- [ ] `IP/common/verification/tools/claude_fx.py`, checked bit-exact against `claude_fx_*` RTL (exhaustive at small widths, formal vs. definitions), against TFLite / PyTorch rounding, and against C99 `claude_fx.h`
+- [ ] `IP/common/verification/tools/claude_flt.py` (exact, incl. stochastic rounding), cross-checked against SoftFloat, `ml_dtypes`, PyTorch dtypes and the OCP MX reference library; C99 `claude_flt.h`
+- [ ] `IP/common/tools/ip_meta.py` (`<ip>.ip.yaml` generation and `--check`, `IP_SPEC_ip_meta.md`); `ip.yaml` for timer / sram / bus_matrix written during their retrofit
+- [ ] `claude_fx.coef` (FIR / SOS quantization, stability, ordering, scaling, asymmetry check, `// claude coef v1` file + `.h`), `claude_fx.metrics` (SQNR, SINAD, ENOB, THD(+N), SFDR), `claude_fx.cmsis` (checked against host + target CMSIS-DSP); `claude_fx.etsi` reserved (deferred, R11)
+- [ ] `claude_fx.chain`: `out_fmt` interface for every math model, `fmt: auto` propagation with `max_w` caps, per-link precision report (`chain_report.md` / `.csv`, sweeps), `lossless: true` static check + `inexact_o` / SAT run-time monitor (`IP_SPEC_fx.md`)
 - [ ] Python stream / control-stream drivers for benches (file-based vectors)
+- [ ] `claude_cmd2bus.py` host library + Tcl encoder + C99 `IP/common/firmware/{include,src}/claude_cmd2bus.{h,c}`; C ↔ Python byte-for-byte encode/decode and CRC cross-checks
+- [ ] Shared side-band test template (IRQ, freeze, idle, multi-domain gating, `CLK_GATE_EN` 0/1, Q-channel power gating with UPF-aware sim, DMA req/ack, standard block, tie-off build) and `claude_std_regs.rdl` / `claude_std_regs.h` — `IP_SPEC_sideband.md`
 - [ ] Shared dual-port register test template (both ports, collision, ownership) — §16
 - [ ] DFT0 waiver template (Verilator `.vlt` entry, `waivers.md` class text, SpyGlass pragma) — §3.9
 - [ ] Shared lint port-check helper for `test_mode_i` / `scan_en_i` (`lint.md` item 7)
@@ -163,13 +190,14 @@ Clock technology cells (common, per-technology leaves like the sram macros; plan
 
 | Cell | Spec | SV | VHDL | Sim | Lint | Formal | Leaves (generic / SAED / SKY130 / Xilinx / Altera) | SDC | Doc |
 |---|---|---|---|---|---|---|---|---|---|
-| `claude_clk_gate` (ICG, test enable) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| `claude_clk_gate` (ICG, test enable, `CLK_GATE_EN` pass-through, FPGA `BUFGCE` / `ALTCLKCTRL` mapping) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_clk_mux2` (glitch-free, test select) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_clk_div` (integer N, odd 50 %, test bypass) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `claude_clk_pll` wrapper | ☐ | ☐ | ☐ | ☐ | — | — | ☐ | ☐ | ☐ |
 
 - [ ] Each comms IP: back-door directed test (DMA-style descriptor sequence driven by the control-stream BFM)
 - [ ] Each `CTL` IP: dual-port register template test passes
+- [ ] Each `STR` processing IP: bus-mode test (same vectors through `DIN`/`DOUT`, bit-exact with stream mode and the golden model) plus `DIN_OVF`/`DOUT_UNF` flag tests
 - [ ] watchdog: test proves no control-stream path exists; DFT test (internal reset blocked in test mode)
 
 **Phase 1 exit:** all rows through Step 8; clock cells verified on every leaf.
@@ -180,8 +208,9 @@ Clock technology cells (common, per-technology leaves like the sram macros; plan
 
 | Block | Reqs | Spec | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| jtag_tap (1149.1 + `SCAN_MODE`, `MBIST`, user DRs) | DFT-r1 | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
+| jtag_tap (IEEE 1149.1-2013 conforming; TEST_CTRL, debug lock, YAML opcode table; `TAP_IMPL` adapters) | DFT-r1 | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
 | jtag2bus (+ burst mode = jtag_dma, D5) | MST | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
+| jtag_ops (special-operations dispatcher, handler port, discovery opcodes) | — | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
 | uart2bus | MST | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
 | spi_slave (to bus master; mailbox mode) | MST, CTL, BD | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | i2c_slave | MST, CTL, BD | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
@@ -201,6 +230,7 @@ SoC tooling and first SoC:
 - [ ] Boundary-scan generator: BSR cells from a pad-list YAML, BSDL writer, verified against the TAP (§3.9, §9)
 - [ ] SoC generator v1 (`SoC/tools/gen_soc.py`): YAML → SV + VHDL top, `soc.h`, linker script, SystemRDL address map, DFT port routing, pad list
 - [ ] JTAG host BFM + OpenOCD configuration / Tcl for jtag2bus
+- [ ] 1149.1 conformance suite (simulation) + generated BSDL checked; DFT Compiler BSD `check_bsd` on csun.edu (license permitting)
 - [ ] Host Python library for uart2bus / jtag2bus / spi_slave (shared `cmd2bus` client)
 - [ ] **D10 decision:** first reference SoC (deferred by the user; SoC-0 is the candidate)
 - [ ] First SoC assembled from the generator; directed SoC tests driven over uart2bus / jtag2bus
@@ -261,7 +291,7 @@ Infrastructure:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | claude_dsp_shell (bypass, double-buffered coefs, stats) | CTL, STR, EVT | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | stream_switch (safe re-route, fan-out) | CTL, STR | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
-| event_router | CTL, EVT | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| event_router (level inputs from IRQ / DMA-req lines, `irq_o` on selected outputs) | CTL, EVT | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 Math blocks (each also needs its golden model checked off in the Reqs list below the table):
 
@@ -276,10 +306,12 @@ Math blocks (each also needs its golden model checked off in the Reqs list below
 | mixer / ddc | CTL, STR, GM | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | fft (streaming + memory-based) | CTL, STR, GM, DFT-r5 | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | mag_log | CTL, STR, GM | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| g711 (μ-law / A-law ↔ sint16 / q1.15) | CTL, STR, GM | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | moving_avg / stats | CTL, STR, GM | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | div / sqrt | CTL, STR, GM | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | fpu_core — SP (D13 default) | SF | ☐ | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
 | fpu_core — DP / SP_DP | SF | ☐ | — | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
+| fpu_core — `HAS_FP16` (Zfh / Zfhmin), `HAS_BF16` (Zfbfmin) | SF | ☐ | — | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ | ☐ | ☐ |
 | fpu_stream (incl. int / Q ↔ float) | CTL, STR, SF | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | fpu_reg | CTL, SF | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 
@@ -395,7 +427,8 @@ FreeRTOS and the Zephyr kernel tests; the secure SoC boots only signed images.
 | lbist (PRPG + MISR) | DFT-r1 | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | can (2.0B, FD later) | CTL, BD | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | clic-lite (for rv_tiny) | RTOS | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
-| NPU-3 (INT4 / INT16, sparsity, coprocessor instructions) | CTL, STR, GM, ML | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| NPU-3 (TFLite 16x8, int4 weights + group scales, sparsity, coprocessor instructions) | CTL, STR, GM, ML | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| NPU-4 (bf16, fp8_e4m3 / fp8_e5m2, OCP MX mxfp8/6/4 + mxint8, then nvfp4) | CTL, STR, GM, ML, SF | ☐ | — | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 | tamper / glitch monitor | DFT-r4, DFT-r7 | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 - [ ] Secure boot with PKA signature verification
@@ -419,3 +452,8 @@ These change signed-off RTL, so each is a planned revision with its full csun.ed
 - [ ] D10: first reference SoC (deferred until Phases 0–2 are further along)
 - [ ] csun.edu: confirm licenses for SpyGlass DFT, DFT Compiler and TestMAX (if one is missing, the other check has to pass; `lint.md` item 7, `synthesis.md`)
 - [ ] FreeRTOS RV32E support (Phase 3)
+- [ ] Later (user 2026-11-27, deferred): parity / ECC on stream and control-stream payloads (functional safety); RISC-V trace interface (E-Trace) for rv_core
+- [ ] Lint: check that every range-limited parameter has an elaboration check (`IP_SPEC_sideband.md` rule 6); synthesis SDC: 40 % input / output delay budgets on every IP port (IP boundary timing)
+- [x] When `IP_SPEC_fx.md` is approved: `rtl.md` gets the math-IP coding rules (R13: narrowing only through `claude_fx_conv`, signedness, VHDL `resize`), `lint.md` makes width warnings errors for math IP, `rdl.md` adds the `fx_fmt` / `flt_fmt` field properties and generated conversion helpers (R12) — **done 2026-11-27** (rtl.md §4e, lint.md item 8, rdl.md item 3b)
+- [x] When `IP_SPEC_ctl_stream.md` is approved: `rdl.md` / regfile template gains the `rd_peek` input (side-effect-free read, used by non-owner port B reads and by the side-band debug freeze) and pulls in `claude_std_regs.rdl` at `0xFC0` — **done 2026-11-27** (rdl.md items 3 / 3a)
+- [x] When `IP_SPEC_sideband.md` is approved, apply its clock-gating rules to the agent flow: `rtl.md` (explicit register enables, `claude_clk_gate` branches, `CLK_GATE_EN`, `idle_<dom>_o` / `wake_<dom>_o`), `synthesis.md` (DC `set_clock_gating_style` / `-gate_clock`, gated-flop report, generated clocks for branches), `power.md` (report the saving; `<ip>_power.upf` with Q-channel, isolation clamps, `RET_REGS`, VC LP), `directed_tests.md` / `uvm.md` (run with `CLK_GATE_EN` = 0 and 1, power-manager BFM) — **done 2026-11-27** (rtl.md §4d, synthesis.md, power.md, directed_tests.md, uvm.md, lint.md item 9)

@@ -14,3 +14,4 @@
 - [SRAM IP plan + logs](project_sram_plan.md) — Steps 0-10 committed (7ba3fa7), Step 12 power done 2026-11-25 (uncommitted); §18 synthesis / STA / postsyn / UPF, §19 power; §20 standard-host free/open-source flows (Verilator, xsim incl. XILINX/ALTERA leaves, Verilator+GHDL lint, Vivado/Quartus/Yosys; regression 513/513, 2026-11-25); current state in handoff.md
 - [New IP and SoC plan](IP_PLAN.md) — ~40 new IP blocks, shared interfaces (master bus, stream, control stream, events), DSP chain, DFT, RTOS, decisions D1–D13; 2026-11-26
 - [Phase checklist](IP_PHASE_CHECKLIST.md) — per-phase checklist for IP_PLAN.md: phase tasks and per-block 12-step status tables; update with the work
+- [Interface specs (Phase 0.1)](IP_SPEC_mem_bus_initiator.md) — `IP_SPEC_*.md`: one file per new interface spec while planned permanent home in `.agents/` (all approved 2026-11-27); includes the shipped `IP_SPEC_mem_bus.md` (old path `IP/common/design/rtl/mem_bus.md` is a stub)
