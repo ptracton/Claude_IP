@@ -299,6 +299,19 @@ Full register map: [doc/IP_NAME_regs.html](doc/IP_NAME_regs.html)
 
 Sections: Overview, Features, Register Map (TBD), Interfaces, Timing, Known Limitations.
 
+For a planned IP (user 2026-11-27, `Claude_IP.md` "Documentation Location Rule"), also:
+
+- **Requirements:** move the IP's catalog entry from `.agents/IP_PLAN.md` into this file
+  (Overview / Features), and shorten the plan entry to a one-line summary linking here.
+- **Interface specs implemented:** a table of the `.agents/IP_SPEC_*.md` specs the IP uses
+  (stream, event, side-band, ctl_stream, fx, ...) with their versions. Cite them; never copy
+  their rules.
+- **IP-specific sections those specs ask for:** quantization points, event outputs / inputs
+  and busy policies, frame boundary for `SYNC`, clock domains and gated branches, Q-channel
+  accept / deny conditions and clamp values, interrupt causes, debug-freeze behavior, and so
+  on ("What every IP documents" in each interface spec).
+- Write the hand-written parts of `IP_NAME.ip.yaml` (`.agents/IP_SPEC_ip_meta.md`) at the IP root.
+
 ---
 
 ### 5. Generate `IP_NAME/design/systemrdl/tools/generate_IP_NAME.py`

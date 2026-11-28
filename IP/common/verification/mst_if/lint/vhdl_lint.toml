@@ -1,0 +1,18 @@
+# vhdl_lint.toml — VHDL lint configuration for the master adapters.
+#
+# Used by verification/tools/verify_mst_if.py --lint. As for a regular IP, GHDL is the VHDL
+# linter: each file is analysed with -a --std=08 and any warning fails the lint; the adapter
+# is then elaborated and synthesized (ghdl --synth) to catch non-synthesizable constructs.
+
+[tool]
+name   = "ghdl"
+std    = "08"
+synth  = true
+
+# Files, relative to ${IP_COMMON_PATH}. One adapter per protocol, each self-contained.
+[files]
+order = [
+  "design/rtl/vhdl/claude_apb_mst_if.vhd",
+  "design/rtl/vhdl/claude_ahb_mst_if.vhd",
+  "design/rtl/vhdl/claude_axi4l_mst_if.vhd",
+]

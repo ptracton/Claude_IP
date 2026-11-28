@@ -133,7 +133,9 @@ module claude_ahb_mem_if #(
         // StWait: the response ends the data phase, or starts an ERROR response.
         StWait: begin
           if (mem_rvalid_i) begin
-            state_d = mem_err_i ? StErr : StIdle;
+            // if / else, not ?: — Icarus 12 types a ?: of enum values as an integer.
+            if (mem_err_i) state_d = StErr;
+            else           state_d = StIdle;
           end
         end
         // StErr: second ERROR cycle (HREADYOUT high), then idle.

@@ -76,7 +76,10 @@ BFM where needed) · `Doc` (`Claude_IP.md` Common Components list + IP_PLAN cros
 All interface specs live in `.agents/` as `IP_SPEC_<name>.md`, permanently (user
 2026-11-27), including the shipped memory-bus spec, `IP_SPEC_mem_bus.md` (moved from
 `IP/common/design/rtl/mem_bus.md`, where a stub stays for the signed-off files that name
-that path). RTL headers of new components point to their spec in `.agents/`.
+that path). RTL headers of new components point to their spec in `.agents/`. **Requirements and
+documentation of one IP block stay with the block** (`IP/<category>/<ip>/README.md` and
+`doc/spec.md`, as for the timer, sram and bus_matrix); "the IP spec" in the interface specs
+means that `doc/spec.md` (`Claude_IP.md`, "Documentation Location Rule").
 
 
 - [x] `IP_SPEC_mem_bus_initiator.md`: memory bus **initiator** direction (master adapters) — §3.2 (approved 2026-11-26)
@@ -98,9 +101,9 @@ that path). RTL headers of new components point to their spec in `.agents/`.
 
 | Component | Spec | SV | VHDL | Sim | Lint | Formal | Py | Doc |
 |---|---|---|---|---|---|---|---|---|
-| `claude_apb_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
-| `claude_ahb_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
-| `claude_axi4l_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
+| `claude_apb_mst_if` | ☑ | ☑ | ☑ | ◐ | ☑ | ☐ | — | ◐ |
+| `claude_ahb_mst_if` | ☑ | ☑ | ☑ | ◐ | ☑ | ☐ | — | ◐ |
+| `claude_axi4l_mst_if` | ☑ | ☑ | ☑ | ◐ | ☑ | ☐ | — | ◐ |
 | `claude_wb_mst_if` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_skid_buffer` | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | — | ☐ |
 | `claude_stream_fmt` (fixed-point format converter) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
@@ -134,7 +137,7 @@ that path). RTL headers of new components point to their spec in `.agents/`.
 
 - [ ] Formal checkers: master-role use of `claude_<proto>_fv`; `claude_stream_fv`; `claude_ctl_fv`; `claude_evt_fv`; `claude_sideband_fv`; `claude_qch_fv` (Q-channel); `claude_tdr_fv` (TDR front ends); FIFO and Gray-code properties
 - [ ] SV BFM tasks (no `interface`, Icarus-safe): stream source/sink, control-stream driver/monitor, event driver/monitor, `mem_*` initiator responder
-- [ ] `claude_mem_model`: behavioral SRAM as a `mem_*` target (delays, error ranges, backdoor), `IP/common/verification/models/`
+- [x] `claude_mem_model`: behavioral SRAM as a `mem_*` target (delays, error ranges, backdoor), `IP/common/verification/models/` — written 2026-11-27 with the APB master adapter (own xorshift32 PRNG: Icarus and xsim cannot share `$urandom` seeding); used by `mst_if` loopback
 - [ ] Master-adapter system test: 2 master adapters → `bus_matrix_<proto>` (default config) → slave adapters → `claude_mem_model`, all 4 protocols, SV / VHDL / mixed (`IP_SPEC_mem_bus_initiator.md`, verification plan)
 - [ ] UVM agents (xsim): stream, control stream, event, JTAG host
 - [ ] VHDL equivalents of the BFM tasks used by the VHDL benches
@@ -443,6 +446,8 @@ These change signed-off RTL, so each is a planned revision with its full csun.ed
 - [ ] **timer:** DFT ports + rule checklist; control-stream port (`CTL_PORT`, D11, default 0 keeps today's behavior); README, regression, csun.edu re-runs; new tag
 - [ ] **sram:** DFT ports + rules 2 and 5 (memory bypass / observation in test mode, BIST reachable from `mbist_ctrl`); factor SECDED out to `claude_ecc` (common); csun.edu re-runs; new tag
 - [ ] **bus_matrix:** DFT ports + rule checklist; AXI4 (full) variant after Phase 0b; csun.edu re-runs; new tag
+- [ ] **`claude_ahb_mem_if.sv` / `claude_axi4l_mem_if.sv` — edited 2026-11-27 (user-approved), csun.edu re-verification due:** one `?:` of enum values per file rewritten as `if` / `else` so Icarus 12 compiles them (needed for the master-adapter loopbacks on Icarus). Behaviour is unchanged. **Next time on csun.edu:** `verify_mem_if.py --sim all --formal --lint` (both protocols, both languages) and the sram regression (its AHB and AXI4-Lite tops use these adapters); update the signed-off records.
+- [ ] **csun.edu, first runs for the master adapters (`mst_if`):** `verify_mst_if.py --sim vcs` and `--sim xcelium` (with coverage), SpyGlass lint, Design Compiler synthesis (+ `dft_drc` waived as DFT0-free bus cells) and PrimeTime STA, VC Formal harnesses
 - [ ] **common bridges / adapters:** no DFT ports needed (no state or only bus state), confirm in their docs; `mem_*` `BURST_EN` covered in Phase 0b
 
 ---

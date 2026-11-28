@@ -1,0 +1,10 @@
+# verilator.flags — Verilator lint flags for the master adapters (claude_<proto>_mst_if).
+#
+# Used by verification/tools/verify_mst_if.py --lint (one flag per line; '#' lines and
+# blank lines are ignored). Same flags as a regular IP's lint step (.agents/lint.md).
+
+# Lint-only mode: static checks, no C++ generated.
+--lint-only
+
+# Every warning; any warning fails the lint (no waivers so far, see waivers.md).
+-Wall

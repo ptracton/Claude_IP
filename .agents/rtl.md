@@ -290,9 +290,27 @@ For every IP using `claude_fx_*` or `claude_flt_*` (all of `IP/DSP/`, PID, the N
 ### 4f. Parameter checks, boundary timing, soft reset, error bridges (new IP, user 2026-11-27)
 
 - **Parameter checks:** every parameter whose range a spec or the `ip.yaml` limits is checked
-  at elaboration: SV `if (!(cond)) $error("<ip>: <PARAM> = %0d out of range [a, b]", PARAM);`
-  in a `generate` block, VHDL `assert cond report "<ip>: <PARAM> out of range" severity failure;`.
-  Same conditions and messages in both languages.
+  at elaboration, with the same conditions and messages in both languages. VHDL:
+  `assert cond report "<ip>: <PARAM> out of range" severity failure;`. SV, in this form,
+  which every tool on both hosts accepts (found 2026-11-27 on the master adapters):
+  ```systemverilog
+  generate                                  // explicit generate: Quartus needs it
+    if (!(cond)) begin : g_chk_<param>
+  `ifdef ALTERA_RESERVED_QIS                // Quartus has no elaboration $error:
+      claude_param_out_of_range u_<param> ();   // a missing module stops it instead
+  `else
+      $error("<ip>: <PARAM> = %0d out of range [a, b]", <PARAM>);
+  `endif
+    end
+  endgenerate
+  `ifdef __ICARUS__                         // Icarus 12 ignores $error in generate
+    initial begin : p_chk_icarus
+      if (!(cond)) $fatal(1, "<ip>: <PARAM> = %0d out of range", <PARAM>);
+    end
+  `endif
+  ```
+  (`$fatal`, not `$error` + `$finish(1)`: only `$fatal` makes `vvp` exit non-zero.)
+  `claude_param_out_of_range` must never exist as a module.
 - **Boundary timing:** every top-level output comes from a flop, except the documented bridge
   read paths; any other combinational input → output path is listed in the README.
 - **Soft reset / halt / abort:** implement `STD_CTRL.SOFT_RST`, `HALT_REQ`, `ABORT` and
@@ -302,6 +320,25 @@ For every IP using `claude_fx_*` or `claude_flt_*` (all of `IP/DSP/`, PID, the N
   the generated regfile; signed-off IP keeps `claude_<proto>_if`.
 - **Metadata:** write the hand-written parts of `<ip>.ip.yaml` (`IP_SPEC_ip_meta.md`) and run
   `ip_meta.py` to generate the rest.
+
+### 4g. Synthesizable functions that every tool accepts (found 2026-11-27)
+
+The RTL must build in Icarus, Verilator, GHDL, Yosys (SV and GHDL plugin), xsim, ModelSim,
+VCS, Xcelium, Vivado, Quartus and Design Compiler. Yosys `read_verilog -sv` and Quartus
+Lite / Standard are the strictest:
+
+- In a synthesizable SV function, assign the result to the function name; **no `return`**.
+- No `$clog2` (or other system functions) of a run-time value; only of parameters and
+  constants. Use a fixed loop instead.
+- No parameter-width casts (`ADDR_W'(x)`): Quartus Lite / Standard rejects them. Use a sized
+  `localparam` (`localparam logic [ADDR_W-1:0] OffMask = StrbW - 1;`). Fixed-width casts
+  (`3'(x)`) are fine.
+- Module-level `if` / `for` generate blocks inside explicit `generate` / `endgenerate`
+  (Quartus needs the keywords), and parameter checks in the form of §4f.
+- VHDL: no `while` loops in functions applied to signals (GHDL `--synth` needs a static loop
+  bound); use `for` with a constant range.
+- Flags that SV and VHDL instances share are integers (0 / 1), not `bit` / `boolean`, so a
+  mixed-language bench passes the same value to either.
 
 ### 5. Style and documentation requirements
 

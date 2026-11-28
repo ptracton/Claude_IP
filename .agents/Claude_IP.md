@@ -339,6 +339,25 @@ at 0), and at SoC level the scan insertion and ATPG flow in `.agents/IP_PLAN.md`
 
 ---
 
+## Documentation Location Rule (mandatory for all sub-agents, user 2026-11-27)
+
+- **Interface specifications** (shared by many IPs: buses, streams, events, side-band, TAP,
+  formats, reset, metadata, SoC YAML) live in **`.agents/IP_SPEC_<name>.md`**, permanently.
+  This includes the shipped memory-bus spec, `.agents/IP_SPEC_mem_bus.md`.
+- **The requirements and documentation of one IP block stay with that block**, as for the timer,
+  sram and bus_matrix: `IP/<category>/<ip>/README.md` (overview, architecture, results,
+  known limitations, progressively filled by each sub-agent) and `IP/<category>/<ip>/doc/spec.md`
+  (the IP's requirements and functional specification, written in Step 1 / setup), plus the
+  generated register documentation in `doc/` and `<ip>.ip.yaml` at the IP root.
+- Whenever an interface spec says "the IP spec", "the block's spec" or "documented in its spec",
+  it means that IP's `doc/spec.md` (and its README where the README template has a section for
+  it).
+- An IP's `doc/spec.md` cites the interface specs it implements, with their versions, and never
+  copies their rules.
+- The catalog entries in `.agents/IP_PLAN.md` (§6–§12) are the starting requirements of each
+  planned IP; when the IP's Step 1 starts, they are moved into its `doc/spec.md`, and the plan
+  entry is shortened to a one-line summary with a link.
+
 ## Coding Standards (mandatory for all sub-agents)
 
 All generated RTL and testbench code **must** conform to the project coding style guides:
@@ -398,6 +417,7 @@ IP/
 │
 └── IP_NAME/
 ├── README.md                               # Top-level documentation (progressively filled by each sub-agent)
+├── IP_NAME.ip.yaml                         # Machine-readable IP metadata (.agents/IP_SPEC_ip_meta.md)
 ├── cleanup.sh                              # Removes all build/sim artifacts
 ├── setup.sh                                # Exports environment variables and tool paths
 ├── design/

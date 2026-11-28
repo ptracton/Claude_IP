@@ -18,6 +18,12 @@ This document covers:
 
 Blocks marked **[NEW]** are proposed additions that were not on the original list.
 
+**Where documents live (user 2026-11-27):** interface specs are `.agents/IP_SPEC_<name>.md`.
+Each IP's own requirements and documentation live with the IP, in
+`IP/<category>/<ip>/README.md` and `doc/spec.md`, like the timer, sram and bus_matrix. The
+catalog entries below are the starting requirements; each one moves into its IP's
+`doc/spec.md` when that IP's Step 1 starts.
+
 ---
 
 ## 1. Starting point

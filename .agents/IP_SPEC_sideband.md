@@ -55,7 +55,8 @@ General rules:
 6. **Parameter checking** (user 2026-11-27, all specs): every parameter whose range a spec
    limits is checked at elaboration, the same way in both languages: SV
    `if (!(cond)) $error("<ip>: <PARAM> = %0d out of range ...")` in a `generate` block (or an
-   elaboration-time `initial` for Icarus), VHDL `assert cond report "..." severity failure;`
+   `` `ifdef __ICARUS__ `` `initial` with `$fatal`, because Icarus 12 ignores `$error` in
+   generate blocks), VHDL `assert cond report "..." severity failure;`
    in the architecture. The message names the IP, the parameter and the allowed range; the
    lint step checks that each limited parameter has a check.
 

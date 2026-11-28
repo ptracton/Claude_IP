@@ -174,7 +174,9 @@ module claude_axi4l_mem_if #(
         if (wr_ready || rd_ready) begin
           sel_write_d  = pick_write;
           last_write_d = pick_write;
-          state_d      = mem_gnt_i ? StWait : StReq;
+          // if / else, not ?: — Icarus 12 types a ?: of enum values as an integer.
+          if (mem_gnt_i) state_d = StWait;
+          else           state_d = StReq;
         end
       end
       // StReq: hold the request until granted.

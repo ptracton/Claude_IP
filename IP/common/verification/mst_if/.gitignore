@@ -1,0 +1,2 @@
+# Simulation and lint work directories (verify_mst_if.py --clean removes them)
+work/
